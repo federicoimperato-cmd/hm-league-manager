@@ -507,17 +507,41 @@ function updateCloudBadge(){
   else el.textContent="☁️ Solo locale";
 }
 
+
+function loadCloudJsonp(){
+  return new Promise((resolve,reject)=>{
+    const cb = "hmCloudCallback_" + Date.now() + "_" + Math.floor(Math.random()*100000);
+    const script = document.createElement("script");
+
+    window[cb] = function(data){
+      try{
+        resolve(data);
+      }finally{
+        delete window[cb];
+        script.remove();
+      }
+    };
+
+    script.onerror = function(){
+      delete window[cb];
+      script.remove();
+      reject(new Error("Errore caricamento JSONP"));
+    };
+
+    script.src = HM_CLOUD_API_URL + "?callback=" + cb + "&t=" + Date.now();
+    document.body.appendChild(script);
+  });
+}
+
 async function loadCloudData(){
   if(!HM_CLOUD_API_URL) return;
   HM_CLOUD_LOADING = true;
   updateCloudBadge();
 
   try{
-    const res = await fetch(HM_CLOUD_API_URL + "?t=" + Date.now(), {method:"GET", cache:"no-store"});
-    const text = await res.text();
+    const data = await loadCloudJsonp();
 
-    if(text && text.trim() && text.trim() !== "{}"){
-      const data = JSON.parse(text);
+    if(data && typeof data === "object" && Object.keys(data).length){
       if(applyCloudPayload(data)){
         HM_CLOUD_READY = true;
         HM_CLOUD_LAST_SAVE = JSON.stringify(buildCloudPayload());
@@ -536,6 +560,7 @@ async function loadCloudData(){
     if(typeof renderDashboard==="function") renderDashboard();
   }
 }
+
 
 function renderDashboard(){
   q("totalPlayersBadge").textContent = players.length + " calciatori";

@@ -370,6 +370,41 @@ function renderDashboard(){
 
 
 
+
+function editBudget(code){
+  const t=team(code);
+  if(!t) return;
+
+  q("tradeModalBody").innerHTML = `
+    <h3>Modifica budget ${esc(t.name)}</h3>
+    <div class="grid grid2">
+      <label>Crediti
+        <input class="input" id="budgetCredits" type="number" value="${esc(t.credits ?? 0)}">
+      </label>
+      <label>HM Coin
+        <input class="input" id="budgetHmcoin" type="number" value="${esc(t.hmcoin ?? 0)}">
+      </label>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="closeTradeModal()">Annulla</button>
+      <button class="btn green" onclick="saveBudget('${code}')">Salva budget</button>
+    </div>
+  `;
+  q("tradeModal").style.display="flex";
+}
+
+function saveBudget(code){
+  const t=team(code);
+  if(!t) return;
+
+  t.credits = Number(String(q("budgetCredits").value || 0).replace(",", ".")) || 0;
+  t.hmcoin = Number(String(q("budgetHmcoin").value || 0).replace(",", ".")) || 0;
+
+  saveAll();
+  closeTradeModal();
+  renderTeamDetail();
+}
+
 function moveCredits(fromCode,toCode,amount){
   const n = Number(String(amount || 0).replace(",", ".")) || 0;
   if(!n) return;
@@ -2054,4 +2089,3 @@ showView("dashboard");
 </script>
 </body>
 </html>
-

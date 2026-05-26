@@ -4,174 +4,114 @@ import re
 path = Path("/mnt/data/index.html")
 html = path.read_text(encoding="utf-8", errors="ignore")
 
-# 1) Restore/ensure fixed individual awards constants
-if "const INDIVIDUAL_AWARDS" not in html:
-    # Insert after script tag or before PAIRED if present
-    pos = html.find("const PAIRED")
-    if pos == -1:
-        pos = html.find("<script>") + len("<script>")
-    html = html[:pos] + '\nconst INDIVIDUAL_AWARDS = ["Capocannoniere","Assistman","Miglior Giocatore","Miglior Allenatore"];\n' + html[pos:]
+# 1) Make manual save button more visible and fixed top/bottom for mobile.
+# Remove existing manual button and badge insert if duplicate-like
+html = re.sub(r'<button id="manualSaveOnlineBtn"[\s\S]*?</button>\s*', '', html)
+html = re.sub(r'<div id="cloudStatusBadge"[\s\S]*?</div>\s*', '', html)
 
-# 2) Replace/insert season awards editor functions robustly
-# Need find functions names. We'll print? We'll create if missing and replace if present.
-awards_funcs = r'''
-function addSeasonAward(){
-  tempSeasonAwards.push({award:"Capocannoniere",player:"",teamCode:"",teamFree:""});
-  renderSeasonAwardsEditor();
-}
+ui = '''
+<div id="cloudSaveBar" style="position:fixed;left:10px;right:10px;bottom:10px;z-index:99999;display:flex;gap:8px;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:10px 12px;border-radius:18px;box-shadow:0 12px 35px rgba(0,0,0,.45);font-size:13px">
+  <span id="cloudStatusBadge">☁️ Solo locale</span>
+  <button id="manualSaveOnlineBtn" onclick="saveCloudNow(true)" style="background:#16a34a;border:1px solid #22c55e;color:white;padding:10px 14px;border-radius:14px;font-size:14px;font-weight:900;white-space:nowrap">💾 Salva online</button>
+</div>
+'''
+html = html.replace("<main", ui + "\n<main", 1)
 
-function removeSeasonAward(i){
-  tempSeasonAwards.splice(i,1);
-  renderSeasonAwardsEditor();
-}
+# 2) Replace saveCloudNow to support forced save + alert feedback
+start = html.find("async function saveCloudNow(")
+if start == -1:
+    start = html.find("async function saveCloudNow(){")
+if start == -1:
+    raise RuntimeError("saveCloudNow not found")
+end = html.find("\nfunction scheduleCloudSave", start)
+if end == -1:
+    raise RuntimeError("scheduleCloudSave boundary not found")
 
-function updateSeasonAward(i,field,value){
-  tempSeasonAwards[i][field]=value;
-}
-
-function renderSeasonAwardsEditor(){
-  const box=q("seasonAwardsBox");
-  if(!box) return;
-  box.innerHTML=tempSeasonAwards.map((a,i)=>{
-    const award=a.award || a.label || "Capocannoniere";
-    const player=a.player || a.value || "";
-    const teamCode=a.teamCode || "";
-    const teamFree=a.teamFree || "";
-    return `
-    <div class="card" style="margin-top:10px">
-      <div class="grid grid4">
-        <label>Premio
-          <select class="input" onchange="updateSeasonAward(${i},'award',this.value);renderSeasonAwardsEditor()">
-            ${INDIVIDUAL_AWARDS.map(x=>`<option value="${x}" ${x===award?"selected":""}>${x}</option>`).join("")}
-          </select>
-        </label>
-        <label>Nome calciatore/allenatore
-          <input class="input" value="${esc(player)}" onchange="updateSeasonAward(${i},'player',this.value)" placeholder="Nome">
-        </label>
-        <label>Squadra esistente
-          <select class="input" onchange="updateSeasonAward(${i},'teamCode',this.value);renderSeasonAwardsEditor()">
-            ${teamOptions(teamCode)}
-          </select>
-        </label>
-        <label>Squadra libera/storica
-          <input class="input" value="${esc(teamFree)}" onchange="updateSeasonAward(${i},'teamFree',this.value)" placeholder="Nome squadra">
-        </label>
-        <div class="row" style="grid-column:1/-1">
-          ${imgPreview("individual_"+award,46)}
-          <label class="muted">Immagine premio "${esc(award)}" valida ovunque
-            <input type="file" accept="image/*" onchange="uploadAwardImage(this,'individual_${esc(award)}')">
-          </label>
-          <button class="btn red" onclick="removeSeasonAward(${i})">Rimuovi</button>
-        </div>
-      </div>
-    </div>`;
-  }).join("") || `<div class="muted">Nessun premio inserito.</div>`;
-}
-
-function syncSeasonIndividualTitles(seasonItem, oldSeason=null){
-  if(oldSeason){
-    individualTitles=individualTitles.filter(x=>x.sourceSeason!==oldSeason);
+new_save_cloud = r'''async function saveCloudNow(showAlert=false){
+  if(HM_CLOUD_LOADING) {
+    if(showAlert) alert("Sto ancora caricando i dati online. Riprova tra qualche secondo.");
+    return;
   }
-  individualTitles=individualTitles.filter(x=>x.sourceSeason!==seasonItem.season);
+  if(!HM_CLOUD_API_URL) {
+    if(showAlert) alert("API cloud non configurata.");
+    return;
+  }
 
-  (seasonItem.awards||[]).forEach(a=>{
-    if(a.teamCode && team(a.teamCode)){
-      individualTitles.push({
-        team:a.teamCode,
-        award:a.award || a.label || "",
-        player:a.player || a.value || "",
-        season:seasonItem.season,
-        sourceSeason:seasonItem.season
-      });
-    }
-  });
+  const payload = buildCloudPayload();
+  const text = JSON.stringify(payload);
+
+  // Se l'utente preme il pulsante, salvo comunque anche se sembra identico.
+  if(!showAlert && text === HM_CLOUD_LAST_SAVE && !HM_HAS_UNSAVED_CHANGES) return;
+
+  HM_CLOUD_SAVING = true;
+  updateCloudBadge();
+
+  try{
+    await fetch(HM_CLOUD_API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: {"Content-Type":"text/plain;charset=utf-8"},
+      body: text
+    });
+
+    HM_CLOUD_READY = true;
+    HM_HAS_UNSAVED_CHANGES = false;
+    HM_CLOUD_LAST_SAVE = text;
+    saveLocalOnly();
+    updateCloudBadge();
+
+    if(showAlert) alert("Salvato online correttamente.");
+  }catch(e){
+    console.warn("Salvataggio cloud non riuscito", e);
+    if(showAlert) alert("Errore salvataggio online. Controlla connessione e riprova.");
+  }finally{
+    HM_CLOUD_SAVING = false;
+    updateCloudBadge();
+  }
+}
+
+'''
+html = html[:start] + new_save_cloud + html[end:]
+
+# 3) Make update badge handle the new bar
+start = html.find("function updateCloudBadge(){")
+end = html.find("\nfunction loadCloudJsonp", start)
+if start != -1 and end != -1:
+    new_badge = r'''function updateCloudBadge(){
+  const el=document.getElementById("cloudStatusBadge");
+  if(!el) return;
+  if(HM_CLOUD_LOADING) el.textContent="☁️ Caricamento dati...";
+  else if(HM_CLOUD_SAVING) el.textContent="☁️ Salvataggio...";
+  else if(HM_HAS_UNSAVED_CHANGES) el.textContent="⚠️ Modifiche non salvate";
+  else if(HM_CLOUD_READY) el.textContent="☁️ Online sincronizzato";
+  else el.textContent="☁️ Solo locale";
 }
 '''
+    html = html[:start] + new_badge + html[end:]
 
-# Replace block from addSeasonAward to before syncSeasonPositions if exists
-start = html.find("function addSeasonAward(){")
-sync_pos = html.find("function syncSeasonPositions", start if start!=-1 else 0)
-if start != -1 and sync_pos != -1:
-    html = html[:start] + awards_funcs + "\n" + html[sync_pos:]
-else:
-    # insert before syncSeasonPositions
-    pos = html.find("function syncSeasonPositions")
-    if pos != -1:
-        html = html[:pos] + awards_funcs + "\n" + html[pos:]
+# 4) Add auto backup save every 30s only if unsaved changes, useful on mobile if user forgets button
+if "hmAutoCloudSaver" not in html:
+    pos = html.rfind("</script>")
+    autosave = r'''
+// Salvataggio di sicurezza: se ci sono modifiche non salvate, prova a salvarle ogni 30 secondi.
+const hmAutoCloudSaver = setInterval(()=>{
+  if(HM_HAS_UNSAVED_CHANGES && !HM_CLOUD_SAVING && !HM_CLOUD_LOADING){
+    saveCloudNow(false);
+  }
+}, 30000);
 
-# Remove duplicate old syncSeasonIndividualTitles if duplicated after insertion? Keep only first occurrence by removing subsequent duplicates
-first = html.find("function syncSeasonIndividualTitles")
-second = html.find("function syncSeasonIndividualTitles", first+1)
-while second != -1:
-    next_func = html.find("\nfunction ", second+10)
-    if next_func == -1: break
-    html = html[:second] + html[next_func+1:]
-    second = html.find("function syncSeasonIndividualTitles", first+1)
-
-# 3) Ensure saveSeasonTable saves structured awards and syncs individual titles
-# Replace awards line in saveSeasonTable if old style
-html = html.replace(
-    'awards:tempSeasonAwards.filter(a=>a.label || a.value).map(a=>({...a}))',
-    'awards:tempSeasonAwards.filter(a=>a.award || a.label || a.player || a.value).map(a=>({award:a.award || a.label || "", player:a.player || a.value || "", teamCode:a.teamCode || "", teamFree:a.teamFree || ""}))'
-)
-# Also handle if awards line exists multi-line maybe:
-html = re.sub(
-    r'awards:tempSeasonAwards\.filter\(a=>[^)]*\)\.map\(a=>\(\{\.\.\.a\}\)\)',
-    'awards:tempSeasonAwards.filter(a=>a.award || a.label || a.player || a.value).map(a=>({award:a.award || a.label || "", player:a.player || a.value || "", teamCode:a.teamCode || "", teamFree:a.teamFree || ""}))',
-    html
-)
-
-# Ensure sync call in saveSeasonTable after syncSeasonPositions
-if "syncSeasonIndividualTitles(item, oldSeason);" not in html:
-    html = html.replace("syncSeasonPositions(item, oldSeason);\n  saveAll();", "syncSeasonPositions(item, oldSeason);\n  syncSeasonIndividualTitles(item, oldSeason);\n  saveAll();")
-    html = html.replace("syncSeasonPositions(item, oldSeason);\r\n  saveAll();", "syncSeasonPositions(item, oldSeason);\r\n  syncSeasonIndividualTitles(item, oldSeason);\r\n  saveAll();")
-
-# Ensure deleteSeason removes individual titles
-html = html.replace(
-    "positionHistory=positionHistory.filter(p=>p.sourceSeason!==s.season);",
-    "positionHistory=positionHistory.filter(p=>p.sourceSeason!==s.season);\n    individualTitles=individualTitles.filter(p=>p.sourceSeason!==s.season);"
-)
-
-# 4) Ensure openSeasonDetail displays awards structured
-# Replace common old display
-html = html.replace(
-    '${(s.awards||[]).map(a=>`<div class="card"><span class="badge">${esc(a.label)}</span><h3>${esc(a.value)}</h3></div>`).join("") || \'<div class="muted">Nessun premio inserito.</div>\'}',
-    '${(s.awards||[]).map(a=>`<div class="card">${imgPreview("individual_"+(a.award||a.label),42)}<span class="badge">${esc(a.award||a.label)}</span><h3>${esc(a.player||a.value)}</h3><p class="muted">${esc(a.teamCode?teamLabel(a.teamCode):(a.teamFree||""))}</p></div>`).join("") || \'<div class="muted">Nessun premio inserito.</div>\'}'
-)
-
-# 5) Registro Scambi: add "Azzera stagione" button and function
-clear_func = r'''
-function clearTradeSeasonLog(){
-  if(!confirm("Azzera il registro scambi della stagione? I giocatori resteranno dove sono. NON verranno ripristinati proprietari o crediti.")) return;
-  if(!confirm("Conferma definitiva: verrà eliminato solo il LOG degli scambi confermati.")) return;
-  trades = [];
-  saveAll();
-  renderTrades();
-}
+// Avvisa se si sta uscendo con modifiche non salvate.
+window.addEventListener("beforeunload", function(e){
+  if(HM_HAS_UNSAVED_CHANGES){
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
 '''
-if "function clearTradeSeasonLog" not in html:
-    pos = html.find("function renderTrades(){")
-    if pos != -1:
-        html = html[:pos] + clear_func + "\n" + html[pos:]
-
-# Add button in confirmed trades card header. Find in renderTrades string
-html = html.replace(
-    '<h3>Scambi confermati</h3>\n      <div id="confirmedTrades"></div>',
-    '<div class="between"><h3>Scambi confermati</h3><button class="btn red" onclick="clearTradeSeasonLog()">Azzera stagione</button></div>\n      <div id="confirmedTrades"></div>'
-)
-
-# If exact not found, add near "Scambi confermati"
-if "Azzera stagione" not in html:
-    html = html.replace(
-        '<h3>Scambi confermati</h3>',
-        '<div class="between"><h3>Scambi confermati</h3><button class="btn red" onclick="clearTradeSeasonLog()">Azzera stagione</button></div>',
-        1
-    )
+    html = html[:pos] + autosave + html[pos:]
 
 out = Path("/mnt/data/index.html")
 out.write_text(html, encoding="utf-8")
-print("Creato index patch storico premi + azzera scambi:", out)
-print("INDIVIDUAL_AWARDS", "INDIVIDUAL_AWARDS" in html)
-print("season awards box", "seasonAwardsBox" in html)
-print("syncSeasonIndividualTitles", "function syncSeasonIndividualTitles" in html)
-print("clearTradeSeasonLog", "function clearTradeSeasonLog" in html, "Azzera stagione" in html)
+print("Creato fix salvataggio mobile:", out)
+print("save button:", "manualSaveOnlineBtn" in html)
+print("autosaver:", "hmAutoCloudSaver" in html)

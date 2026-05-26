@@ -172,6 +172,51 @@ function ensureTeamBudgets(){
 }
 ensureTeamBudgets();
 
+function seedOnlineDefaults(){
+  try{
+    // Ranking: se vuoto, inserisce tutte le società con punti 0
+    if(typeof rankingData !== "undefined" && (!Array.isArray(rankingData) || rankingData.length===0)){
+      rankingData = teams.filter(t=>t.code!=="SVIN").map(t=>({
+        code:t.code,
+        points:0,
+        manualOrder:""
+      }));
+    }
+
+    // Storico campionati: deve almeno avere struttura vuota gestibile
+    if(typeof seasonHistory !== "undefined" && !Array.isArray(seasonHistory)){
+      seasonHistory = [];
+    }
+
+    // Asta: se vuota o rotta, inizializza struttura corretta
+    if(typeof auctionState !== "undefined" && (!auctionState || typeof auctionState !== "object")){
+      auctionState = {playerId:"",manualPlayer:null,bids:[],activeTeams:[],passedTeams:[],winner:null,history:[]};
+    }
+    if(typeof auctionState !== "undefined"){
+      auctionState.bids = auctionState.bids || [];
+      auctionState.activeTeams = auctionState.activeTeams || [];
+      auctionState.passedTeams = auctionState.passedTeams || [];
+      auctionState.history = auctionState.history || [];
+    }
+
+    // Azioni Presidente: se vuoto/rotto, inizializza array
+    if(typeof presidentActions !== "undefined" && !Array.isArray(presidentActions)){
+      presidentActions = [];
+    }
+
+    // Competizioni: se vuote, verranno create da ensureCompetitionsManager()
+    if(typeof competitionsManager !== "undefined" && competitionsManager && !Array.isArray(competitionsManager.competitions)){
+      competitionsManager = null;
+    }
+
+    saveAll();
+  }catch(e){
+    console.warn("seedOnlineDefaults error", e);
+  }
+}
+seedOnlineDefaults();
+
+
 const roles = {
   goal: ["Por"],
   def: ["Dc","Dd","Ds"],
@@ -2081,6 +2126,202 @@ function editGeneralHonor(award,localIndex){
   honors[row._i]={team:teamCode.toUpperCase(),award,season};
   saveAll(); renderCompetitions();
 }
+
+/* ===== MODULI RIPRISTINATI: Ranking, Storico, Asta, Azioni Presidente ===== */
+
+function trophiesCount(code){
+  return (honors||[]).filter(h=>h.team===code).length;
+}
+
+function ensureRanking(){
+  if(!Array.isArray(rankingData)) rankingData=[];
+  if(!Array.isArray(rankingHidden)) rankingHidden=[];
+  teams.filter(t=>t.code!=="SVIN" && !rankingHidden.includes(t.code)).forEach(t=>{
+    if(!rankingData.find(r=>r.code===t.code)){
+      rankingData.push({code:t.code,points:0,manualOrder:""});
+    }
+  });
+}
+
+function renderRanking(){
+  if(!Array.isArray(rankingData)) rankingData=[];
+  if(rankingData.length===0){
+    rankingData = teams.filter(t=>t.code!=="SVIN").map(t=>({code:t.code,points:0,manualOrder:""}));
+    saveAll();
+  }
+  ensureRanking();
+  const rows = rankingData
+    .filter(r=>team(r.code) && r.code!=="SVIN" && !rankingHidden.includes(r.code))
+    .map(r=>({...r,trophies:trophiesCount(r.code)}))
+    .sort((a,b)=>{
+      const ma = a.manualOrder==="" ? 9999 : Number(a.manualOrder);
+      const mb = b.manualOrder==="" ? 9999 : Number(b.manualOrder);
+      if(ma!==9999 || mb!==9999) return ma-mb;
+      return Number(b.points||0)-Number(a.points||0);
+    });
+
+  q("view-ranking").innerHTML = `
+    <div class="between">
+      <div><h2>Ranking società</h2><p class="muted">Classifica ordinata per punti. I trofei vengono presi automaticamente dall'Albo d'oro.</p></div>
+      <div class="row"><button class="btn primary" onclick="addTeam()">Aggiungi società</button><button class="btn" onclick="addRankingRow()">Aggiungi al ranking</button></div>
+    </div>
+    <table class="table" style="margin-top:14px">
+      <tr><th>#</th><th>Società</th><th>Punti</th><th>Trofei</th><th>Ordine manuale</th><th>Azioni</th></tr>
+      ${rows.map((r,i)=>{
+        const t=team(r.code);
+        return `<tr>
+          <td><b>${i+1}</b></td>
+          <td><div class="row">${logo(r.code,42)}<div><b>${esc(t.name)}</b><div class="muted">${r.code} · ${esc(t.division)}</div></div></div></td>
+          <td><input class="input" style="width:90px" value="${esc(r.points||0)}" onchange="updateRanking('${r.code}','points',this.value)"></td>
+          <td><b>${r.trophies}</b></td>
+          <td><input class="input" style="width:90px" placeholder="auto" value="${esc(r.manualOrder||"")}" onchange="updateRanking('${r.code}','manualOrder',this.value)"></td>
+          <td><button class="btn" onclick="editTeam('${r.code}')">Modifica società</button><button class="btn red" onclick="removeRanking('${r.code}')">Togli ranking</button></td>
+        </tr>`;
+      }).join("")}
+    </table>`;
+}
+
+function updateRanking(code,field,value){
+  ensureRanking();
+  const row=rankingData.find(r=>r.code===code);
+  if(row){row[field]=value;saveAll();renderRanking();}
+}
+function removeRanking(code){
+  if(!confirm("Togliere questa società dal ranking?")) return;
+  if(!rankingHidden.includes(code)) rankingHidden.push(code);
+  rankingData=rankingData.filter(r=>r.code!==code);
+  saveAll();renderRanking();
+}
+function addRankingRow(){
+  const code=(prompt("Sigla società da inserire nel ranking","IMP")||"").toUpperCase();
+  if(!code || !team(code)){alert("Sigla non trovata");return;}
+  rankingHidden=rankingHidden.filter(x=>x!==code);
+  if(!rankingData.find(r=>r.code===code)) rankingData.push({code,points:0,manualOrder:""});
+  saveAll();renderRanking();
+}
+function addTeam(){
+  const code=(prompt("Sigla nuova società","NEW")||"").toUpperCase();
+  if(!code || team(code)){alert("Sigla vuota o già esistente");return;}
+  const name=prompt("Nome società","Nuova Società") || "Nuova Società";
+  const division=prompt("Serie","Serie B") || "Serie B";
+  teams.push({code,name,division,primary:"#1e293b",secondary:"#7c3aed",text:"#ffffff",logo:"",credits:500,hmcoin:100,jerseyStyle:"diagonal"});
+  rankingData.push({code,points:0,manualOrder:""});
+  saveAll();renderRanking();
+}
+function editTeam(code){
+  const t=team(code); if(!t) return;
+  q("tradeModalBody").innerHTML = `
+    <h3>Modifica società ${code}</h3>
+    <div class="grid grid3">
+      <label>Nome<input class="input" id="rankTeamName" value="${esc(t.name)}"></label>
+      <label>Serie<input class="input" id="rankTeamDivision" value="${esc(t.division)}"></label>
+      <label>Colore 1<input class="input" type="color" id="rankTeamPrimary" value="${t.primary||"#1e293b"}"></label>
+      <label>Colore 2<input class="input" type="color" id="rankTeamSecondary" value="${t.secondary||"#7c3aed"}"></label>
+      <label>Colore sigla<input class="input" type="color" id="rankTeamText" value="${t.text||"#ffffff"}"></label>
+      <label>Stile maglia<select class="input" id="rankTeamJerseyStyle">
+        ${["solid","stripes","halves","band","diagonal"].map(x=>`<option value="${x}" ${x===(t.jerseyStyle||"diagonal")?"selected":""}>${x}</option>`).join("")}
+      </select></label>
+      <label>Logo da file<input class="input" type="file" id="rankTeamLogo" accept="image/*"></label>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="closeTradeModal()">Annulla</button>
+      <button class="btn green" onclick="saveRankTeam('${code}')">Salva</button>
+    </div>`;
+  q("tradeModal").style.display="flex";
+}
+function saveRankTeam(code){
+  const t=team(code); if(!t) return;
+  t.name=q("rankTeamName").value;t.division=q("rankTeamDivision").value;t.primary=q("rankTeamPrimary").value;t.secondary=q("rankTeamSecondary").value;t.text=q("rankTeamText").value;t.jerseyStyle=q("rankTeamJerseyStyle").value;
+  const file=q("rankTeamLogo").files[0];
+  if(file){const reader=new FileReader();reader.onload=()=>{t.logo=reader.result;saveAll();closeTradeModal();renderRanking();};reader.readAsDataURL(file);}
+  else{saveAll();closeTradeModal();renderRanking();}
+}
+
+/* Storico campionati */
+let tempSeasonRows=[];
+let tempSeasonAwards=[];
+let editingSeasonIndex=null;
+function makeEmptyStandingRow(){return {teamCode:"",team:"",points:"",gf:"",ga:"",fm:"",series:"Serie A"};}
+function renderHistory(){
+  q("view-history").innerHTML = `
+    <div class="between">
+      <div><h2>Storico campionati passati</h2><p class="muted">Compila direttamente la classifica storica.</p></div>
+      <button class="btn primary" onclick="openSeasonTable()">Nuova classifica</button>
+    </div>
+    <div class="grid grid3" style="margin-top:14px">
+      ${seasonHistory.length?seasonHistory.map((s,i)=>`<div class="card team-card" onclick="openSeasonDetail(${i})"><span class="badge">${esc(s.season)}</span><h3>${esc(s.title||"Campionato")}</h3><p class="muted">${(s.standings||[]).length} posizioni inserite</p><div class="row"><button class="btn" onclick="event.stopPropagation();openSeasonTable(${i})">Modifica</button><button class="btn red" onclick="event.stopPropagation();deleteSeason(${i})">Elimina</button></div></div>`).join(""):'<div class="card muted">Nessuna classifica inserita. Premi “Nuova classifica”.</div>'}
+    </div>
+    <div id="seasonDetail" style="margin-top:14px"></div>`;
+}
+function openSeasonTable(index=null){
+  editingSeasonIndex=index;
+  const s=index!==null?seasonHistory[index]:{season:"2009/2010",title:"HM League",standings:Array.from({length:8},()=>makeEmptyStandingRow()),awards:[]};
+  tempSeasonRows=JSON.parse(JSON.stringify(s.standings&&s.standings.length?s.standings:Array.from({length:8},()=>makeEmptyStandingRow())));
+  tempSeasonAwards=JSON.parse(JSON.stringify(s.awards||[]));
+  q("tradeModalBody").innerHTML=`
+    <h3>${index!==null?"Modifica classifica storica":"Nuova classifica storica"}</h3>
+    <div class="grid grid2"><label>Stagione<input class="input" id="histSeason" value="${esc(s.season||"")}"></label><label>Competizione<input class="input" id="histTitle" value="${esc(s.title||"HM League")}"></label></div>
+    <div class="card" style="margin-top:12px"><div class="between"><h3>Classifica</h3><div class="row"><button class="btn primary" onclick="addStandingPosition()">Aggiungi posizione</button><button class="btn red" onclick="removeLastStandingPosition()">Togli ultima</button></div></div><div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>Pos</th><th>Società esistente</th><th>Nome libero</th><th>Serie</th><th>Punti</th><th>GF</th><th>GS</th><th>FM</th><th></th></tr></thead><tbody id="standingEditorRows"></tbody></table></div></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="saveSeasonTable()">Salva classifica</button></div>`;
+  q("tradeModal").style.display="flex";
+  renderStandingEditorRows();
+}
+function teamOptions(selected){return `<option value="">-- nome libero --</option>`+teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===selected?"selected":""}>${t.code} · ${esc(t.name)}</option>`).join("");}
+function renderStandingEditorRows(){
+  q("standingEditorRows").innerHTML=tempSeasonRows.map((r,i)=>`<tr><td><b>${i+1}</b></td><td><select class="input" onchange="standingChooseTeam(${i},this.value)">${teamOptions(r.teamCode)}</select></td><td><input class="input" value="${esc(r.team||"")}" onchange="updateStandingField(${i},'team',this.value)"></td><td><input class="input" value="${esc(r.series||"")}" onchange="updateStandingField(${i},'series',this.value)"></td><td><input class="input" style="width:80px" value="${esc(r.points||"")}" onchange="updateStandingField(${i},'points',this.value)"></td><td><input class="input" style="width:80px" value="${esc(r.gf||"")}" onchange="updateStandingField(${i},'gf',this.value)"></td><td><input class="input" style="width:80px" value="${esc(r.ga||"")}" onchange="updateStandingField(${i},'ga',this.value)"></td><td><input class="input" style="width:90px" value="${esc(r.fm||"")}" onchange="updateStandingField(${i},'fm',this.value)"></td><td><button class="btn red" onclick="removeStandingPosition(${i})">X</button></td></tr>`).join("");
+}
+function standingChooseTeam(i,code){tempSeasonRows[i].teamCode=code;if(code){const t=team(code);tempSeasonRows[i].team=t?t.name:"";}renderStandingEditorRows();}
+function updateStandingField(i,field,value){tempSeasonRows[i][field]=value;}
+function addStandingPosition(){tempSeasonRows.push(makeEmptyStandingRow());renderStandingEditorRows();}
+function removeLastStandingPosition(){if(tempSeasonRows.length>0)tempSeasonRows.pop();renderStandingEditorRows();}
+function removeStandingPosition(i){tempSeasonRows.splice(i,1);renderStandingEditorRows();}
+function syncSeasonPositions(seasonItem,oldSeason=null){if(oldSeason)positionHistory=positionHistory.filter(p=>p.sourceSeason!==oldSeason);positionHistory=positionHistory.filter(p=>p.sourceSeason!==seasonItem.season);(seasonItem.standings||[]).forEach((r,idx)=>{if(r.teamCode&&team(r.teamCode)){positionHistory.push({team:r.teamCode,season:seasonItem.season,position:String(idx+1)+"°",series:r.series||seasonItem.title||"",sourceSeason:seasonItem.season});}});}
+function saveSeasonTable(){
+  const season=q("histSeason").value.trim();if(!season){alert("Inserisci la stagione.");return;}
+  const item={season,title:q("histTitle").value.trim()||"HM League",standings:tempSeasonRows.filter(r=>r.teamCode||r.team||r.points||r.gf||r.ga||r.fm).map(r=>({...r})),awards:tempSeasonAwards||[]};
+  let oldSeason=null;if(editingSeasonIndex===null)seasonHistory.unshift(item);else{oldSeason=seasonHistory[editingSeasonIndex]?.season;seasonHistory[editingSeasonIndex]=item;}
+  syncSeasonPositions(item,oldSeason);saveAll();closeTradeModal();renderHistory();
+}
+function openSeasonDetail(i){const s=seasonHistory[i];if(!s)return;q("seasonDetail").innerHTML=`<div class="card"><div class="between"><div><h3>${esc(s.title)} · ${esc(s.season)}</h3></div><button class="btn" onclick="openSeasonTable(${i})">Modifica classifica</button></div><table class="table"><tr><th>Pos</th><th>Squadra</th><th>Serie</th><th>Punti</th><th>GF</th><th>GS</th><th>FM</th></tr>${(s.standings||[]).map((r,idx)=>`<tr><td><b>${idx+1}</b></td><td><b>${esc(r.teamCode?teamLabel(r.teamCode):r.team)}</b></td><td>${esc(r.series||"")}</td><td>${esc(r.points||"")}</td><td>${esc(r.gf||"")}</td><td>${esc(r.ga||"")}</td><td>${esc(r.fm||"")}</td></tr>`).join("")}</table></div>`;}
+function deleteSeason(i){if(!confirm("Eliminare stagione storica?"))return;const s=seasonHistory[i];if(s?.season)positionHistory=positionHistory.filter(p=>p.sourceSeason!==s.season);seasonHistory.splice(i,1);saveAll();renderHistory();}
+
+/* Asta */
+function auctionPlayer(){return players.find(p=>p.id===auctionState.playerId)||null;}
+function highestBid(){return auctionState.bids&&auctionState.bids.length?auctionState.bids[auctionState.bids.length-1]:null;}
+function renderAuction(){
+  auctionState=auctionState||{playerId:"",bids:[],history:[]};
+  const p=auctionPlayer();const bid=highestBid();
+  q("view-auction").innerHTML=`<div class="between"><div><h2>Asta</h2><p class="muted">Cerca un calciatore, fai offerte e aggiudica col martello.</p></div></div>
+  <div class="grid grid2" style="margin-top:14px"><div class="card"><h3>Cerca calciatore</h3><input id="aucSearch" class="input" placeholder="Nome..." oninput="renderAuctionSearchResults()"><button class="btn primary" style="margin-top:10px" onclick="openManualAuctionPlayer()">Aggiungi manualmente</button><div id="auctionSearchResults" style="margin-top:12px"></div></div>
+  <div class="card"><h3>Asta in corso</h3>${p?`<div class="playerRow">${jersey(p.owner||"SVIN",54)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role||"")} · ${esc(p.current||"")}</div></div><button class="btn red" onclick="resetAuction()">Annulla asta</button></div><div class="stat" style="margin-top:12px"><div class="muted">Offerta più alta</div><div class="n">${bid?esc(bid.amount)+" crediti":"Nessuna"}</div><div>${bid?teamLabel(bid.team):"Base minima 1 credito"}</div></div><label>Squadra<select id="bidTeam" class="input">${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}">${teamLabel(t.code)} · crediti ${t.credits??0}</option>`).join("")}</select></label><label>Offerta<input id="bidAmount" class="input" type="number" value="${bid?Number(bid.amount)+1:1}"></label><div class="row"><button class="btn green" onclick="placeBid()">Fai offerta</button><button class="btn primary" style="font-size:24px" onclick="hammerAuction()">🔨</button></div>`:`<div class="muted">Nessun calciatore selezionato. Cerca un calciatore a sinistra oppure aggiungilo manualmente.</div>`}</div></div>
+  <div class="card" style="margin-top:14px"><h3>Storico aste</h3>${(auctionState.history||[]).length?auctionState.history.map((h,i)=>`<div class="playerRow">${jersey(h.team,42)}<div><b>${esc(h.playerName)}</b><div class="muted">Aggiudicato a ${teamLabel(h.team)} per ${esc(h.amount)} crediti</div></div><button class="btn red" onclick="undoAuctionOperation(${i})">Annulla</button></div>`).join(""):'<div class="muted">Nessuna operazione.</div>'}</div>`;
+  renderAuctionSearchResults();
+}
+function renderAuctionSearchResults(){const box=q("auctionSearchResults");if(!box)return;const s=(q("aucSearch")?.value||"").toLowerCase();const list=players.filter(p=>[p.name,p.role,p.current,p.owner].join(" ").toLowerCase().includes(s)).slice(0,50);box.innerHTML=list.map(p=>`<div class="playerRow">${jersey(p.owner||"SVIN",44)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role)} · ${esc(p.current)} · ${esc(p.owner)}</div></div><button class="btn primary" onclick="startAuction('${p.id}')">Metti in asta</button></div>`).join("")||'<div class="muted">Nessun calciatore trovato.</div>';}
+function startAuction(id){auctionState.playerId=id;auctionState.bids=[];saveAll();renderAuction();}
+function openManualAuctionPlayer(){const name=prompt("Nome calciatore");if(!name)return;const p={id:"P"+Date.now(),name,role:prompt("Ruolo","")||"",current:"",owner:"SVIN",status:"ASTA",bonus:"",contract:"0",deadline:""};players.push(p);startAuction(p.id);}
+function placeBid(){const p=auctionPlayer();if(!p)return;const teamCode=q("bidTeam").value;const amount=Number(q("bidAmount").value||0);const min=highestBid()?Number(highestBid().amount)+1:1;if(amount<min){alert("Offerta minima "+min);return;}auctionState.bids.push({team:teamCode,amount,date:new Date().toLocaleString("it-IT")});saveAll();renderAuction();}
+function hammerAuction(){const p=auctionPlayer();const bid=highestBid();if(!p||!bid){alert("Serve almeno un'offerta.");return;}const oldOwner=p.owner, oldCurrent=p.current, oldCredits=team(bid.team)?.credits;p.owner=bid.team;p.current=bid.team;team(bid.team).credits=(Number(team(bid.team).credits)||0)-Number(bid.amount||0);auctionState.history.unshift({playerId:p.id,playerName:p.name,team:bid.team,amount:bid.amount,oldOwner,oldCurrent,oldCredits,date:new Date().toLocaleString("it-IT")});auctionState.playerId="";auctionState.bids=[];saveAll();renderAuction();}
+function undoAuctionOperation(i){const op=auctionState.history[i];if(!op)return;const p=players.find(x=>x.id===op.playerId);if(p){p.owner=op.oldOwner;p.current=op.oldCurrent;}const t=team(op.team);if(t)t.credits=op.oldCredits;auctionState.history.splice(i,1);saveAll();renderAuction();}
+function resetAuction(){auctionState.playerId="";auctionState.bids=[];saveAll();renderAuction();}
+
+/* Azioni Presidente */
+const PRESIDENT_ACTION_TYPES=[
+  {name:"Ritiro forzato",cost:7,suspended:false},{name:"Tutti allo stadio",cost:7,suspended:false},{name:"Caro biglietti",cost:-5,suspended:false},{name:"Patto con gli ultras",cost:7,suspended:false},{name:"Discorso alla squadra",cost:15,suspended:false},{name:"Ultimatum all’allenatore",cost:0,suspended:false},{name:"Promessa alla squadra",cost:25,suspended:true}
+];
+function actionType(name){return PRESIDENT_ACTION_TYPES.find(a=>a.name===name)||PRESIDENT_ACTION_TYPES[0];}
+function renderPresidentActions(){
+  q("view-actions").innerHTML=`<div class="between"><div><h2>Azioni Presidente</h2><p class="muted">Gestione crediti e registro azioni.</p></div><button class="btn primary" onclick="openPresidentActionModal()">Nuova azione</button></div><div class="card" style="margin-top:14px"><h3>Registro azioni</h3><table class="table"><tr><th>Data</th><th>Squadra</th><th>Azione</th><th>Contro</th><th>Competizione</th><th>Crediti</th><th>Stato</th><th></th></tr>${presidentActions.length?presidentActions.map((a,i)=>`<tr><td>${esc(a.date)}</td><td>${teamLabel(a.team)}</td><td><b>${esc(a.action)}</b></td><td>${a.against?teamFullName(a.against):"-"}</td><td>${esc(a.competition||"-")}</td><td>${a.suspended&&a.status!=="Pagata"?"Sospesi "+esc(a.cost):esc(a.creditDelta)}</td><td><span class="badge">${esc(a.status)}</span></td><td><button class="btn" onclick="openPresidentActionModal(${i})">Modifica</button><button class="btn red" onclick="deletePresidentAction(${i})">Elimina</button></td></tr>`).join(""):'<tr><td colspan="8" class="muted">Nessuna azione registrata. Premi “Nuova azione”.</td></tr>'}</table></div>`;
+}
+function openPresidentActionModal(index=null){
+  const row=index!==null?presidentActions[index]:{team:"IMP",action:"Ritiro forzato",against:"",competition:"Campionato",status:"Attiva"};
+  q("tradeModalBody").innerHTML=`<h3>${index!==null?"Modifica":"Nuova"} azione presidente</h3><div class="grid grid2"><label>Squadra<select class="input" id="paTeam">${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===row.team?"selected":""}>${teamLabel(t.code)}</option>`).join("")}</select></label><label>Azione<select class="input" id="paAction">${PRESIDENT_ACTION_TYPES.map(a=>`<option value="${a.name}" ${a.name===row.action?"selected":""}>${a.name}</option>`).join("")}</select></label><label>Contro<select class="input" id="paAgainst"><option value="">Nessuna</option>${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===row.against?"selected":""}>${teamLabel(t.code)}</option>`).join("")}</select></label><label>Competizione<select class="input" id="paCompetition"><option ${row.competition==="Campionato"?"selected":""}>Campionato</option><option ${row.competition==="Coppa"?"selected":""}>Coppa</option></select></label><label>Stato<select class="input" id="paStatus">${["Attiva","Conclusa","Annullata","Pagata"].map(s=>`<option ${s===row.status?"selected":""}>${s}</option>`).join("")}</select></label></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="savePresidentAction(${index===null?"null":index})">Salva</button></div>`;
+  q("tradeModal").style.display="flex";
+}
+function applyPresidentActionCredits(row,reverse=false){const t=team(row.team);if(!t)return;if(row.suspended&&row.status!=="Pagata")return;const d=Number(row.creditDelta||0);t.credits=(Number(t.credits)||0)+(reverse?-d:d);}
+function savePresidentAction(index=null){const a=actionType(q("paAction").value);const status=q("paStatus").value;const creditDelta=a.suspended?(status==="Pagata"?-Number(a.cost):0):-Number(a.cost);const row={team:q("paTeam").value,action:a.name,against:q("paAgainst").value,competition:q("paCompetition").value,status,suspended:!!a.suspended,cost:a.cost,creditDelta,date:index===null?new Date().toLocaleString("it-IT"):presidentActions[index].date,applied:false};if(index!==null){const old=presidentActions[index];if(old?.applied)applyPresidentActionCredits(old,true);presidentActions[index]=row;}else{presidentActions.unshift(row);index=0;}if(row.status!=="Annullata"){applyPresidentActionCredits(row,false);presidentActions[index].applied=true;}saveAll();closeTradeModal();renderPresidentActions();}
+function deletePresidentAction(i){const row=presidentActions[i];if(row?.applied)applyPresidentActionCredits(row,true);presidentActions.splice(i,1);saveAll();renderPresidentActions();}
+
 function renderStyle(){
   q("view-style").innerHTML = `<h2>Editor estetica sito</h2><div class="card"><p class="muted">Nella versione online questo pannello salverà tema, menu, colori, loghi e sezioni nel database.</p><div class="grid grid3"><label>Colore principale<input class="input" type="color" value="#7c3aed"></label><label>Colore sfondo<input class="input" type="color" value="#07111f"></label><label>Stile card<select class="input"><option>Arrotondato</option><option>Squadrato</option><option>Premium</option></select></label></div></div>`;
 }

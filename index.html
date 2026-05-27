@@ -613,6 +613,47 @@ function restoreBackupFromFile(event){
   reader.readAsText(file);
 }
 
+
+function sleepHm(ms){
+  return new Promise(resolve=>setTimeout(resolve, ms));
+}
+
+function getPayloadStamp(data){
+  return data && typeof data === "object" ? String(data.updatedAt || "") : "";
+}
+
+async function verifyCloudSaved(expectedStamp){
+  try{
+    const online = await loadCloudJsonp();
+    if(!hasUsefulCloudData(online)) return false;
+    return getPayloadStamp(online) === expectedStamp;
+  }catch(e){
+    console.warn("Verifica salvataggio cloud non riuscita", e);
+    return false;
+  }
+}
+
+async function postCloudPayloadRaw(text){
+  // Apps Script + Drive: POST diretto del JSON completo.
+  // Non imposto header custom: così evito preflight/CORS e il corpo arriva come testo semplice.
+  await fetch(HM_CLOUD_API_URL, {
+    method: "POST",
+    mode: "no-cors",
+    body: text
+  });
+}
+
+async function postCloudPayloadBeacon(text){
+  if(!navigator.sendBeacon) return false;
+  try{
+    const blob = new Blob([text], {type:"text/plain;charset=utf-8"});
+    return navigator.sendBeacon(HM_CLOUD_API_URL, blob);
+  }catch(e){
+    console.warn("Beacon cloud non riuscito", e);
+    return false;
+  }
+}
+
 async function saveCloudNow(showAlert=false){
   if(!isLoggedIn()){ if(showAlert) alert("Devi fare login per salvare online."); return; }
   if(HM_CLOUD_LOADING) {
@@ -627,6 +668,7 @@ async function saveCloudNow(showAlert=false){
   rememberBackupSnapshot(showAlert ? "prima del salvataggio online" : "autosave");
   const payload = buildCloudPayload();
   const text = JSON.stringify(payload);
+  const expectedStamp = getPayloadStamp(payload);
 
   // Se l'utente preme il pulsante, salvo comunque anche se sembra identico.
   if(!showAlert && text === HM_CLOUD_LAST_SAVE && !HM_HAS_UNSAVED_CHANGES) return;
@@ -635,12 +677,30 @@ async function saveCloudNow(showAlert=false){
   updateCloudBadge();
 
   try{
-    await fetch(HM_CLOUD_API_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: {"Content-Type":"text/plain;charset=utf-8"},
-      body: text
-    });
+    let verified = false;
+
+    await postCloudPayloadRaw(text);
+    await sleepHm(3000);
+    verified = await verifyCloudSaved(expectedStamp);
+
+    // Fallback: alcuni browser bloccano/svuotano il POST no-cors verso Apps Script.
+    if(!verified){
+      const beaconQueued = await postCloudPayloadBeacon(text);
+      if(beaconQueued){
+        await sleepHm(4000);
+        verified = await verifyCloudSaved(expectedStamp);
+      }
+    }
+
+    if(!verified){
+      HM_CLOUD_READY = false;
+      HM_HAS_UNSAVED_CHANGES = true;
+      updateCloudBadge();
+      if(showAlert){
+        alert("ATTENZIONE: Google non ha confermato il salvataggio. Non ho segnato i dati come sincronizzati. Riprova dopo aver verificato Apps Script/deployment.");
+      }
+      return;
+    }
 
     HM_CLOUD_READY = true;
     HM_HAS_UNSAVED_CHANGES = false;
@@ -650,17 +710,18 @@ async function saveCloudNow(showAlert=false){
 
     if(showAlert){
       const info = cloudPayloadInfo();
-      alert(`Salvato online correttamente. Sincronizzati anche loghi/immagini: ${info.logoCount} loghi, ${info.orgImageCount} immagini società, ${info.awardImageCount} immagini premi.`);
+      alert(`Salvato online e verificato. Sincronizzati anche loghi/immagini: ${info.logoCount} loghi, ${info.orgImageCount} immagini società, ${info.awardImageCount} immagini premi.`);
     }
   }catch(e){
     console.warn("Salvataggio cloud non riuscito", e);
+    HM_CLOUD_READY = false;
+    HM_HAS_UNSAVED_CHANGES = true;
     if(showAlert) alert("Errore salvataggio online. Controlla connessione e riprova.");
   }finally{
     HM_CLOUD_SAVING = false;
     updateCloudBadge();
   }
 }
-
 
 function scheduleCloudSave(){
   // Salvataggio automatico disattivato: si salva online solo premendo "Salva online".
@@ -1199,7 +1260,7 @@ function moduleRows(module){
   const data={
     "343":[["Por"],["Dc","Dc","Dc"],["E","M/C","C","E"],["W/A","A/Pc","W/A"]],
     "3421":[["Por"],["Dc","Dc","Dc"],["E","M/C","C","E"],["T","T/A"],["A/Pc"]],
-    "352":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","C","E/W"],["A/Pc","A/Pc"]],
+    "352":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","M","C","E/W"],["A/Pc","A/Pc"]],
     "3412":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","C","E/W"],["T"],["A/Pc","A/Pc"]],
     "433":[["Por"],["Dd","Dc","Dc","Ds"],["M/C","M","C"],["W/A","A/Pc","W/A"]],
     "4312":[["Por"],["Dd","Dc","Dc","Ds"],["M/C","M","C"],["T"],["A/Pc","A/Pc"]],

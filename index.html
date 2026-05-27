@@ -95,6 +95,7 @@ button{cursor:pointer}
       <button class="navbtn" data-view="history">📚 Storico campionati</button>
       <button class="navbtn" data-view="auction">🔨 Asta</button>
       <button class="navbtn" data-view="actions">📣 Azioni Presidente</button>
+      <button class="navbtn" data-view="regulation">📜 Regolamento</button>
       <button class="navbtn" data-view="coaches">👔 Allenatori</button>
       <button class="navbtn" data-view="compmanager">🏅 Competizioni</button>
       <button class="navbtn" data-view="competitions">🏆 Albo d'Oro</button>
@@ -104,6 +105,8 @@ button{cursor:pointer}
     
 <div id="cloudSaveBar" style="position:fixed;left:10px;right:10px;bottom:10px;z-index:99999;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:10px 12px;border-radius:18px;box-shadow:0 12px 35px rgba(0,0,0,.45);font-size:13px">
   <span id="cloudStatusBadge">☁️ Solo locale</span>
+  <span id="authStatusBadge" class="badge">👁️ Ospite sola lettura</span>
+  <button id="hmLoginBtn" onclick="openLoginModal()" style="background:#334155;border:1px solid #64748b;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">🔐 Login</button>
   <button id="manualSaveOnlineBtn" onclick="saveCloudNow(true)" style="background:#16a34a;border:1px solid #22c55e;color:white;padding:10px 14px;border-radius:14px;font-size:14px;font-weight:900;white-space:nowrap">💾 Salva online</button>
   <button onclick="downloadFullBackup()" style="background:#2563eb;border:1px solid #38bdf8;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">⬇️ Backup</button>
   <button onclick="triggerRestoreBackup()" style="background:#ca8a04;border:1px solid #facc15;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">↩️ Ripristina</button>
@@ -121,6 +124,7 @@ button{cursor:pointer}
       <section id="view-history" class="panel view hidden"></section>
       <section id="view-auction" class="panel view hidden"></section>
       <section id="view-actions" class="panel view hidden"></section>
+      <section id="view-regulation" class="panel view hidden"></section>
       <section id="view-coaches" class="panel view hidden"></section>
       <section id="view-compmanager" class="panel view hidden"></section>
       <section id="view-competitions" class="panel view hidden"></section>
@@ -174,12 +178,150 @@ let presidentActions = JSON.parse(localStorage.getItem("hm_president_actions_v1"
 let competitionsManager = JSON.parse(localStorage.getItem("hm_competitions_manager_v1") || "null");
 let coachesManager = JSON.parse(localStorage.getItem("hm_coaches_manager_v1") || "null");
 let backupArchive = JSON.parse(localStorage.getItem("hm_backup_archive_v1") || "[]");
+let regulationText = localStorage.getItem("hm_regulation_text_v1") || "";
 const INITIAL_COACHES = [{"id": "C1", "name": "Mourinho", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C2", "name": "S. Inzaghi", "tier": 1, "cost": 40, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C3", "name": "Gasperini", "tier": 1, "cost": 40, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C4", "name": "Zidane", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C5", "name": "Emery", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C6", "name": "Sarri", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C7", "name": "Allegri", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C8", "name": "Ancelotti", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C9", "name": "Guardiola", "tier": 1, "cost": 40, "traits": "1 punta +1; 2 punte -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C10", "name": "Luis Enrique", "tier": 1, "cost": 40, "traits": "1 punta +1; 2 punte -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C11", "name": "Tuchel", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C12", "name": "Simeone", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C13", "name": "Conte", "tier": 1, "cost": 40, "traits": "E o W +1; NO E o W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "ew", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C14", "name": "Xabi Alonso", "tier": 1, "cost": 40, "traits": "E o W +1; NO E o W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "ew", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C15", "name": "Pochettino", "tier": 1, "cost": 40, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C16", "name": "Klopp", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C17", "name": "Spalletti", "tier": 1, "cost": 40, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C18", "name": "Pioli", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C19", "name": "Petkovic", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C20", "name": "Thiago Motta", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C21", "name": "Italiano", "tier": 2, "cost": 25, "traits": "W o A +1; No W o A -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C22", "name": "Nuno Espirito Santo", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C23", "name": "Brendan Rodgers", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C24", "name": "Solskjaer", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C25", "name": "Lampard", "tier": 2, "cost": 25, "traits": "1 punta +1; 2 punte -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C26", "name": "Pellegrini", "tier": 2, "cost": 25, "traits": "2 tra W e T +1; No 2 tra W e T -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C27", "name": "Lopetegui", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C28", "name": "Gattuso", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C29", "name": "Bielsa", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C30", "name": "Mazzarri", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C31", "name": "Ranieri", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C32", "name": "Fonseca", "tier": 2, "cost": 25, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C33", "name": "Garcia", "tier": 2, "cost": 25, "traits": "2 tra A e W +1; NO 2 tra A e W -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C34", "name": "Terzic", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C35", "name": "Schevcenko", "tier": 2, "cost": 25, "traits": "1 punta +1; 2 punte -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C36", "name": "Cuesta", "tier": 2, "cost": 25, "traits": "W o A +1; No W o A -1; Bonus dopo gennaio: 1°-4° +0,5, da 7°/8° -1, se nuovo 8°-5° +1", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C37", "name": "Juric", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C38", "name": "Giampaolo", "tier": 3, "cost": 10, "traits": "Trequartista +1; No trequartista -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "treq", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C39", "name": "Di Francesco", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C40", "name": "F. Inzaghi", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C41", "name": "Nesta", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C42", "name": "Dionisi", "tier": 3, "cost": 10, "traits": "Trequartista +1; NO Trequartista -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "treq", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C43", "name": "P. Zanetti", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C44", "name": "Iachini", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C45", "name": "Maran", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C46", "name": "Cesc Fàbregas", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C47", "name": "Semplici", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C48", "name": "Andreazzoli", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C49", "name": "Ballardini", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C50", "name": "Castori", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C51", "name": "D Aversa", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C52", "name": "Gotti", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C53", "name": "Grosso", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C54", "name": "Di Carlo", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C55", "name": "Stroppa", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C56", "name": "Tudor", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C57", "name": "Zeman", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C58", "name": "Montella", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C59", "name": "Pecchia", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C60", "name": "Sottil", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C61", "name": "Vanoli", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}];
-let currentUser = JSON.parse(localStorage.getItem("hm_current_user_v1") || JSON.stringify({role:"admin",teams:["IMP","IRO"]}));
+let currentUser = JSON.parse(localStorage.getItem("hm_current_user_v1") || JSON.stringify({username:"Ospite",role:"guest",teams:[]}));
 
 let selectedTeam = "IMP";
 let selectedPlayerId = null;
 let pendingTrade = null;
+
+
+// =========================
+// LOGIN E PERMESSI SEMPLICI
+// =========================
+// Puoi cambiare qui le password quando vuoi. Username non sensibili a maiuscole/minuscole.
+const HM_AUTH_USERS = {
+  "federico": {name:"Federico", password:"adminhm", role:"admin", teams:["*"]},
+  "antonio": {name:"Antonio", password:"totleg", role:"presidente", teams:["TOT","LEG"]},
+  "fabrizio": {name:"Fabrizio", password:"diakra", role:"presidente", teams:["DIA","KRA"]},
+  "giuseppe": {name:"Giuseppe", password:"jospal", role:"presidente", teams:["JOS","PAL"]},
+  "antonino": {name:"Antonino", password:"iartdt", role:"presidente", teams:["IAR","TDT"]},
+  "salvatore": {name:"Salvatore", password:"floyou", role:"presidente", teams:["FLO","YOU"]},
+  "danilo": {name:"Danilo", password:"bvbred", role:"presidente", teams:["BVB","RED"]},
+  "alessio": {name:"Alessio", password:"skubea", role:"presidente", teams:["SKU","BEA"]}
+};
+
+function normalizeLoginName(v){return String(v||"").trim().toLowerCase();}
+function isAdmin(){return currentUser && currentUser.role === "admin";}
+function isLoggedIn(){return currentUser && currentUser.role && currentUser.role !== "guest";}
+function userTeams(){return Array.isArray(currentUser?.teams) ? currentUser.teams : [];}
+function canEditTeam(code){return isAdmin() || userTeams().includes(String(code||"").toUpperCase());}
+function canEditPlayerObj(p){
+  if(isAdmin()) return true;
+  if(!p) return false;
+  const allowed=userTeams();
+  return allowed.includes(String(p.owner||"").toUpperCase()) || allowed.includes(String(p.current||"").toUpperCase());
+}
+function deny(msg="Non hai i permessi per modificare questa sezione."){alert(msg);return false;}
+function requireLogin(){return isLoggedIn() || deny("Devi fare login per salvare/modificare.");}
+function requireAdmin(){return isAdmin() || deny("Solo Federico admin può modificare questa sezione.");}
+function requireTeam(code){return canEditTeam(code) || deny("Puoi modificare solo le tue squadre.");}
+
+function openLoginModal(){
+  const isIn=isLoggedIn();
+  q("tradeModalBody").innerHTML = isIn ? `
+    <h3>Account attivo</h3>
+    <p class="muted">Sei collegato come <b>${esc(currentUser.username||currentUser.name)}</b> · ruolo: <b>${esc(currentUser.role)}</b></p>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="closeTradeModal()">Chiudi</button>
+      <button class="btn red" onclick="logoutUser()">Esci</button>
+    </div>` : `
+    <h3>Login HM League</h3>
+    <p class="muted">Senza login puoi vedere tutto ma non puoi modificare.</p>
+    <div class="grid grid2">
+      <label>Utente<input id="hmLoginUser" class="input" placeholder="Federico, Antonio..."></label>
+      <label>Password<input id="hmLoginPass" class="input" type="password" placeholder="Password"></label>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="closeTradeModal()">Annulla</button>
+      <button class="btn green" onclick="loginUser()">Entra</button>
+    </div>`;
+  q("tradeModal").style.display="flex";
+}
+function loginUser(){
+  const u=normalizeLoginName(q("hmLoginUser")?.value);
+  const pass=String(q("hmLoginPass")?.value||"");
+  const rec=HM_AUTH_USERS[u];
+  if(!rec || rec.password!==pass){alert("Utente o password errati.");return;}
+  currentUser={username:rec.name,role:rec.role,teams:[...rec.teams]};
+  safeSetStorage("hm_current_user_v1", currentUser);
+  closeTradeModal();
+  updateAuthBadge();
+  showView("dashboard");
+}
+function logoutUser(){
+  currentUser={username:"Ospite",role:"guest",teams:[]};
+  safeSetStorage("hm_current_user_v1", currentUser);
+  closeTradeModal();
+  updateAuthBadge();
+  showView("dashboard");
+}
+function updateAuthBadge(){
+  const badge=q("authStatusBadge");
+  const btn=q("hmLoginBtn");
+  if(!badge || !btn) return;
+  if(isAdmin()){badge.textContent="🔓 Federico admin";btn.textContent="👤 Account";}
+  else if(isLoggedIn()){badge.textContent=`🔐 ${currentUser.username} · ${userTeams().join("/")}`;btn.textContent="👤 Account";}
+  else{badge.textContent="👁️ Ospite sola lettura";btn.textContent="🔐 Login";}
+  const saveBtn=q("manualSaveOnlineBtn");
+  if(saveBtn){saveBtn.disabled=!isLoggedIn();saveBtn.style.opacity=isLoggedIn()?"1":".45";}
+}
+function currentVisibleViewName(){
+  const v=[...document.querySelectorAll(".view")].find(x=>!x.classList.contains("hidden"));
+  return v ? v.id.replace("view-","") : "dashboard";
+}
+function isReadOnlyNavigationButton(btn){
+  const onclick=String(btn.getAttribute("onclick")||"");
+  return btn.classList.contains("navbtn") || btn.id==="hmLoginBtn" || onclick.includes("openTeam(") || onclick.includes("openSeasonDetail(") || onclick.includes("showView(") || onclick.includes("downloadFullBackup(");
+}
+function setControlLocked(el, locked){
+  if(!el) return;
+  if(el.id==="hmRestoreBackupInput") return;
+  if(el.id==="manualSaveOnlineBtn"){el.disabled = locked || !isLoggedIn(); el.style.opacity=el.disabled?".45":"1"; return;}
+  if(el.id==="hmLoginBtn" || el.classList.contains("navbtn")) return;
+  if(el.tagName==="BUTTON" && isReadOnlyNavigationButton(el)) return;
+  el.disabled=!!locked;
+  if(el.tagName==="BUTTON" || el.tagName==="INPUT" || el.tagName==="SELECT" || el.tagName==="TEXTAREA") el.style.opacity=locked?".45":"1";
+}
+function applyPermissionsToVisibleView(){
+  updateAuthBadge();
+  const view=currentVisibleViewName();
+  let allowEdit=false;
+  if(isAdmin()) allowEdit=true;
+  else if(isLoggedIn()){
+    if(view==="teamDetail" || view==="renewals") allowEdit=canEditTeam(selectedTeam);
+    if(view==="actions") allowEdit=true; // il salvataggio resta bloccato alle sole squadre del presidente
+  }
+  const visible=[...document.querySelectorAll(".view")].find(x=>!x.classList.contains("hidden"));
+  if(visible){
+    visible.querySelectorAll("button,input,select,textarea").forEach(el=>setControlLocked(el,!allowEdit));
+  }
+  // Ripristino backup solo admin; backup download sempre consentito.
+  document.querySelectorAll('button[onclick*="triggerRestoreBackup"]').forEach(b=>setControlLocked(b,!isAdmin()));
+}
+function protectCall(fn, check){
+  return function(...args){
+    if(!check(...args)) return;
+    return fn.apply(this,args);
+  }
+}
+function installPermissionGuards(){
+  const adminFns=["saveRegulationText","clearTradeSeasonLog","confirmTradeFromModal","adminEditTrade","saveAdminTrade","deleteConfirmedTrade","editConfirmedTrade","addGeneralHonor","editGeneralHonor","deleteGeneralHonor","ensureRanking","updateRanking","removeRanking","addRankingRow","addTeam","editTeam","saveRankTeam","openSeasonTable","saveSeasonTable","deleteSeason","startAuction","openManualAuctionPlayer","placeBid","hammerAuction","undoAuctionOperation","resetAuction","openCoachEditor","saveCoach","freeCoach","addCompetition","editCompetitionSettings","deleteCompetition","addParticipant","removeParticipant","updateStandingFieldComp","addManualMatch","updateManualMatch","deleteManualMatch","initBracket","updateBracket","advanceBracket","cFinal"];
+  adminFns.forEach(name=>{ if(typeof window[name]==="function") window[name]=protectCall(window[name],()=>requireAdmin()); });
+
+  ["saveTeamEditor","clearFormation","renewSelected","addHonor","editHonor","deleteHonor","addIndividualTitle","editIndividualTitle","deleteIndividualTitle","addPosition","editPosition","deletePosition","saveOrg"].forEach(name=>{
+    if(typeof window[name]==="function") window[name]=protectCall(window[name],(code)=>requireTeam(code));
+  });
+  if(typeof window.saveFormationSlot==="function") window.saveFormationSlot=protectCall(window.saveFormationSlot,(code)=>requireTeam(code));
+  if(typeof window.openPlayerEditor==="function") window.openPlayerEditor=protectCall(window.openPlayerEditor,(id)=>{ const p=players.find(x=>x.id===id); return canEditPlayerObj(p)||requireAdmin(); });
+  if(typeof window.openNewPlayerEditor==="function") window.openNewPlayerEditor=protectCall(window.openNewPlayerEditor,()=>requireAdmin());
+  if(typeof window.savePlayerEditor==="function") window.savePlayerEditor=protectCall(window.savePlayerEditor,()=>{ const p=players.find(x=>x.id===selectedPlayerId); return selectedPlayerId ? canEditPlayerObj(p)||requireAdmin() : requireAdmin(); });
+  if(typeof window.uploadAwardImage==="function") window.uploadAwardImage=protectCall(window.uploadAwardImage,()=>requireAdmin());
+  if(typeof window.savePresidentAction==="function") window.savePresidentAction=protectCall(window.savePresidentAction,()=>{ const code=q("paTeam")?.value; return isAdmin() || (isLoggedIn() && canEditTeam(code)) || deny("Puoi registrare azioni solo per le tue squadre."); });
+  if(typeof window.deletePresidentAction==="function") window.deletePresidentAction=protectCall(window.deletePresidentAction,(i)=>{ const row=presidentActions[i]; return isAdmin() || (row && canEditTeam(row.team)) || deny("Puoi eliminare solo azioni delle tue squadre."); });
+}
+
 
 function ensureTeamBudgets(){
   teams.forEach(t=>{
@@ -227,11 +369,12 @@ function buildCloudPayload(){
     seasonHistory,
     savedFormations,
     auctionState,
-    currentUser,
+    // currentUser non va nel cloud: ogni browser deve fare login da solo.
     presidentActions,
     competitionsManager,
     coachesManager,
-    backupArchive
+    backupArchive,
+    regulationText
   };
 }
 
@@ -274,11 +417,12 @@ function applyCloudPayload(data){
   if(Array.isArray(data.seasonHistory) && (data.seasonHistory.length || !seasonHistory.length)) seasonHistory = data.seasonHistory;
   if(data.savedFormations && typeof data.savedFormations==="object" && Object.keys(data.savedFormations).length) savedFormations = data.savedFormations;
   if(data.auctionState && typeof data.auctionState==="object") auctionState = data.auctionState;
-  if(data.currentUser && typeof data.currentUser==="object") currentUser = data.currentUser;
+  // Non applico currentUser dal cloud: evita che un login admin si propaghi ad altri browser.
   if(Array.isArray(data.presidentActions) && (data.presidentActions.length || !presidentActions.length)) presidentActions = data.presidentActions;
   if(data.competitionsManager !== undefined && data.competitionsManager !== null) competitionsManager = data.competitionsManager;
   if(data.coachesManager !== undefined && data.coachesManager !== null) coachesManager = data.coachesManager;
   if(Array.isArray(data.backupArchive) && data.backupArchive.length) backupArchive = data.backupArchive.slice(-25);
+  if(typeof data.regulationText === "string") regulationText = data.regulationText;
 
   rankingData = cleanRankingRows(rankingData);
   ensureTeamBudgets();
@@ -309,6 +453,7 @@ function saveLocalOnly(){
   safeSetStorage("hm_competitions_manager_v1", competitionsManager);
   safeSetStorage("hm_coaches_manager_v1", coachesManager);
   safeSetStorage("hm_backup_archive_v1", backupArchive);
+  try{ localStorage.setItem("hm_regulation_text_v1", regulationText || ""); }catch(e){ console.warn("Storage pieno, salto regolamento", e); }
 }
 
 
@@ -359,6 +504,7 @@ function downloadFullBackup(){
 }
 
 function triggerRestoreBackup(){
+  if(!requireAdmin()) return;
   const input = q("hmRestoreBackupInput");
   if(input){ input.value = ""; input.click(); }
 }
@@ -371,6 +517,7 @@ function normalizeBackupPayload(raw){
 }
 
 function restoreBackupFromFile(event){
+  if(!requireAdmin()) return;
   const file = event?.target?.files?.[0];
   if(!file) return;
   const reader = new FileReader();
@@ -402,6 +549,7 @@ function restoreBackupFromFile(event){
 }
 
 async function saveCloudNow(showAlert=false){
+  if(!isLoggedIn()){ if(showAlert) alert("Devi fare login per salvare online."); return; }
   if(HM_CLOUD_LOADING) {
     if(showAlert) alert("Sto ancora caricando i dati online. Riprova tra qualche secondo.");
     return;
@@ -452,8 +600,10 @@ function scheduleCloudSave(){
 }
 
 function saveAll(){
+  if(!isLoggedIn()){ alert("Devi fare login per modificare."); return false; }
   saveLocalOnly();
   markUnsavedChanges();
+  return true;
 }
 
 
@@ -530,10 +680,12 @@ function showView(name){
   if(name==="history") renderHistory();
   if(name==="auction") renderAuction();
   if(name==="actions") renderPresidentActions();
+  if(name==="regulation") renderRegulation();
   if(name==="coaches") renderCoaches();
   if(name==="compmanager") renderCompetitionManager();
   if(name==="competitions") renderCompetitions();
   if(name==="style") renderStyle();
+  setTimeout(applyPermissionsToVisibleView,0);
 }
 
 document.querySelectorAll(".navbtn").forEach(b=>b.onclick=()=>showView(b.dataset.view));
@@ -2708,10 +2860,37 @@ function applyPresidentActionCredits(row,reverse=false){const t=team(row.team);i
 function savePresidentAction(index=null){const a=actionType(q("paAction").value);const status=q("paStatus").value;const creditDelta=a.suspended?(status==="Pagata"?-Number(a.cost):0):-Number(a.cost);const row={team:q("paTeam").value,action:a.name,against:q("paAgainst").value,competition:q("paCompetition").value,status,suspended:!!a.suspended,cost:a.cost,creditDelta,date:index===null?new Date().toLocaleString("it-IT"):presidentActions[index].date,applied:false};if(index!==null){const old=presidentActions[index];if(old?.applied)applyPresidentActionCredits(old,true);presidentActions[index]=row;}else{presidentActions.unshift(row);index=0;}if(row.status!=="Annullata"){applyPresidentActionCredits(row,false);presidentActions[index].applied=true;}saveAll();closeTradeModal();renderPresidentActions();}
 function deletePresidentAction(i){const row=presidentActions[i];if(row?.applied)applyPresidentActionCredits(row,true);presidentActions.splice(i,1);saveAll();renderPresidentActions();}
 
+
+function renderRegulation(){
+  const canSave = isAdmin();
+  q("view-regulation").innerHTML = `
+    <div class="between">
+      <div>
+        <h2>Regolamento</h2>
+        <p class="muted">Qui puoi incollare e salvare il regolamento ufficiale della HM League. Gli ospiti e i presidenti possono leggerlo, solo Federico admin può modificarlo.</p>
+      </div>
+      <button class="btn green" onclick="saveRegulationText()">💾 Salva regolamento</button>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <textarea id="hmRegulationText" class="input" style="width:100%;min-height:620px;line-height:1.45;white-space:pre-wrap" placeholder="Incolla qui il regolamento..." ${canSave?"":"disabled"}>${esc(regulationText)}</textarea>
+    </div>`;
+}
+
+function saveRegulationText(){
+  if(!requireAdmin()) return;
+  const el = q("hmRegulationText");
+  regulationText = el ? String(el.value || "") : regulationText;
+  saveAll();
+  alert("Regolamento salvato. Premi Salva online per sincronizzarlo sugli altri dispositivi.");
+  renderRegulation();
+}
+
 function renderStyle(){
   q("view-style").innerHTML = `<h2>Editor estetica sito</h2><div class="card"><p class="muted">Nella versione online questo pannello salverà tema, menu, colori, loghi e sezioni nel database.</p><div class="grid grid3"><label>Colore principale<input class="input" type="color" value="#7c3aed"></label><label>Colore sfondo<input class="input" type="color" value="#07111f"></label><label>Stile card<select class="input"><option>Arrotondato</option><option>Squadrato</option><option>Premium</option></select></label></div></div>`;
 }
 
+installPermissionGuards();
+updateAuthBadge();
 showView("dashboard");
 
 // Avvio sincronizzazione online
@@ -2719,7 +2898,7 @@ setTimeout(()=>{ loadCloudData(); }, 300);
 
 // Salvataggio di sicurezza: se ci sono modifiche non salvate, prova a salvarle ogni 30 secondi.
 const hmAutoCloudSaver = setInterval(()=>{
-  if(HM_HAS_UNSAVED_CHANGES && !HM_CLOUD_SAVING && !HM_CLOUD_LOADING){
+  if(isLoggedIn() && HM_HAS_UNSAVED_CHANGES && !HM_CLOUD_SAVING && !HM_CLOUD_LOADING){
     saveCloudNow(false);
   }
 }, 30000);

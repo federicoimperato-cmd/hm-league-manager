@@ -404,6 +404,43 @@ function applyLocalCloudMirror(mirror){
   }
 }
 
+function reloadStateFromLocalStorageMirror(){
+  // Dopo aver applicato il mirror cloud, aggiorna anche le variabili in memoria.
+  // Serve soprattutto per loghi/immagini/regolamento salvati nel browser come localStorage.
+  try{
+    const readJson = (key, fallback) => {
+      const raw = localStorage.getItem(key);
+      if(raw === null || raw === undefined || raw === "") return fallback;
+      try{return JSON.parse(raw);}catch(e){return fallback;}
+    };
+
+    teams = readJson("hm_teams_v1", teams);
+    players = readJson("hm_players_v1", players);
+    trades = readJson("hm_trades_v1", trades);
+    news = readJson("hm_news_v1", news);
+    honors = readJson("hm_honors_v1", honors);
+    individualTitles = readJson("hm_individual_titles_v1", individualTitles);
+    positionHistory = readJson("hm_positions_v1", positionHistory);
+    orgData = readJson("hm_org_v1", orgData);
+    awardImages = readJson("hm_award_images_v1", awardImages);
+    rankingData = readJson("hm_ranking_v1", rankingData);
+    rankingHidden = readJson("hm_ranking_hidden_v1", rankingHidden);
+    seasonHistory = readJson("hm_season_history_v1", seasonHistory);
+    savedFormations = readJson("hm_formations_v1", readJson("hm_formations_v2", savedFormations));
+    auctionState = readJson("hm_auction_v1", auctionState);
+    presidentActions = readJson("hm_president_actions_v1", presidentActions);
+    competitionsManager = readJson("hm_competitions_manager_v1", competitionsManager);
+    coachesManager = readJson("hm_coaches_manager_v1", coachesManager);
+    regulationText = localStorage.getItem("hm_regulation_text_v1") ?? regulationText;
+
+    rankingData = cleanRankingRows(rankingData);
+    ensureTeamBudgets();
+  }catch(e){
+    console.warn("Ricarica stato da mirror non completata", e);
+  }
+}
+
+
 function cloudPayloadInfo(){
   const logoCount = (Array.isArray(teams)?teams:[]).filter(t=>String(t?.logo||"").startsWith("data:image")).length;
   const orgImageCount = Object.values(orgData||{}).reduce((n,o)=>n+(o?.presidentImg?1:0)+(o?.stadiumImg?1:0),0);
@@ -454,14 +491,13 @@ function cleanRankingRows(rows){
 }
 
 function hasUsefulCloudData(data){
+  if(data && data.backupType === "HM_LEAGUE_MANAGER_BACKUP" && data.data) data = data.data;
   return !!(data && typeof data === "object" && Array.isArray(data.players) && data.players.length > 100 && Array.isArray(data.teams) && data.teams.length >= 16);
 }
 
 function applyCloudPayload(data){
+  if(data && data.backupType === "HM_LEAGUE_MANAGER_BACKUP" && data.data) data = data.data;
   if(!hasUsefulCloudData(data)) return false;
-
-  // Prima applico eventuale mirror completo: così loghi, immagini e regolamento arrivano anche su browser nuovi.
-  if(data.localMirror && typeof data.localMirror === "object") applyLocalCloudMirror(data.localMirror);
 
   if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
   if(Array.isArray(data.players) && data.players.length>100) players = data.players;
@@ -488,6 +524,13 @@ function applyCloudPayload(data){
   if(data.coachesManager !== undefined && data.coachesManager !== null) coachesManager = data.coachesManager;
   if(Array.isArray(data.backupArchive) && data.backupArchive.length) backupArchive = data.backupArchive.slice(-25);
   if(typeof data.regulationText === "string") regulationText = data.regulationText;
+
+  // Il mirror cloud deve prevalere sui campi vuoti/parziali:
+  // è qui che arrivano loghi, immagini e regolamento sui browser degli altri utenti.
+  if(data.localMirror && typeof data.localMirror === "object"){
+    applyLocalCloudMirror(data.localMirror);
+    reloadStateFromLocalStorageMirror();
+  }
 
   rankingData = cleanRankingRows(rankingData);
   ensureTeamBudgets();

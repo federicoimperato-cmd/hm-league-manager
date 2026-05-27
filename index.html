@@ -404,43 +404,6 @@ function applyLocalCloudMirror(mirror){
   }
 }
 
-function reloadStateFromLocalStorageMirror(){
-  // Dopo aver applicato il mirror cloud, aggiorna anche le variabili in memoria.
-  // Serve soprattutto per loghi/immagini/regolamento salvati nel browser come localStorage.
-  try{
-    const readJson = (key, fallback) => {
-      const raw = localStorage.getItem(key);
-      if(raw === null || raw === undefined || raw === "") return fallback;
-      try{return JSON.parse(raw);}catch(e){return fallback;}
-    };
-
-    teams = readJson("hm_teams_v1", teams);
-    players = readJson("hm_players_v1", players);
-    trades = readJson("hm_trades_v1", trades);
-    news = readJson("hm_news_v1", news);
-    honors = readJson("hm_honors_v1", honors);
-    individualTitles = readJson("hm_individual_titles_v1", individualTitles);
-    positionHistory = readJson("hm_positions_v1", positionHistory);
-    orgData = readJson("hm_org_v1", orgData);
-    awardImages = readJson("hm_award_images_v1", awardImages);
-    rankingData = readJson("hm_ranking_v1", rankingData);
-    rankingHidden = readJson("hm_ranking_hidden_v1", rankingHidden);
-    seasonHistory = readJson("hm_season_history_v1", seasonHistory);
-    savedFormations = readJson("hm_formations_v1", readJson("hm_formations_v2", savedFormations));
-    auctionState = readJson("hm_auction_v1", auctionState);
-    presidentActions = readJson("hm_president_actions_v1", presidentActions);
-    competitionsManager = readJson("hm_competitions_manager_v1", competitionsManager);
-    coachesManager = readJson("hm_coaches_manager_v1", coachesManager);
-    regulationText = localStorage.getItem("hm_regulation_text_v1") ?? regulationText;
-
-    rankingData = cleanRankingRows(rankingData);
-    ensureTeamBudgets();
-  }catch(e){
-    console.warn("Ricarica stato da mirror non completata", e);
-  }
-}
-
-
 function cloudPayloadInfo(){
   const logoCount = (Array.isArray(teams)?teams:[]).filter(t=>String(t?.logo||"").startsWith("data:image")).length;
   const orgImageCount = Object.values(orgData||{}).reduce((n,o)=>n+(o?.presidentImg?1:0)+(o?.stadiumImg?1:0),0);
@@ -490,14 +453,60 @@ function cleanRankingRows(rows){
     .filter(r=>r.code && r.code!=="SVIN" && teamExistsStrict(r.code) && !seen.has(r.code) && seen.add(r.code));
 }
 
+function parseMirrorValue(mirror, key, fallback){
+  try{
+    if(!mirror || typeof mirror[key] !== "string") return fallback;
+    return JSON.parse(mirror[key]);
+  }catch(e){
+    return fallback;
+  }
+}
+
+function normalizeCloudPayload(data){
+  // Google può restituire sia il payload diretto sia un backup wrapper {backupType,data}.
+  // Inoltre alcuni vecchi salvataggi hanno i dati completi dentro localMirror.
+  if(typeof data === "string"){
+    try{ data = JSON.parse(data); }catch(e){ return null; }
+  }
+  if(!data || typeof data !== "object") return null;
+  if(data.backupType === "HM_LEAGUE_MANAGER_BACKUP" && data.data) data = data.data;
+  if(data.data && typeof data.data === "object" && (data.data.players || data.data.localMirror)) data = data.data;
+
+  const mirror = data.localMirror && typeof data.localMirror === "object" ? data.localMirror : null;
+  if(mirror){
+    if(!Array.isArray(data.players) || data.players.length < 50) data.players = parseMirrorValue(mirror, "hm_players_v1", data.players || []);
+    if(!Array.isArray(data.teams) || data.teams.length < 10) data.teams = parseMirrorValue(mirror, "hm_teams_v1", data.teams || []);
+    if(!Array.isArray(data.trades)) data.trades = parseMirrorValue(mirror, "hm_trades_v1", data.trades || []);
+    if(!Array.isArray(data.news)) data.news = parseMirrorValue(mirror, "hm_news_v1", data.news || []);
+    if(!Array.isArray(data.honors)) data.honors = parseMirrorValue(mirror, "hm_honors_v1", data.honors || []);
+    if(!Array.isArray(data.individualTitles)) data.individualTitles = parseMirrorValue(mirror, "hm_individual_titles_v1", data.individualTitles || []);
+    if(!Array.isArray(data.positionHistory)) data.positionHistory = parseMirrorValue(mirror, "hm_positions_v1", data.positionHistory || []);
+    if(!data.orgData || typeof data.orgData !== "object") data.orgData = parseMirrorValue(mirror, "hm_org_v1", data.orgData || {});
+    if(!data.awardImages || typeof data.awardImages !== "object") data.awardImages = parseMirrorValue(mirror, "hm_award_images_v1", data.awardImages || {});
+    if(!Array.isArray(data.rankingData)) data.rankingData = parseMirrorValue(mirror, "hm_ranking_v1", data.rankingData || []);
+    if(!Array.isArray(data.rankingHidden)) data.rankingHidden = parseMirrorValue(mirror, "hm_ranking_hidden_v1", data.rankingHidden || []);
+    if(!Array.isArray(data.seasonHistory)) data.seasonHistory = parseMirrorValue(mirror, "hm_season_history_v1", data.seasonHistory || []);
+    if(!data.savedFormations || typeof data.savedFormations !== "object") data.savedFormations = parseMirrorValue(mirror, "hm_formations_v1", data.savedFormations || {});
+    if(!data.auctionState || typeof data.auctionState !== "object") data.auctionState = parseMirrorValue(mirror, "hm_auction_v1", data.auctionState || {});
+    if(!Array.isArray(data.presidentActions)) data.presidentActions = parseMirrorValue(mirror, "hm_president_actions_v1", data.presidentActions || []);
+    if(data.competitionsManager === undefined || data.competitionsManager === null) data.competitionsManager = parseMirrorValue(mirror, "hm_competitions_manager_v1", data.competitionsManager || null);
+    if(data.coachesManager === undefined || data.coachesManager === null) data.coachesManager = parseMirrorValue(mirror, "hm_coaches_manager_v1", data.coachesManager || null);
+    if(typeof data.regulationText !== "string" && typeof mirror.hm_regulation_text_v1 === "string") data.regulationText = mirror.hm_regulation_text_v1;
+  }
+  return data;
+}
+
 function hasUsefulCloudData(data){
-  if(data && data.backupType === "HM_LEAGUE_MANAGER_BACKUP" && data.data) data = data.data;
+  data = normalizeCloudPayload(data);
   return !!(data && typeof data === "object" && Array.isArray(data.players) && data.players.length > 100 && Array.isArray(data.teams) && data.teams.length >= 16);
 }
 
 function applyCloudPayload(data){
-  if(data && data.backupType === "HM_LEAGUE_MANAGER_BACKUP" && data.data) data = data.data;
+  data = normalizeCloudPayload(data);
   if(!hasUsefulCloudData(data)) return false;
+
+  // Prima applico eventuale mirror completo: così loghi, immagini e regolamento arrivano anche su browser nuovi.
+  if(data.localMirror && typeof data.localMirror === "object") applyLocalCloudMirror(data.localMirror);
 
   if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
   if(Array.isArray(data.players) && data.players.length>100) players = data.players;
@@ -524,13 +533,6 @@ function applyCloudPayload(data){
   if(data.coachesManager !== undefined && data.coachesManager !== null) coachesManager = data.coachesManager;
   if(Array.isArray(data.backupArchive) && data.backupArchive.length) backupArchive = data.backupArchive.slice(-25);
   if(typeof data.regulationText === "string") regulationText = data.regulationText;
-
-  // Il mirror cloud deve prevalere sui campi vuoti/parziali:
-  // è qui che arrivano loghi, immagini e regolamento sui browser degli altri utenti.
-  if(data.localMirror && typeof data.localMirror === "object"){
-    applyLocalCloudMirror(data.localMirror);
-    reloadStateFromLocalStorageMirror();
-  }
 
   rankingData = cleanRankingRows(rankingData);
   ensureTeamBudgets();
@@ -768,10 +770,13 @@ async function saveCloudNow(showAlert=false){
     }
 
     if(!verified){
-      // Apps Script spesso riceve e salva correttamente il POST,
-      // ma la rilettura immediata via JSONP può non confermare per cache/ritardo.
-      // In questo caso NON blocco l'utente: se /exec mostra testo lungo, il cloud è scritto.
-      console.warn("Salvataggio inviato a Google, ma verifica immediata non confermata. Segno comunque come sincronizzato.");
+      HM_CLOUD_READY = false;
+      HM_HAS_UNSAVED_CHANGES = true;
+      updateCloudBadge();
+      if(showAlert){
+        alert("ATTENZIONE: Google non ha confermato il salvataggio. Non ho segnato i dati come sincronizzati. Riprova dopo aver verificato Apps Script/deployment.");
+      }
+      return;
     }
 
     HM_CLOUD_READY = true;
@@ -999,16 +1004,8 @@ async function loadCloudData(){
   updateCloudBadge();
 
   try{
-    let data = null;
-    for(let attempt=0; attempt<3; attempt++){
-      try{
-        data = await loadCloudJsonp();
-        if(hasUsefulCloudData(data)) break;
-      }catch(e){
-        console.warn("Tentativo caricamento cloud fallito", attempt+1, e);
-      }
-      await sleepHm(1200);
-    }
+    const rawData = await loadCloudJsonp();
+    const data = normalizeCloudPayload(rawData);
 
     if(hasUsefulCloudData(data)){
       if(applyCloudPayload(data)){
@@ -1021,7 +1018,7 @@ async function loadCloudData(){
       // Non pubblico automaticamente dati locali sopra un cloud vuoto/parziale:
       // si evita di cancellare registri come scambi, ranking e storico.
       HM_CLOUD_READY = false;
-      console.warn("Cloud vuoto o incompleto: dati online non applicati.");
+      console.warn("Cloud vuoto/incompleto o in formato non riconosciuto: dati online non applicati.", rawData);
     }
   }catch(e){
     console.warn("Caricamento cloud non riuscito", e);
@@ -3104,8 +3101,9 @@ installPermissionGuards();
 updateAuthBadge();
 showView("dashboard");
 
-// Avvio sincronizzazione online
+// Avvio sincronizzazione online: forza sempre il caricamento cloud su browser nuovi/utenti.
 setTimeout(()=>{ loadCloudData(); }, 300);
+window.addEventListener("load", ()=>{ setTimeout(()=>{ if(!HM_CLOUD_READY) loadCloudData(); }, 1200); });
 
 // Salvataggio di sicurezza: se ci sono modifiche non salvate, prova a salvarle ogni 30 secondi.
 const hmAutoCloudSaver = setInterval(()=>{

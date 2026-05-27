@@ -249,6 +249,7 @@ function loginUser(){
   closeTradeModal();
   updateAuthBadge();
   showView("dashboard");
+  loadCloudData();
 }
 function logoutUser(){
   currentUser={username:"Ospite",role:"guest",teams:[]};
@@ -271,6 +272,12 @@ function currentVisibleViewName(){
   const v=[...document.querySelectorAll(".view")].find(x=>!x.classList.contains("hidden"));
   return v ? v.id.replace("view-","") : "dashboard";
 }
+function renderCurrentView(){
+  const view = currentVisibleViewName();
+  if(view === "teamDetail") renderTeamDetail();
+  else showView(view || "dashboard");
+  applyPermissionsToVisibleView();
+}
 function isReadOnlyNavigationButton(btn){
   const onclick=String(btn.getAttribute("onclick")||"");
   return btn.classList.contains("navbtn") || btn.id==="hmLoginBtn" || onclick.includes("openTeam(") || onclick.includes("openSeasonDetail(") || onclick.includes("showView(") || onclick.includes("downloadFullBackup(");
@@ -292,6 +299,8 @@ function applyPermissionsToVisibleView(){
   else if(isLoggedIn()){
     if(view==="teamDetail" || view==="renewals") allowEdit=canEditTeam(selectedTeam);
     if(view==="actions") allowEdit=true; // il salvataggio resta bloccato alle sole squadre del presidente
+    if(view==="trades") allowEdit=true; // i presidenti possono proporre/confermare scambi che coinvolgono le loro squadre
+    if(view==="auction") allowEdit=true; // i presidenti possono partecipare all'asta con le proprie squadre
   }
   const visible=[...document.querySelectorAll(".view")].find(x=>!x.classList.contains("hidden"));
   if(visible){
@@ -307,7 +316,7 @@ function protectCall(fn, check){
   }
 }
 function installPermissionGuards(){
-  const adminFns=["saveRegulationText","clearTradeSeasonLog","confirmTradeFromModal","adminEditTrade","saveAdminTrade","deleteConfirmedTrade","editConfirmedTrade","addGeneralHonor","editGeneralHonor","deleteGeneralHonor","ensureRanking","updateRanking","removeRanking","addRankingRow","addTeam","editTeam","saveRankTeam","openSeasonTable","saveSeasonTable","deleteSeason","startAuction","openManualAuctionPlayer","placeBid","hammerAuction","undoAuctionOperation","resetAuction","openCoachEditor","saveCoach","freeCoach","addCompetition","editCompetitionSettings","deleteCompetition","addParticipant","removeParticipant","updateStandingFieldComp","addManualMatch","updateManualMatch","deleteManualMatch","initBracket","updateBracket","advanceBracket","cFinal"];
+  const adminFns=["saveRegulationText","clearTradeSeasonLog","adminEditTrade","saveAdminTrade","deleteConfirmedTrade","editConfirmedTrade","addGeneralHonor","editGeneralHonor","deleteGeneralHonor","ensureRanking","updateRanking","removeRanking","addRankingRow","addTeam","editTeam","saveRankTeam","openSeasonTable","saveSeasonTable","deleteSeason","hammerAuction","undoAuctionOperation","resetAuction","openCoachEditor","saveCoach","freeCoach","addCompetition","editCompetitionSettings","deleteCompetition","addParticipant","removeParticipant","updateStandingFieldComp","addManualMatch","updateManualMatch","deleteManualMatch","initBracket","updateBracket","advanceBracket","cFinal"];
   adminFns.forEach(name=>{ if(typeof window[name]==="function") window[name]=protectCall(window[name],()=>requireAdmin()); });
 
   ["saveTeamEditor","clearFormation","renewSelected","addHonor","editHonor","deleteHonor","addIndividualTitle","editIndividualTitle","deleteIndividualTitle","addPosition","editPosition","deletePosition","saveOrg"].forEach(name=>{
@@ -320,6 +329,20 @@ function installPermissionGuards(){
   if(typeof window.uploadAwardImage==="function") window.uploadAwardImage=protectCall(window.uploadAwardImage,()=>requireAdmin());
   if(typeof window.savePresidentAction==="function") window.savePresidentAction=protectCall(window.savePresidentAction,()=>{ const code=q("paTeam")?.value; return isAdmin() || (isLoggedIn() && canEditTeam(code)) || deny("Puoi registrare azioni solo per le tue squadre."); });
   if(typeof window.deletePresidentAction==="function") window.deletePresidentAction=protectCall(window.deletePresidentAction,(i)=>{ const row=presidentActions[i]; return isAdmin() || (row && canEditTeam(row.team)) || deny("Puoi eliminare solo azioni delle tue squadre."); });
+
+  // Scambi: il presidente può registrare solo scambi che coinvolgono almeno una sua squadra.
+  if(typeof window.confirmTradeFromModal==="function") window.confirmTradeFromModal=protectCall(window.confirmTradeFromModal,()=>{
+    const t = pendingTrade || tradeState || {};
+    return isAdmin() || (isLoggedIn() && (canEditTeam(t.from) || canEditTeam(t.to))) || deny("Puoi confermare solo scambi che coinvolgono una delle tue squadre.");
+  });
+
+  // Asta: tutti gli utenti registrati possono cercare/mettere un giocatore in asta; le offerte sono limitate alle proprie squadre. Il martello resta admin.
+  if(typeof window.startAuction==="function") window.startAuction=protectCall(window.startAuction,()=> requireLogin());
+  if(typeof window.openManualAuctionPlayer==="function") window.openManualAuctionPlayer=protectCall(window.openManualAuctionPlayer,()=> requireLogin());
+  if(typeof window.placeBid==="function") window.placeBid=protectCall(window.placeBid,()=>{
+    const code = q("bidTeam")?.value;
+    return isAdmin() || (isLoggedIn() && canEditTeam(code)) || deny("Puoi fare offerte solo con le tue squadre.");
+  });
 }
 
 
@@ -351,6 +374,43 @@ function safeSetStorage(key, value){
   }
 }
 
+function buildLocalCloudMirror(){
+  // Copia di sicurezza di tutti i dati HM salvati nel browser, immagini comprese.
+  // Escludo solo login personale e archivio backup per non propagare account o gonfiare troppo il cloud.
+  const mirror = {};
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(!k || !k.startsWith("hm_")) continue;
+      if(k === "hm_current_user_v1" || k === "hm_backup_archive_v1") continue;
+      mirror[k] = localStorage.getItem(k);
+    }
+  }catch(e){
+    console.warn("Mirror localStorage non creato", e);
+  }
+  return mirror;
+}
+
+function applyLocalCloudMirror(mirror){
+  if(!mirror || typeof mirror !== "object") return;
+  try{
+    Object.entries(mirror).forEach(([k,v])=>{
+      if(!k || !k.startsWith("hm_")) return;
+      if(k === "hm_current_user_v1" || k === "hm_backup_archive_v1") return;
+      if(typeof v === "string") localStorage.setItem(k, v);
+    });
+  }catch(e){
+    console.warn("Mirror localStorage non applicato completamente", e);
+  }
+}
+
+function cloudPayloadInfo(){
+  const logoCount = (Array.isArray(teams)?teams:[]).filter(t=>String(t?.logo||"").startsWith("data:image")).length;
+  const orgImageCount = Object.values(orgData||{}).reduce((n,o)=>n+(o?.presidentImg?1:0)+(o?.stadiumImg?1:0),0);
+  const awardImageCount = Object.values(awardImages||{}).filter(v=>String(v||"").startsWith("data:image")).length;
+  return {logoCount, orgImageCount, awardImageCount};
+}
+
 function buildCloudPayload(){
   return {
     version: 1,
@@ -374,7 +434,9 @@ function buildCloudPayload(){
     competitionsManager,
     coachesManager,
     backupArchive,
-    regulationText
+    regulationText,
+    localMirror: buildLocalCloudMirror(),
+    assetInfo: cloudPayloadInfo()
   };
 }
 
@@ -397,6 +459,9 @@ function hasUsefulCloudData(data){
 
 function applyCloudPayload(data){
   if(!hasUsefulCloudData(data)) return false;
+
+  // Prima applico eventuale mirror completo: così loghi, immagini e regolamento arrivano anche su browser nuovi.
+  if(data.localMirror && typeof data.localMirror === "object") applyLocalCloudMirror(data.localMirror);
 
   if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
   if(Array.isArray(data.players) && data.players.length>100) players = data.players;
@@ -583,7 +648,10 @@ async function saveCloudNow(showAlert=false){
     saveLocalOnly();
     updateCloudBadge();
 
-    if(showAlert) alert("Salvato online correttamente.");
+    if(showAlert){
+      const info = cloudPayloadInfo();
+      alert(`Salvato online correttamente. Sincronizzati anche loghi/immagini: ${info.logoCount} loghi, ${info.orgImageCount} immagini società, ${info.awardImageCount} immagini premi.`);
+    }
   }catch(e){
     console.warn("Salvataggio cloud non riuscito", e);
     if(showAlert) alert("Errore salvataggio online. Controlla connessione e riprova.");
@@ -818,7 +886,8 @@ async function loadCloudData(){
   }finally{
     HM_CLOUD_LOADING = false;
     updateCloudBadge();
-    if(typeof renderDashboard==="function") renderDashboard();
+    if(typeof renderCurrentView === "function") renderCurrentView();
+    else if(typeof renderDashboard==="function") renderDashboard();
   }
 }
 
@@ -2831,7 +2900,7 @@ function renderAuction(){
   const p=auctionPlayer();const bid=highestBid();
   q("view-auction").innerHTML=`<div class="between"><div><h2>Asta</h2><p class="muted">Cerca un calciatore, fai offerte e aggiudica col martello.</p></div></div>
   <div class="grid grid2" style="margin-top:14px"><div class="card"><h3>Cerca calciatore</h3><input id="aucSearch" class="input" placeholder="Nome..." oninput="renderAuctionSearchResults()"><button class="btn primary" style="margin-top:10px" onclick="openManualAuctionPlayer()">Aggiungi manualmente</button><div id="auctionSearchResults" style="margin-top:12px"></div></div>
-  <div class="card"><h3>Asta in corso</h3>${p?`<div class="playerRow">${jersey(p.owner||"SVIN",54)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role||"")} · ${esc(p.current||"")}</div></div><button class="btn red" onclick="resetAuction()">Annulla asta</button></div><div class="stat" style="margin-top:12px"><div class="muted">Offerta più alta</div><div class="n">${bid?esc(bid.amount)+" crediti":"Nessuna"}</div><div>${bid?teamLabel(bid.team):"Base minima 1 credito"}</div></div><label>Squadra<select id="bidTeam" class="input">${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}">${teamLabel(t.code)} · crediti ${t.credits??0}</option>`).join("")}</select></label><label>Offerta<input id="bidAmount" class="input" type="number" value="${bid?Number(bid.amount)+1:1}"></label><div class="row"><button class="btn green" onclick="placeBid()">Fai offerta</button><button class="btn primary" style="font-size:24px" onclick="hammerAuction()">🔨</button></div>`:`<div class="muted">Nessun calciatore selezionato. Cerca un calciatore a sinistra oppure aggiungilo manualmente.</div>`}</div></div>
+  <div class="card"><h3>Asta in corso</h3>${p?`<div class="playerRow">${jersey(p.owner||"SVIN",54)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role||"")} · ${esc(p.current||"")}</div></div><button class="btn red" onclick="resetAuction()">Annulla asta</button></div><div class="stat" style="margin-top:12px"><div class="muted">Offerta più alta</div><div class="n">${bid?esc(bid.amount)+" crediti":"Nessuna"}</div><div>${bid?teamLabel(bid.team):"Base minima 1 credito"}</div></div><label>Squadra<select id="bidTeam" class="input">${teams.filter(t=>t.code!=="SVIN" && (isAdmin() || canEditTeam(t.code))).map(t=>`<option value="${t.code}">${teamLabel(t.code)} · crediti ${t.credits??0}</option>`).join("")}</select></label><label>Offerta<input id="bidAmount" class="input" type="number" value="${bid?Number(bid.amount)+1:1}"></label><div class="row"><button class="btn green" onclick="placeBid()">Fai offerta</button><button class="btn primary" style="font-size:24px" onclick="hammerAuction()">🔨</button></div>`:`<div class="muted">Nessun calciatore selezionato. Cerca un calciatore a sinistra oppure aggiungilo manualmente.</div>`}</div></div>
   <div class="card" style="margin-top:14px"><h3>Storico aste</h3>${(auctionState.history||[]).length?auctionState.history.map((h,i)=>`<div class="playerRow">${jersey(h.team,42)}<div><b>${esc(h.playerName)}</b><div class="muted">Aggiudicato a ${teamLabel(h.team)} per ${esc(h.amount)} crediti</div></div><button class="btn red" onclick="undoAuctionOperation(${i})">Annulla</button></div>`).join(""):'<div class="muted">Nessuna operazione.</div>'}</div>`;
   renderAuctionSearchResults();
 }

@@ -634,12 +634,44 @@ async function verifyCloudSaved(expectedStamp){
 }
 
 async function postCloudPayloadRaw(text){
-  // Apps Script + Drive: POST diretto del JSON completo.
-  // Non imposto header custom: così evito preflight/CORS e il corpo arriva come testo semplice.
-  await fetch(HM_CLOUD_API_URL, {
-    method: "POST",
-    mode: "no-cors",
-    body: text
+  // Apps Script non conferma bene i POST cross-origin via fetch.
+  // Uso un form nascosto verso iframe: invia il JSON completo come campo payload
+  // e poi la verifica avviene rileggendo il cloud via JSONP.
+  return new Promise((resolve)=>{
+    const frameName = "hmCloudPostFrame_" + Date.now() + "_" + Math.floor(Math.random()*100000);
+    const iframe = document.createElement("iframe");
+    iframe.name = frameName;
+    iframe.style.display = "none";
+
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = HM_CLOUD_API_URL;
+    form.target = frameName;
+    form.style.display = "none";
+
+    const textarea = document.createElement("textarea");
+    textarea.name = "payload";
+    textarea.value = text;
+    form.appendChild(textarea);
+
+    let done = false;
+    function cleanup(){
+      if(done) return;
+      done = true;
+      setTimeout(()=>{
+        try{ form.remove(); }catch(e){}
+        try{ iframe.remove(); }catch(e){}
+      }, 500);
+      resolve(true);
+    }
+
+    iframe.onload = cleanup;
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    form.submit();
+
+    // Anche se Google blocca la visualizzazione in iframe, il POST parte comunque.
+    setTimeout(cleanup, 6000);
   });
 }
 
@@ -680,7 +712,7 @@ async function saveCloudNow(showAlert=false){
     let verified = false;
 
     await postCloudPayloadRaw(text);
-    await sleepHm(3000);
+    await sleepHm(7000);
     verified = await verifyCloudSaved(expectedStamp);
 
     // Fallback: alcuni browser bloccano/svuotano il POST no-cors verso Apps Script.

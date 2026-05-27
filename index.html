@@ -508,7 +508,24 @@ function applyCloudPayload(data){
   // Prima applico eventuale mirror completo: così loghi, immagini e regolamento arrivano anche su browser nuovi.
   if(data.localMirror && typeof data.localMirror === "object") applyLocalCloudMirror(data.localMirror);
 
-  if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
+  if(Array.isArray(data.teams) && data.teams.length>=16) {
+    // Merge protettivo: se il cloud ha loghi vuoti ma il browser li ha ancora in memoria,
+    // NON li cancelliamo al refresh. Evita perdita loghi quando un salvataggio cloud precedente era parziale.
+    const previousTeamsByCode = Object.fromEntries((Array.isArray(teams)?teams:[]).map(t=>[t.code,t]));
+    teams = data.teams.filter(t=>t && t.code).map(t=>{
+      const prev = previousTeamsByCode[t.code] || {};
+      return {
+        ...t,
+        logo: (t.logo && String(t.logo).trim()) ? t.logo : (prev.logo || ""),
+        primary: t.primary || prev.primary || "#334155",
+        secondary: t.secondary || prev.secondary || "#111827",
+        text: t.text || prev.text || "#ffffff",
+        jerseyStyle: t.jerseyStyle || prev.jerseyStyle || "diagonal",
+        credits: t.credits !== undefined ? t.credits : prev.credits,
+        hmcoin: t.hmcoin !== undefined ? t.hmcoin : prev.hmcoin
+      };
+    });
+  }
   if(Array.isArray(data.players) && data.players.length>100) players = data.players;
 
   // IMPORTANTISSIMO: non sovrascrive registri già presenti con array vuoti arrivati dal cloud.
@@ -681,9 +698,22 @@ async function verifyCloudSaved(expectedStamp){
 }
 
 async function postCloudPayloadRaw(text){
-  // Apps Script non conferma bene i POST cross-origin via fetch.
-  // Uso un form nascosto verso iframe: invia il JSON completo come campo payload
-  // e poi la verifica avviene rileggendo il cloud via JSONP.
+  // Invio RAW del JSON completo a Google Apps Script.
+  // Questo evita il limite/bug dei form HTML con campo payload, che può troncare loghi e immagini grandi.
+  try{
+    await fetch(HM_CLOUD_API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      cache: "no-store",
+      headers: {"Content-Type":"text/plain;charset=utf-8"},
+      body: text
+    });
+    return true;
+  }catch(e){
+    console.warn("POST raw cloud fallito, provo fallback form", e);
+  }
+
+  // Fallback vecchio: utile solo se fetch viene bloccato dal browser.
   return new Promise((resolve)=>{
     const frameName = "hmCloudPostFrame_" + Date.now() + "_" + Math.floor(Math.random()*100000);
     const iframe = document.createElement("iframe");
@@ -694,10 +724,11 @@ async function postCloudPayloadRaw(text){
     form.method = "POST";
     form.action = HM_CLOUD_API_URL;
     form.target = frameName;
+    form.enctype = "text/plain";
     form.style.display = "none";
 
     const textarea = document.createElement("textarea");
-    textarea.name = "payload";
+    textarea.name = "";
     textarea.value = text;
     form.appendChild(textarea);
 
@@ -716,8 +747,6 @@ async function postCloudPayloadRaw(text){
     document.body.appendChild(iframe);
     document.body.appendChild(form);
     form.submit();
-
-    // Anche se Google blocca la visualizzazione in iframe, il POST parte comunque.
     setTimeout(cleanup, 6000);
   });
 }
@@ -991,6 +1020,13 @@ function loadCloudJsonp(){
 
 async function loadCloudData(){
   if(!HM_CLOUD_API_URL) return;
+  // Protezione fondamentale: se il browser ha modifiche non ancora salvate, NON ricarico il cloud sopra.
+  // Altrimenti un refresh/focus può cancellare loghi o nuovi calciatori appena inseriti.
+  if(HM_HAS_UNSAVED_CHANGES){
+    console.warn("Cloud load saltato: ci sono modifiche locali non salvate online.");
+    updateCloudBadge();
+    return;
+  }
   HM_CLOUD_LOADING = true;
   updateCloudBadge();
 
@@ -1484,20 +1520,52 @@ function openPlayerEditor(id){
     <label>Contratto<input class="input" id="plContract" value="${esc(p.contract)}"></label>
     <label>Scadenza<input class="input" id="plDeadline" value="${esc(p.deadline)}"></label>
   </div>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="savePlayerEditor()">Salva</button></div>`;
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn red" onclick="deletePlayerEditor('${p.id}')">Elimina</button><button class="btn green" onclick="savePlayerEditor()">Salva</button></div>`;
   q("tradeModalBody").innerHTML=`<h3>Modifica calciatore</h3>${body}`;
   q("tradeModal").style.display="flex";
 }
 
 function savePlayerEditor(){
+  if(!isLoggedIn()){ alert("Devi fare login per modificare."); return; }
+  const isNew = !selectedPlayerId;
   let p=players.find(x=>x.id===selectedPlayerId);
   if(!p){
     p={id:"P"+Date.now(),name:"",role:"",current:"",owner:"SVIN",status:"",bonus:"",contract:"0",deadline:""};
     players.push(p);
   }
-  p.name=q("plName").value; p.role=q("plRole").value; p.current=q("plCurrent").value; p.owner=q("plOwner").value;
-  p.status=q("plStatus").value; p.bonus=q("plBonus").value; p.contract=q("plContract").value; p.deadline=q("plDeadline").value;
-  saveAll(); closeTradeModal(); renderPlayers(); 
+  const newOwner = q("plOwner").value;
+  const currentValue = String(q("plCurrent").value||"").trim();
+  p.name=String(q("plName").value||"").trim();
+  p.role=String(q("plRole").value||"").trim();
+  p.owner=newOwner;
+  // Se aggiungo un nuovo calciatore e lascio vuota la squadra attuale, lo metto automaticamente nella squadra proprietaria.
+  // Così compare subito nella scheda squadra, senza sparire in database.
+  p.current = currentValue || (isNew ? newOwner : "");
+  p.status=q("plStatus").value;
+  p.bonus=q("plBonus").value;
+  p.contract=q("plContract").value;
+  p.deadline=q("plDeadline").value;
+  if(!p.name){ alert("Inserisci almeno il nome del calciatore."); return; }
+  if(saveAll() === false) return;
+  closeTradeModal();
+  renderPlayers();
+  if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
+}
+
+function deletePlayerEditor(id){
+  if(!requireAdmin()) return;
+  const p = players.find(x=>x.id===id);
+  if(!p) return;
+  if(!confirm(`Eliminare definitivamente ${p.name}?`)) return;
+  players = players.filter(x=>x.id!==id);
+  Object.keys(savedFormations||{}).forEach(teamCode=>{
+    Object.keys(savedFormations[teamCode]||{}).forEach(slot=>{
+      if(savedFormations[teamCode][slot]===id) delete savedFormations[teamCode][slot];
+    });
+  });
+  if(saveAll() === false) return;
+  closeTradeModal();
+  renderPlayers();
   if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
 }
 

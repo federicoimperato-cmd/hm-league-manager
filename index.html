@@ -102,9 +102,12 @@ button{cursor:pointer}
     </aside>
 
     
-<div id="cloudSaveBar" style="position:fixed;left:10px;right:10px;bottom:10px;z-index:99999;display:flex;gap:8px;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:10px 12px;border-radius:18px;box-shadow:0 12px 35px rgba(0,0,0,.45);font-size:13px">
+<div id="cloudSaveBar" style="position:fixed;left:10px;right:10px;bottom:10px;z-index:99999;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:10px 12px;border-radius:18px;box-shadow:0 12px 35px rgba(0,0,0,.45);font-size:13px">
   <span id="cloudStatusBadge">☁️ Solo locale</span>
   <button id="manualSaveOnlineBtn" onclick="saveCloudNow(true)" style="background:#16a34a;border:1px solid #22c55e;color:white;padding:10px 14px;border-radius:14px;font-size:14px;font-weight:900;white-space:nowrap">💾 Salva online</button>
+  <button onclick="downloadFullBackup()" style="background:#2563eb;border:1px solid #38bdf8;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">⬇️ Backup</button>
+  <button onclick="triggerRestoreBackup()" style="background:#ca8a04;border:1px solid #facc15;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">↩️ Ripristina</button>
+  <input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
 </div>
 
 <main>
@@ -170,6 +173,7 @@ let auctionState = JSON.parse(localStorage.getItem("hm_auction_v1") || JSON.stri
 let presidentActions = JSON.parse(localStorage.getItem("hm_president_actions_v1") || "[]");
 let competitionsManager = JSON.parse(localStorage.getItem("hm_competitions_manager_v1") || "null");
 let coachesManager = JSON.parse(localStorage.getItem("hm_coaches_manager_v1") || "null");
+let backupArchive = JSON.parse(localStorage.getItem("hm_backup_archive_v1") || "[]");
 const INITIAL_COACHES = [{"id": "C1", "name": "Mourinho", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C2", "name": "S. Inzaghi", "tier": 1, "cost": 40, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C3", "name": "Gasperini", "tier": 1, "cost": 40, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C4", "name": "Zidane", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C5", "name": "Emery", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C6", "name": "Sarri", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C7", "name": "Allegri", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C8", "name": "Ancelotti", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C9", "name": "Guardiola", "tier": 1, "cost": 40, "traits": "1 punta +1; 2 punte -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C10", "name": "Luis Enrique", "tier": 1, "cost": 40, "traits": "1 punta +1; 2 punte -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C11", "name": "Tuchel", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C12", "name": "Simeone", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C13", "name": "Conte", "tier": 1, "cost": 40, "traits": "E o W +1; NO E o W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "ew", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C14", "name": "Xabi Alonso", "tier": 1, "cost": 40, "traits": "E o W +1; NO E o W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "ew", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C15", "name": "Pochettino", "tier": 1, "cost": 40, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C16", "name": "Klopp", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C17", "name": "Spalletti", "tier": 1, "cost": 40, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C18", "name": "Pioli", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C19", "name": "Petkovic", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C20", "name": "Thiago Motta", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C21", "name": "Italiano", "tier": 2, "cost": 25, "traits": "W o A +1; No W o A -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C22", "name": "Nuno Espirito Santo", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C23", "name": "Brendan Rodgers", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C24", "name": "Solskjaer", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C25", "name": "Lampard", "tier": 2, "cost": 25, "traits": "1 punta +1; 2 punte -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C26", "name": "Pellegrini", "tier": 2, "cost": 25, "traits": "2 tra W e T +1; No 2 tra W e T -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C27", "name": "Lopetegui", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C28", "name": "Gattuso", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C29", "name": "Bielsa", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C30", "name": "Mazzarri", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C31", "name": "Ranieri", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C32", "name": "Fonseca", "tier": 2, "cost": 25, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C33", "name": "Garcia", "tier": 2, "cost": 25, "traits": "2 tra A e W +1; NO 2 tra A e W -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C34", "name": "Terzic", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C35", "name": "Schevcenko", "tier": 2, "cost": 25, "traits": "1 punta +1; 2 punte -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C36", "name": "Cuesta", "tier": 2, "cost": 25, "traits": "W o A +1; No W o A -1; Bonus dopo gennaio: 1°-4° +0,5, da 7°/8° -1, se nuovo 8°-5° +1", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C37", "name": "Juric", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C38", "name": "Giampaolo", "tier": 3, "cost": 10, "traits": "Trequartista +1; No trequartista -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "treq", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C39", "name": "Di Francesco", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C40", "name": "F. Inzaghi", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C41", "name": "Nesta", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C42", "name": "Dionisi", "tier": 3, "cost": 10, "traits": "Trequartista +1; NO Trequartista -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "treq", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C43", "name": "P. Zanetti", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C44", "name": "Iachini", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C45", "name": "Maran", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C46", "name": "Cesc Fàbregas", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C47", "name": "Semplici", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C48", "name": "Andreazzoli", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C49", "name": "Ballardini", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C50", "name": "Castori", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C51", "name": "D Aversa", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C52", "name": "Gotti", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C53", "name": "Grosso", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C54", "name": "Di Carlo", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C55", "name": "Stroppa", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C56", "name": "Tudor", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C57", "name": "Zeman", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C58", "name": "Montella", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C59", "name": "Pecchia", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C60", "name": "Sottil", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C61", "name": "Vanoli", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}];
 let currentUser = JSON.parse(localStorage.getItem("hm_current_user_v1") || JSON.stringify({role:"admin",teams:["IMP","IRO"]}));
 
@@ -226,7 +230,8 @@ function buildCloudPayload(){
     currentUser,
     presidentActions,
     competitionsManager,
-    coachesManager
+    coachesManager,
+    backupArchive
   };
 }
 
@@ -273,6 +278,7 @@ function applyCloudPayload(data){
   if(Array.isArray(data.presidentActions) && (data.presidentActions.length || !presidentActions.length)) presidentActions = data.presidentActions;
   if(data.competitionsManager !== undefined && data.competitionsManager !== null) competitionsManager = data.competitionsManager;
   if(data.coachesManager !== undefined && data.coachesManager !== null) coachesManager = data.coachesManager;
+  if(Array.isArray(data.backupArchive) && data.backupArchive.length) backupArchive = data.backupArchive.slice(-25);
 
   rankingData = cleanRankingRows(rankingData);
   ensureTeamBudgets();
@@ -302,6 +308,97 @@ function saveLocalOnly(){
   safeSetStorage("hm_president_actions_v1", presidentActions);
   safeSetStorage("hm_competitions_manager_v1", competitionsManager);
   safeSetStorage("hm_coaches_manager_v1", coachesManager);
+  safeSetStorage("hm_backup_archive_v1", backupArchive);
+}
+
+
+function buildBackupSnapshot(label="manuale"){
+  const data = buildCloudPayload();
+  // Evita backup dentro backup: mantiene il file leggero e pulito.
+  delete data.backupArchive;
+  return {
+    backupType: "HM_LEAGUE_MANAGER_BACKUP",
+    backupVersion: 1,
+    createdAt: new Date().toISOString(),
+    label,
+    data
+  };
+}
+
+function rememberBackupSnapshot(label="automatico"){
+  try{
+    const snap = buildBackupSnapshot(label);
+    backupArchive = Array.isArray(backupArchive) ? backupArchive : [];
+    backupArchive.push({
+      id: "backup_" + Date.now(),
+      createdAt: snap.createdAt,
+      label: snap.label,
+      data: snap.data
+    });
+    backupArchive = backupArchive.slice(-25);
+    safeSetStorage("hm_backup_archive_v1", backupArchive);
+    return snap;
+  }catch(e){
+    console.warn("Backup locale non creato", e);
+    return null;
+  }
+}
+
+function downloadFullBackup(){
+  const snap = rememberBackupSnapshot("download manuale") || buildBackupSnapshot("download manuale");
+  const blob = new Blob([JSON.stringify(snap, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  const d = new Date();
+  const pad = n => String(n).padStart(2,"0");
+  const filename = `hm_league_backup_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}.json`;
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+function triggerRestoreBackup(){
+  const input = q("hmRestoreBackupInput");
+  if(input){ input.value = ""; input.click(); }
+}
+
+function normalizeBackupPayload(raw){
+  if(!raw || typeof raw !== "object") return null;
+  if(raw.backupType === "HM_LEAGUE_MANAGER_BACKUP" && raw.data) return raw.data;
+  if(raw.data && hasUsefulCloudData(raw.data)) return raw.data;
+  return raw;
+}
+
+function restoreBackupFromFile(event){
+  const file = event?.target?.files?.[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(){
+    try{
+      const raw = JSON.parse(String(reader.result||"{}"));
+      const data = normalizeBackupPayload(raw);
+      if(!hasUsefulCloudData(data)){
+        alert("Backup non valido o incompleto. Non ho modificato nulla.");
+        return;
+      }
+      if(!confirm("Vuoi ripristinare questo backup? I dati attuali verranno sostituiti in locale. Dopo il controllo dovrai premere Salva online.")) return;
+      rememberBackupSnapshot("prima del ripristino");
+      if(applyCloudPayload(data)){
+        saveLocalOnly();
+        HM_HAS_UNSAVED_CHANGES = true;
+        updateCloudBadge();
+        showView("dashboard");
+        alert("Backup ripristinato in locale. Controlla i dati e poi premi Salva online per pubblicarlo anche su Google.");
+      }else{
+        alert("Ripristino non riuscito. Backup non applicato.");
+      }
+    }catch(e){
+      console.error(e);
+      alert("Errore lettura backup. File JSON non valido.");
+    }
+  };
+  reader.readAsText(file);
 }
 
 async function saveCloudNow(showAlert=false){
@@ -314,6 +411,7 @@ async function saveCloudNow(showAlert=false){
     return;
   }
 
+  rememberBackupSnapshot(showAlert ? "prima del salvataggio online" : "autosave");
   const payload = buildCloudPayload();
   const text = JSON.stringify(payload);
 

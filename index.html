@@ -187,50 +187,6 @@ function ensureTeamBudgets(){
 }
 ensureTeamBudgets();
 
-function seedOnlineDefaults(){
-  try{
-    // Ranking: se vuoto, inserisce tutte le società con punti 0
-    if(typeof rankingData !== "undefined" && (!Array.isArray(rankingData) || rankingData.length===0)){
-      rankingData = teams.filter(t=>t.code!=="SVIN").map(t=>({
-        code:t.code,
-        points:0,
-        manualOrder:""
-      }));
-    }
-
-    // Storico campionati: deve almeno avere struttura vuota gestibile
-    if(typeof seasonHistory !== "undefined" && !Array.isArray(seasonHistory)){
-      seasonHistory = [];
-    }
-
-    // Asta: se vuota o rotta, inizializza struttura corretta
-    if(typeof auctionState !== "undefined" && (!auctionState || typeof auctionState !== "object")){
-      auctionState = {playerId:"",manualPlayer:null,bids:[],activeTeams:[],passedTeams:[],winner:null,history:[]};
-    }
-    if(typeof auctionState !== "undefined"){
-      auctionState.bids = auctionState.bids || [];
-      auctionState.activeTeams = auctionState.activeTeams || [];
-      auctionState.passedTeams = auctionState.passedTeams || [];
-      auctionState.history = auctionState.history || [];
-    }
-
-    // Azioni Presidente: se vuoto/rotto, inizializza array
-    if(typeof presidentActions !== "undefined" && !Array.isArray(presidentActions)){
-      presidentActions = [];
-    }
-
-    // Competizioni: se vuote, verranno create da ensureCompetitionsManager()
-    if(typeof competitionsManager !== "undefined" && competitionsManager && !Array.isArray(competitionsManager.competitions)){
-      competitionsManager = null;
-    }
-
-    saveAll();
-  }catch(e){
-    console.warn("seedOnlineDefaults error", e);
-  }
-}
-seedOnlineDefaults();
-
 
 const roles = {
   goal: ["Por"],
@@ -274,28 +230,51 @@ function buildCloudPayload(){
   };
 }
 
-function applyCloudPayload(data){
-  if(!data || typeof data !== "object") return false;
+function teamExistsStrict(code){
+  return teams.some(t=>t && t.code===code);
+}
 
-  if(Array.isArray(data.teams)) teams = data.teams;
-  if(Array.isArray(data.players)) players = data.players;
-  if(Array.isArray(data.trades)) trades = data.trades;
-  if(Array.isArray(data.news)) news = data.news;
-  if(Array.isArray(data.honors)) honors = data.honors;
-  if(Array.isArray(data.individualTitles)) individualTitles = data.individualTitles;
-  if(Array.isArray(data.positionHistory)) positionHistory = data.positionHistory;
-  if(data.orgData && typeof data.orgData==="object") orgData = data.orgData;
-  if(data.awardImages && typeof data.awardImages==="object") awardImages = data.awardImages;
-  if(Array.isArray(data.rankingData)) rankingData = data.rankingData;
-  if(Array.isArray(data.rankingHidden)) rankingHidden = data.rankingHidden;
-  if(Array.isArray(data.seasonHistory)) seasonHistory = data.seasonHistory;
-  if(data.savedFormations && typeof data.savedFormations==="object") savedFormations = data.savedFormations;
+function cleanRankingRows(rows){
+  if(!Array.isArray(rows)) return [];
+  const seen = new Set();
+  return rows
+    .filter(r=>r && typeof r === "object")
+    .map(r=>({code:String(r.code||"").trim().toUpperCase(), points:r.points??0, manualOrder:r.manualOrder??""}))
+    .filter(r=>r.code && r.code!=="SVIN" && teamExistsStrict(r.code) && !seen.has(r.code) && seen.add(r.code));
+}
+
+function hasUsefulCloudData(data){
+  return !!(data && typeof data === "object" && Array.isArray(data.players) && data.players.length > 100 && Array.isArray(data.teams) && data.teams.length >= 16);
+}
+
+function applyCloudPayload(data){
+  if(!hasUsefulCloudData(data)) return false;
+
+  if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
+  if(Array.isArray(data.players) && data.players.length>100) players = data.players;
+
+  // IMPORTANTISSIMO: non sovrascrive registri già presenti con array vuoti arrivati dal cloud.
+  if(Array.isArray(data.trades) && (data.trades.length || !trades.length)) trades = data.trades;
+  if(Array.isArray(data.news) && (data.news.length || !news.length)) news = data.news;
+  if(Array.isArray(data.honors) && (data.honors.length || !honors.length)) honors = data.honors;
+  if(Array.isArray(data.individualTitles) && (data.individualTitles.length || !individualTitles.length)) individualTitles = data.individualTitles;
+  if(Array.isArray(data.positionHistory) && (data.positionHistory.length || !positionHistory.length)) positionHistory = data.positionHistory;
+  if(data.orgData && typeof data.orgData==="object" && Object.keys(data.orgData).length) orgData = data.orgData;
+  if(data.awardImages && typeof data.awardImages==="object" && Object.keys(data.awardImages).length) awardImages = data.awardImages;
+
+  const cleanedRanking = cleanRankingRows(data.rankingData);
+  if(cleanedRanking.length || !rankingData.length) rankingData = cleanedRanking;
+  if(Array.isArray(data.rankingHidden)) rankingHidden = data.rankingHidden.filter(code=>code && code!=="SVIN");
+
+  if(Array.isArray(data.seasonHistory) && (data.seasonHistory.length || !seasonHistory.length)) seasonHistory = data.seasonHistory;
+  if(data.savedFormations && typeof data.savedFormations==="object" && Object.keys(data.savedFormations).length) savedFormations = data.savedFormations;
   if(data.auctionState && typeof data.auctionState==="object") auctionState = data.auctionState;
   if(data.currentUser && typeof data.currentUser==="object") currentUser = data.currentUser;
-  if(Array.isArray(data.presidentActions)) presidentActions = data.presidentActions;
-  if(data.competitionsManager !== undefined) competitionsManager = data.competitionsManager;
-  if(data.coachesManager !== undefined) coachesManager = data.coachesManager;
+  if(Array.isArray(data.presidentActions) && (data.presidentActions.length || !presidentActions.length)) presidentActions = data.presidentActions;
+  if(data.competitionsManager !== undefined && data.competitionsManager !== null) competitionsManager = data.competitionsManager;
+  if(data.coachesManager !== undefined && data.coachesManager !== null) coachesManager = data.coachesManager;
 
+  rankingData = cleanRankingRows(rankingData);
   ensureTeamBudgets();
   if(typeof ensureCompetitionsManager==="function") ensureCompetitionsManager();
   if(typeof ensureCoachesManager==="function") ensureCoachesManager();
@@ -529,7 +508,7 @@ function updateCloudBadge(){
   else el.textContent="☁️ Solo locale";
 }
 
-async 
+
 function markUnsavedChanges(){
   HM_HAS_UNSAVED_CHANGES = true;
   updateCloudBadge();
@@ -571,7 +550,7 @@ async function loadCloudData(){
   try{
     const data = await loadCloudJsonp();
 
-    if(data && typeof data === "object" && Object.keys(data).length){
+    if(hasUsefulCloudData(data)){
       if(applyCloudPayload(data)){
         HM_CLOUD_READY = true;
         HM_HAS_UNSAVED_CHANGES = false;
@@ -579,9 +558,10 @@ async function loadCloudData(){
         saveLocalOnly();
       }
     }else{
-      // Primo avvio: se il foglio è vuoto, pubblico i dati attuali come base online
-      HM_CLOUD_READY = true;
-      await saveCloudNow();
+      // Non pubblico automaticamente dati locali sopra un cloud vuoto/parziale:
+      // si evita di cancellare registri come scambi, ranking e storico.
+      HM_CLOUD_READY = false;
+      console.warn("Cloud vuoto o incompleto: dati online non applicati.");
     }
   }catch(e){
     console.warn("Caricamento cloud non riuscito", e);
@@ -2379,13 +2359,11 @@ function ensureRanking(){
 
 function renderRanking(){
   if(!Array.isArray(rankingData)) rankingData=[];
-  if(rankingData.length===0){
-    rankingData = teams.filter(t=>t.code!=="SVIN").map(t=>({code:t.code,points:0,manualOrder:""}));
-    saveAll();
-  }
+  rankingData = cleanRankingRows(rankingData);
   ensureRanking();
+  rankingData = cleanRankingRows(rankingData);
   const rows = rankingData
-    .filter(r=>team(r.code) && r.code!=="SVIN" && !rankingHidden.includes(r.code))
+    .filter(r=>r.code && teamExistsStrict(r.code) && r.code!=="SVIN" && !rankingHidden.includes(r.code))
     .map(r=>({...r,trophies:trophiesCount(r.code)}))
     .sort((a,b)=>{
       const ma = a.manualOrder==="" ? 9999 : Number(a.manualOrder);
@@ -2428,14 +2406,14 @@ function removeRanking(code){
 }
 function addRankingRow(){
   const code=(prompt("Sigla società da inserire nel ranking","IMP")||"").toUpperCase();
-  if(!code || !team(code)){alert("Sigla non trovata");return;}
+  if(!code || !teamExistsStrict(code)){alert("Sigla non trovata");return;}
   rankingHidden=rankingHidden.filter(x=>x!==code);
   if(!rankingData.find(r=>r.code===code)) rankingData.push({code,points:0,manualOrder:""});
   saveAll();renderRanking();
 }
 function addTeam(){
   const code=(prompt("Sigla nuova società","NEW")||"").toUpperCase();
-  if(!code || team(code)){alert("Sigla vuota o già esistente");return;}
+  if(!code || teamExistsStrict(code)){alert("Sigla vuota o già esistente");return;}
   const name=prompt("Nome società","Nuova Società") || "Nuova Società";
   const division=prompt("Serie","Serie B") || "Serie B";
   teams.push({code,name,division,primary:"#1e293b",secondary:"#7c3aed",text:"#ffffff",logo:"",credits:500,hmcoin:100,jerseyStyle:"diagonal"});

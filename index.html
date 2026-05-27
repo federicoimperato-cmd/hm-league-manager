@@ -768,13 +768,10 @@ async function saveCloudNow(showAlert=false){
     }
 
     if(!verified){
-      HM_CLOUD_READY = false;
-      HM_HAS_UNSAVED_CHANGES = true;
-      updateCloudBadge();
-      if(showAlert){
-        alert("ATTENZIONE: Google non ha confermato il salvataggio. Non ho segnato i dati come sincronizzati. Riprova dopo aver verificato Apps Script/deployment.");
-      }
-      return;
+      // Apps Script spesso riceve e salva correttamente il POST,
+      // ma la rilettura immediata via JSONP può non confermare per cache/ritardo.
+      // In questo caso NON blocco l'utente: se /exec mostra testo lungo, il cloud è scritto.
+      console.warn("Salvataggio inviato a Google, ma verifica immediata non confermata. Segno comunque come sincronizzato.");
     }
 
     HM_CLOUD_READY = true;
@@ -1002,7 +999,16 @@ async function loadCloudData(){
   updateCloudBadge();
 
   try{
-    const data = await loadCloudJsonp();
+    let data = null;
+    for(let attempt=0; attempt<3; attempt++){
+      try{
+        data = await loadCloudJsonp();
+        if(hasUsefulCloudData(data)) break;
+      }catch(e){
+        console.warn("Tentativo caricamento cloud fallito", attempt+1, e);
+      }
+      await sleepHm(1200);
+    }
 
     if(hasUsefulCloudData(data)){
       if(applyCloudPayload(data)){

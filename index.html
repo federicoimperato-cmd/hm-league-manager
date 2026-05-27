@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Cloud sync fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -474,24 +474,45 @@ function normalizeCloudPayload(data){
 
   const mirror = data.localMirror && typeof data.localMirror === "object" ? data.localMirror : null;
   if(mirror){
-    if(!Array.isArray(data.players) || data.players.length < 50) data.players = parseMirrorValue(mirror, "hm_players_v1", data.players || []);
-    if(!Array.isArray(data.teams) || data.teams.length < 10) data.teams = parseMirrorValue(mirror, "hm_teams_v1", data.teams || []);
-    if(!Array.isArray(data.trades)) data.trades = parseMirrorValue(mirror, "hm_trades_v1", data.trades || []);
-    if(!Array.isArray(data.news)) data.news = parseMirrorValue(mirror, "hm_news_v1", data.news || []);
-    if(!Array.isArray(data.honors)) data.honors = parseMirrorValue(mirror, "hm_honors_v1", data.honors || []);
-    if(!Array.isArray(data.individualTitles)) data.individualTitles = parseMirrorValue(mirror, "hm_individual_titles_v1", data.individualTitles || []);
-    if(!Array.isArray(data.positionHistory)) data.positionHistory = parseMirrorValue(mirror, "hm_positions_v1", data.positionHistory || []);
-    if(!data.orgData || typeof data.orgData !== "object") data.orgData = parseMirrorValue(mirror, "hm_org_v1", data.orgData || {});
-    if(!data.awardImages || typeof data.awardImages !== "object") data.awardImages = parseMirrorValue(mirror, "hm_award_images_v1", data.awardImages || {});
-    if(!Array.isArray(data.rankingData)) data.rankingData = parseMirrorValue(mirror, "hm_ranking_v1", data.rankingData || []);
-    if(!Array.isArray(data.rankingHidden)) data.rankingHidden = parseMirrorValue(mirror, "hm_ranking_hidden_v1", data.rankingHidden || []);
-    if(!Array.isArray(data.seasonHistory)) data.seasonHistory = parseMirrorValue(mirror, "hm_season_history_v1", data.seasonHistory || []);
-    if(!data.savedFormations || typeof data.savedFormations !== "object") data.savedFormations = parseMirrorValue(mirror, "hm_formations_v1", data.savedFormations || {});
-    if(!data.auctionState || typeof data.auctionState !== "object") data.auctionState = parseMirrorValue(mirror, "hm_auction_v1", data.auctionState || {});
-    if(!Array.isArray(data.presidentActions)) data.presidentActions = parseMirrorValue(mirror, "hm_president_actions_v1", data.presidentActions || []);
-    if(data.competitionsManager === undefined || data.competitionsManager === null) data.competitionsManager = parseMirrorValue(mirror, "hm_competitions_manager_v1", data.competitionsManager || null);
-    if(data.coachesManager === undefined || data.coachesManager === null) data.coachesManager = parseMirrorValue(mirror, "hm_coaches_manager_v1", data.coachesManager || null);
-    if(typeof data.regulationText !== "string" && typeof mirror.hm_regulation_text_v1 === "string") data.regulationText = mirror.hm_regulation_text_v1;
+    // Nei vecchi salvataggi alcuni dati completi, soprattutto loghi/immagini/regolamento,
+    // possono essere più aggiornati nel mirror localStorage che nei campi principali.
+    // Qui preferiamo il mirror quando è valido, così ogni utente vede esattamente i dati pubblicati.
+    const mirrorPlayers = parseMirrorValue(mirror, "hm_players_v1", null);
+    const mirrorTeams = parseMirrorValue(mirror, "hm_teams_v1", null);
+    const mirrorTrades = parseMirrorValue(mirror, "hm_trades_v1", null);
+    const mirrorNews = parseMirrorValue(mirror, "hm_news_v1", null);
+    const mirrorHonors = parseMirrorValue(mirror, "hm_honors_v1", null);
+    const mirrorIndividualTitles = parseMirrorValue(mirror, "hm_individual_titles_v1", null);
+    const mirrorPositionHistory = parseMirrorValue(mirror, "hm_positions_v1", null);
+    const mirrorOrgData = parseMirrorValue(mirror, "hm_org_v1", null);
+    const mirrorAwardImages = parseMirrorValue(mirror, "hm_award_images_v1", null);
+    const mirrorRankingData = parseMirrorValue(mirror, "hm_ranking_v1", null);
+    const mirrorRankingHidden = parseMirrorValue(mirror, "hm_ranking_hidden_v1", null);
+    const mirrorSeasonHistory = parseMirrorValue(mirror, "hm_season_history_v1", null);
+    const mirrorSavedFormations = parseMirrorValue(mirror, "hm_formations_v1", null) || parseMirrorValue(mirror, "hm_formations_v2", null);
+    const mirrorAuctionState = parseMirrorValue(mirror, "hm_auction_v1", null);
+    const mirrorPresidentActions = parseMirrorValue(mirror, "hm_president_actions_v1", null);
+    const mirrorCompetitionsManager = parseMirrorValue(mirror, "hm_competitions_manager_v1", null);
+    const mirrorCoachesManager = parseMirrorValue(mirror, "hm_coaches_manager_v1", null);
+
+    if(Array.isArray(mirrorPlayers) && mirrorPlayers.length > 50) data.players = mirrorPlayers;
+    if(Array.isArray(mirrorTeams) && mirrorTeams.length >= 16) data.teams = mirrorTeams;
+    if(Array.isArray(mirrorTrades)) data.trades = mirrorTrades;
+    if(Array.isArray(mirrorNews)) data.news = mirrorNews;
+    if(Array.isArray(mirrorHonors)) data.honors = mirrorHonors;
+    if(Array.isArray(mirrorIndividualTitles)) data.individualTitles = mirrorIndividualTitles;
+    if(Array.isArray(mirrorPositionHistory)) data.positionHistory = mirrorPositionHistory;
+    if(mirrorOrgData && typeof mirrorOrgData === "object") data.orgData = mirrorOrgData;
+    if(mirrorAwardImages && typeof mirrorAwardImages === "object") data.awardImages = mirrorAwardImages;
+    if(Array.isArray(mirrorRankingData)) data.rankingData = mirrorRankingData;
+    if(Array.isArray(mirrorRankingHidden)) data.rankingHidden = mirrorRankingHidden;
+    if(Array.isArray(mirrorSeasonHistory)) data.seasonHistory = mirrorSeasonHistory;
+    if(mirrorSavedFormations && typeof mirrorSavedFormations === "object") data.savedFormations = mirrorSavedFormations;
+    if(mirrorAuctionState && typeof mirrorAuctionState === "object") data.auctionState = mirrorAuctionState;
+    if(Array.isArray(mirrorPresidentActions)) data.presidentActions = mirrorPresidentActions;
+    if(mirrorCompetitionsManager !== undefined && mirrorCompetitionsManager !== null) data.competitionsManager = mirrorCompetitionsManager;
+    if(mirrorCoachesManager !== undefined && mirrorCoachesManager !== null) data.coachesManager = mirrorCoachesManager;
+    if(typeof mirror.hm_regulation_text_v1 === "string") data.regulationText = mirror.hm_regulation_text_v1;
   }
   return data;
 }
@@ -511,27 +532,28 @@ function applyCloudPayload(data){
   if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
   if(Array.isArray(data.players) && data.players.length>100) players = data.players;
 
-  // IMPORTANTISSIMO: non sovrascrive registri già presenti con array vuoti arrivati dal cloud.
-  if(Array.isArray(data.trades) && (data.trades.length || !trades.length)) trades = data.trades;
-  if(Array.isArray(data.news) && (data.news.length || !news.length)) news = data.news;
-  if(Array.isArray(data.honors) && (data.honors.length || !honors.length)) honors = data.honors;
-  if(Array.isArray(data.individualTitles) && (data.individualTitles.length || !individualTitles.length)) individualTitles = data.individualTitles;
-  if(Array.isArray(data.positionHistory) && (data.positionHistory.length || !positionHistory.length)) positionHistory = data.positionHistory;
-  if(data.orgData && typeof data.orgData==="object" && Object.keys(data.orgData).length) orgData = data.orgData;
-  if(data.awardImages && typeof data.awardImages==="object" && Object.keys(data.awardImages).length) awardImages = data.awardImages;
+  // Il cloud è la fonte ufficiale: ogni browser/utente deve vedere gli stessi dati.
+  // Quindi, dopo aver validato players/teams, sovrascrivo anche array vuoti e oggetti vuoti.
+  if(Array.isArray(data.trades)) trades = data.trades;
+  if(Array.isArray(data.news)) news = data.news;
+  if(Array.isArray(data.honors)) honors = data.honors;
+  if(Array.isArray(data.individualTitles)) individualTitles = data.individualTitles;
+  if(Array.isArray(data.positionHistory)) positionHistory = data.positionHistory;
+  if(data.orgData && typeof data.orgData==="object") orgData = data.orgData;
+  if(data.awardImages && typeof data.awardImages==="object") awardImages = data.awardImages;
 
   const cleanedRanking = cleanRankingRows(data.rankingData);
-  if(cleanedRanking.length || !rankingData.length) rankingData = cleanedRanking;
+  if(Array.isArray(data.rankingData)) rankingData = cleanedRanking;
   if(Array.isArray(data.rankingHidden)) rankingHidden = data.rankingHidden.filter(code=>code && code!=="SVIN");
 
-  if(Array.isArray(data.seasonHistory) && (data.seasonHistory.length || !seasonHistory.length)) seasonHistory = data.seasonHistory;
-  if(data.savedFormations && typeof data.savedFormations==="object" && Object.keys(data.savedFormations).length) savedFormations = data.savedFormations;
+  if(Array.isArray(data.seasonHistory)) seasonHistory = data.seasonHistory;
+  if(data.savedFormations && typeof data.savedFormations==="object") savedFormations = data.savedFormations;
   if(data.auctionState && typeof data.auctionState==="object") auctionState = data.auctionState;
   // Non applico currentUser dal cloud: evita che un login admin si propaghi ad altri browser.
-  if(Array.isArray(data.presidentActions) && (data.presidentActions.length || !presidentActions.length)) presidentActions = data.presidentActions;
-  if(data.competitionsManager !== undefined && data.competitionsManager !== null) competitionsManager = data.competitionsManager;
-  if(data.coachesManager !== undefined && data.coachesManager !== null) coachesManager = data.coachesManager;
-  if(Array.isArray(data.backupArchive) && data.backupArchive.length) backupArchive = data.backupArchive.slice(-25);
+  if(Array.isArray(data.presidentActions)) presidentActions = data.presidentActions;
+  if(data.competitionsManager !== undefined) competitionsManager = data.competitionsManager;
+  if(data.coachesManager !== undefined) coachesManager = data.coachesManager;
+  if(Array.isArray(data.backupArchive)) backupArchive = data.backupArchive.slice(-25);
   if(typeof data.regulationText === "string") regulationText = data.regulationText;
 
   rankingData = cleanRankingRows(rankingData);
@@ -599,7 +621,17 @@ function rememberBackupSnapshot(label="automatico"){
   }
 }
 
-function downloadFullBackup(){
+async function downloadFullBackup(){
+  // Prima prova a scaricare il cloud: così il backup dell'utente contiene i dati ufficiali completi,
+  // non solo quello che quel browser aveva già in locale.
+  try{
+    if(!HM_CLOUD_LOADING && !HM_CLOUD_SAVING){
+      await loadCloudData();
+    }
+  }catch(e){
+    console.warn("Backup: impossibile aggiornare dal cloud, uso i dati locali correnti.", e);
+  }
+
   const snap = rememberBackupSnapshot("download manuale") || buildBackupSnapshot("download manuale");
   const blob = new Blob([JSON.stringify(snap, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
@@ -979,7 +1011,7 @@ function loadCloudJsonp(){
     const timeout = setTimeout(()=>{
       cleanup();
       reject(new Error("Timeout caricamento dati online"));
-    }, 12000);
+    }, 30000);
     function cleanup(){
       clearTimeout(timeout);
       try{ delete window[cb]; }catch(e){ window[cb]=undefined; }

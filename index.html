@@ -164,6 +164,79 @@ let coachesManager = JSON.parse(localStorage.getItem("hm_coaches_manager_v1") ||
 const INITIAL_COACHES = [{"id": "C1", "name": "Mourinho", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C2", "name": "S. Inzaghi", "tier": 1, "cost": 40, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C3", "name": "Gasperini", "tier": 1, "cost": 40, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C4", "name": "Zidane", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C5", "name": "Emery", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C6", "name": "Sarri", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C7", "name": "Allegri", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C8", "name": "Ancelotti", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C9", "name": "Guardiola", "tier": 1, "cost": 40, "traits": "1 punta +1; 2 punte -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C10", "name": "Luis Enrique", "tier": 1, "cost": 40, "traits": "1 punta +1; 2 punte -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C11", "name": "Tuchel", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C12", "name": "Simeone", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C13", "name": "Conte", "tier": 1, "cost": 40, "traits": "E o W +1; NO E o W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "ew", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C14", "name": "Xabi Alonso", "tier": 1, "cost": 40, "traits": "E o W +1; NO E o W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "ew", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C15", "name": "Pochettino", "tier": 1, "cost": 40, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C16", "name": "Klopp", "tier": 1, "cost": 40, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C17", "name": "Spalletti", "tier": 1, "cost": 40, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C18", "name": "Pioli", "tier": 1, "cost": 40, "traits": "Dopo S o P +0,5; Coppe Europee +1; Bonus dopo gennaio: 1°-4° +1, dal 5° -1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C19", "name": "Petkovic", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C20", "name": "Thiago Motta", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C21", "name": "Italiano", "tier": 2, "cost": 25, "traits": "W o A +1; No W o A -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C22", "name": "Nuno Espirito Santo", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C23", "name": "Brendan Rodgers", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C24", "name": "Solskjaer", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C25", "name": "Lampard", "tier": 2, "cost": 25, "traits": "1 punta +1; 2 punte -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C26", "name": "Pellegrini", "tier": 2, "cost": 25, "traits": "2 tra W e T +1; No 2 tra W e T -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C27", "name": "Lopetegui", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C28", "name": "Gattuso", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C29", "name": "Bielsa", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C30", "name": "Mazzarri", "tier": 2, "cost": 25, "traits": "Difesa a 3 +1; Difesa a 4 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C31", "name": "Ranieri", "tier": 2, "cost": 25, "traits": "Dopo S o P +0,5; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C32", "name": "Fonseca", "tier": 2, "cost": 25, "traits": "2 o più T/W +1; NO 2 o più T/W -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "tw2", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C33", "name": "Garcia", "tier": 2, "cost": 25, "traits": "2 tra A e W +1; NO 2 tra A e W -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C34", "name": "Terzic", "tier": 2, "cost": 25, "traits": "Difesa a 4 +1; Difesa a 3 -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C35", "name": "Schevcenko", "tier": 2, "cost": 25, "traits": "1 punta +1; 2 punte -1; Coppe Europee +0,5; Bonus dopo gennaio: 1°-4° +0,5, dal 5° -0,5", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C36", "name": "Cuesta", "tier": 2, "cost": 25, "traits": "W o A +1; No W o A -1; Bonus dopo gennaio: 1°-4° +0,5, da 7°/8° -1, se nuovo 8°-5° +1", "trigger": "wa", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C37", "name": "Juric", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C38", "name": "Giampaolo", "tier": 3, "cost": 10, "traits": "Trequartista +1; No trequartista -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "treq", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C39", "name": "Di Francesco", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus da gennaio: dal 4° in su +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C40", "name": "F. Inzaghi", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C41", "name": "Nesta", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C42", "name": "Dionisi", "tier": 3, "cost": 10, "traits": "Trequartista +1; NO Trequartista -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "treq", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C43", "name": "P. Zanetti", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C44", "name": "Iachini", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C45", "name": "Maran", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C46", "name": "Cesc Fàbregas", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C47", "name": "Semplici", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C48", "name": "Andreazzoli", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C49", "name": "Ballardini", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C50", "name": "Castori", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C51", "name": "D Aversa", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C52", "name": "Gotti", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C53", "name": "Grosso", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C54", "name": "Di Carlo", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C55", "name": "Stroppa", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C56", "name": "Tudor", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C57", "name": "Zeman", "tier": 3, "cost": 10, "traits": "1 punta +1; 2 punte -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "oneStriker", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C58", "name": "Montella", "tier": 3, "cost": 10, "traits": "Dopo S o P +0,5; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "afterSP", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C59", "name": "Pecchia", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C60", "name": "Sottil", "tier": 3, "cost": 10, "traits": "Difesa a 3 +1; Difesa a 4 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def3", "owner": "", "contractYears": 1, "status": "Svincolato"}, {"id": "C61", "name": "Vanoli", "tier": 3, "cost": 10, "traits": "Difesa a 4 +1; Difesa a 3 -1; Bonus dopo gennaio: dal 4° al 1° +0,5, 7°/8° -1; se nuovo 8°-5° +1", "trigger": "def4", "owner": "", "contractYears": 1, "status": "Svincolato"}];
 let currentUser = JSON.parse(localStorage.getItem("hm_current_user_v1") || JSON.stringify({role:"admin",teams:["IMP","IRO"]}));
 
+
+// ---- FIX salvataggio locale/cloud leggero ----
+let HM_HAS_UNSAVED_CHANGES = false;
+let HM_CLOUD_SAVING = false;
+let HM_CLOUD_LOADING = false;
+
+function updateCloudBadge(msg){
+  const el = document.getElementById("cloudStatusBadge");
+  if(el) el.textContent = msg;
+}
+
+function saveLocalOnly(){
+  ensureTeamBudgets();
+  safeSetStorage("hm_players_v1", players);
+  safeSetStorage("hm_teams_v1", teams);
+  safeSetStorage("hm_trades_v1", trades);
+  safeSetStorage("hm_news_v1", news);
+  safeSetStorage("hm_honors_v1", honors);
+  safeSetStorage("hm_individual_titles_v1", individualTitles);
+  safeSetStorage("hm_positions_v1", positionHistory);
+  safeSetStorage("hm_org_v1", orgData);
+  safeSetStorage("hm_award_images_v1", awardImages);
+  safeSetStorage("hm_ranking_v1", rankingData);
+  safeSetStorage("hm_ranking_hidden_v1", rankingHidden);
+  safeSetStorage("hm_season_history_v1", seasonHistory);
+  safeSetStorage("hm_formations_v1", savedFormations);
+  safeSetStorage("hm_auction_v1", auctionState);
+  safeSetStorage("hm_president_actions_v1", presidentActions);
+  safeSetStorage("hm_competitions_manager_v1", competitionsManager);
+  safeSetStorage("hm_coaches_manager_v1", coachesManager);
+  safeSetStorage("hm_current_user_v1", currentUser);
+  updateCloudBadge("💾 Salvato in locale");
+}
+
+function markUnsavedChanges(){
+  HM_HAS_UNSAVED_CHANGES = true;
+  updateCloudBadge("⚠️ Modifiche locali non salvate online");
+}
+
+function saveCloudNow(manual=false){
+  // Versione sicura provvisoria: salva sempre in locale ed esporta backup manuale.
+  // Quando colleghiamo Supabase/Firebase, questa funzione diventerà il vero salvataggio online.
+  HM_CLOUD_SAVING = true;
+  saveLocalOnly();
+  HM_HAS_UNSAVED_CHANGES = false;
+  HM_CLOUD_SAVING = false;
+  updateCloudBadge(manual ? "✅ Backup locale aggiornato" : "✅ Autosalvataggio locale");
+  if(manual){
+    try{ exportFullBackup(); }catch(e){ console.warn(e); }
+  }
+}
+
+function fullBackupObject(){
+  return {
+    version:"HM League Manager backup locale",
+    createdAt:new Date().toISOString(),
+    players,teams,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,
+    rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,
+    competitionsManager,coachesManager,currentUser
+  };
+}
+
+function exportFullBackup(){
+  const blob = new Blob([JSON.stringify(fullBackupObject(),null,2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "hm_league_backup_" + new Date().toISOString().slice(0,10) + ".json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),500);
+}
+
 let selectedTeam = "IMP";
 let selectedPlayerId = null;
 let pendingTrade = null;
@@ -2044,6 +2117,162 @@ function deleteCompetition(id){
   competitionsManager.competitions=competitionsManager.competitions.filter(c=>c.id!==id);
   competitionsManager.selected=competitionsManager.competitions[0]?.id||"HML";
   saveAll();renderCompetitionManager();
+}
+
+
+
+// ---- FIX pagine mancanti: Ranking, Storico, Asta, Azioni Presidente ----
+function visibleRankingRows(){
+  const base = rankingData && rankingData.length ? rankingData : teams.filter(t=>t.code!=="SVIN").map(t=>({team:t.code,points:0,notes:""}));
+  return base.filter(r=>!rankingHidden.includes(r.team));
+}
+
+function renderRanking(){
+  const rows = visibleRankingRows().sort((a,b)=>Number(b.points||0)-Number(a.points||0));
+  q("view-ranking").innerHTML = `
+    <div class="between">
+      <div><h2>Ranking società</h2><p class="muted">Classifica ranking modificabile. Puoi inserire punti, nascondere squadre e aggiungere note.</p></div>
+      <div class="row"><button class="btn primary" onclick="resetRankingFromTeams()">Inizializza squadre</button><button class="btn" onclick="exportFullBackup()">Esporta backup</button></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <table class="table">
+        <tr><th>Pos</th><th>Società</th><th>Punti ranking</th><th>Note</th><th>Azioni</th></tr>
+        ${rows.map((r,i)=>`<tr>
+          <td><b>${i+1}</b></td>
+          <td><div class="row">${logo(r.team,42)}<b>${teamLabel(r.team)}</b></div></td>
+          <td><input class="input" type="number" style="width:110px" value="${esc(r.points||0)}" onchange="updateRanking('${r.team}','points',this.value)"></td>
+          <td><input class="input" value="${esc(r.notes||'')}" onchange="updateRanking('${r.team}','notes',this.value)" placeholder="Es. storico, bonus, penalità..."></td>
+          <td><button class="btn red" onclick="hideRankingTeam('${r.team}')">Nascondi</button></td>
+        </tr>`).join("")}
+      </table>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3>Squadre nascoste</h3>
+      <div class="row">${rankingHidden.length ? rankingHidden.map(c=>`<button class="btn" onclick="showRankingTeam('${c}')">Ripristina ${c}</button>`).join("") : '<span class="muted">Nessuna squadra nascosta.</span>'}</div>
+    </div>`;
+}
+function resetRankingFromTeams(){
+  if(!rankingData.length || confirm("Rigenerare il ranking dalle squadre? I punti già inseriti verranno mantenuti quando possibile.")){
+    const old={}; rankingData.forEach(r=>old[r.team]=r);
+    rankingData=teams.filter(t=>t.code!=="SVIN").map(t=>({team:t.code,points:old[t.code]?.points||0,notes:old[t.code]?.notes||""}));
+    saveAll(); renderRanking();
+  }
+}
+function updateRanking(code,field,value){
+  let r=rankingData.find(x=>x.team===code);
+  if(!r){ r={team:code,points:0,notes:""}; rankingData.push(r); }
+  r[field]=field==="points" ? Number(value||0) : value;
+  saveAll();
+}
+function hideRankingTeam(code){ if(!rankingHidden.includes(code)) rankingHidden.push(code); saveAll(); renderRanking(); }
+function showRankingTeam(code){ rankingHidden=rankingHidden.filter(x=>x!==code); saveAll(); renderRanking(); }
+
+function renderHistory(){
+  const seasons=[...seasonHistory].sort((a,b)=>String(b.season||"").localeCompare(String(a.season||"")));
+  q("view-history").innerHTML = `
+    <div class="between">
+      <div><h2>Storico campionati</h2><p class="muted">Archivio stagioni, podi, classifiche finali e premi individuali.</p></div>
+      <div class="row"><button class="btn primary" onclick="addSeasonHistory()">Aggiungi stagione</button><button class="btn green" onclick="addIndividualTitle()">Aggiungi premio individuale</button></div>
+    </div>
+    <div class="grid grid2" style="margin-top:14px">
+      <div class="card"><h3>Stagioni</h3>${seasons.length?seasons.map((s,i)=>seasonHistoryCard(s,i)).join(""):'<div class="muted">Nessuna stagione inserita.</div>'}</div>
+      <div class="card"><h3>Premi individuali</h3>${individualTitles.length?individualTitles.map((a,i)=>`<div class="card" style="margin:8px 0;background:rgba(4,16,30,.45)"><div class="between"><div><b>${esc(a.award)}</b><div class="muted">${esc(a.season)} · ${esc(a.winner)} ${a.team?`(${esc(a.team)})`:''}</div></div><button class="btn red" onclick="individualTitles.splice(${i},1);saveAll();renderHistory()">Elimina</button></div></div>`).join(""):'<div class="muted">Nessun premio individuale inserito.</div>'}</div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>Posizioni storiche società</h3><p class="muted">Area per salvare piazzamenti anno per anno.</p><button class="btn primary" onclick="addPositionHistory()">Aggiungi piazzamento</button><table class="table"><tr><th>Stagione</th><th>Squadra</th><th>Posizione</th><th>Serie</th><th></th></tr>${positionHistory.map((p,i)=>`<tr><td>${esc(p.season)}</td><td>${teamLabel(p.team)}</td><td>${esc(p.position)}</td><td>${esc(p.division||'')}</td><td><button class="btn red" onclick="positionHistory.splice(${i},1);saveAll();renderHistory()">Elimina</button></td></tr>`).join("")}</table></div>`;
+}
+function seasonHistoryCard(s,i){
+  return `<div class="card" style="margin:8px 0;background:rgba(4,16,30,.45)">
+    <div class="between"><div><h3 style="margin:0">${esc(s.season||'Stagione')}</h3><div class="muted">Campione: <b>${s.champion?teamLabel(s.champion):'-'}</b></div></div><button class="btn" onclick="editSeasonHistory(${i})">Modifica</button></div>
+    <div class="row" style="margin-top:10px"><span class="badge">2° ${s.second?teamLabel(s.second):'-'}</span><span class="badge">3° ${s.third?teamLabel(s.third):'-'}</span><span class="badge">Note: ${esc(s.notes||'-')}</span></div>
+    <button class="btn red" style="margin-top:10px" onclick="seasonHistory.splice(${i},1);saveAll();renderHistory()">Elimina stagione</button>
+  </div>`;
+}
+function addSeasonHistory(){ editSeasonHistory(null); }
+function editSeasonHistory(i){
+  const s=i===null?{season:"2025/2026",champion:"",second:"",third:"",notes:""}:seasonHistory[i];
+  const season=prompt("Stagione",s.season||"2025/2026"); if(!season) return;
+  const champion=(prompt("Campione - sigla squadra",s.champion||"IMP")||"").toUpperCase();
+  const second=(prompt("Seconda classificata - sigla",s.second||"")||"").toUpperCase();
+  const third=(prompt("Terza classificata - sigla",s.third||"")||"").toUpperCase();
+  const notes=prompt("Note",s.notes||"")||"";
+  const item={season,champion,second,third,notes};
+  if(i===null) seasonHistory.push(item); else seasonHistory[i]=item;
+  saveAll();renderHistory();
+}
+function addIndividualTitle(){
+  const award=prompt("Premio",INDIVIDUAL_AWARDS[0]||"Miglior Giocatore"); if(!award) return;
+  const season=prompt("Stagione","2025/2026")||"";
+  const winner=prompt("Vincitore","Nome calciatore/allenatore")||"";
+  const teamCode=(prompt("Squadra/società","")||"").toUpperCase();
+  individualTitles.push({award,season,winner,team:teamCode});
+  saveAll();renderHistory();
+}
+function addPositionHistory(){
+  const season=prompt("Stagione","2025/2026"); if(!season) return;
+  const teamCode=(prompt("Squadra - sigla","IMP")||"").toUpperCase();
+  const position=prompt("Posizione finale","1")||"";
+  const division=prompt("Serie","Serie A")||"";
+  positionHistory.push({season,team:teamCode,position,division});
+  saveAll();renderHistory();
+}
+
+function renderAuction(){
+  const current = auctionState.manualPlayer || players.find(p=>p.id===auctionState.playerId) || null;
+  const availablePlayers = players.filter(p=>p.owner==="SVIN" || !p.owner).slice(0,500);
+  q("view-auction").innerHTML = `
+    <div class="between"><div><h2>Asta</h2><p class="muted">Gestione asta live con partecipanti, rilanci, assegnazione e storico.</p></div><button class="btn red" onclick="resetAuction()">Reset asta corrente</button></div>
+    <div class="grid grid2" style="margin-top:14px">
+      <div class="card"><h3>Calciatore in asta</h3>
+        <label>Scegli da svincolati<select class="input" onchange="selectAuctionPlayer(this.value)"><option value="">Scegli</option>${availablePlayers.map(p=>`<option value="${p.id}" ${auctionState.playerId===p.id?'selected':''}>${esc(p.name)} · ${esc(p.role)} · ${esc(p.contract||0)} cr</option>`).join("")}</select></label>
+        <div class="row" style="margin-top:10px"><button class="btn" onclick="manualAuctionPlayer()">Inserisci nome manuale</button><button class="btn green" onclick="assignAuctionWinner()">Assegna vincitore</button></div>
+        <div class="stat" style="margin-top:14px"><div class="muted">In asta</div><div class="n" style="font-size:24px">${current?esc(current.name):'Nessun calciatore'}</div><div class="muted">${current?esc(current.role||''):'Seleziona o inserisci manualmente'}</div></div>
+      </div>
+      <div class="card"><h3>Rilancio</h3>
+        <div class="grid grid3"><label>Squadra<select id="auctionBidTeam" class="input">${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}">${t.code}</option>`).join("")}</select></label><label>Offerta<input id="auctionBidAmount" class="input" type="number" value="1"></label><label>Tipo<select id="auctionBidType" class="input"><option>Crediti</option><option>HM Coin</option></select></label></div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" onclick="addAuctionBid()">Aggiungi rilancio</button><button class="btn yellow" onclick="passAuctionTeam()">Passa</button></div>
+        <h3>Ultimi rilanci</h3>${auctionState.bids.length?auctionState.bids.slice().reverse().map((b,i)=>`<div class="playerRow"><div>${jersey(b.team,44)}</div><div><b>${teamLabel(b.team)}</b><div class="muted">${esc(b.amount)} ${esc(b.type)} · ${esc(b.time||'')}</div></div><span class="badge">#${auctionState.bids.length-i}</span></div>`).join(""):'<div class="muted">Nessun rilancio.</div>'}
+      </div>
+    </div>
+    <div class="grid grid2" style="margin-top:14px"><div class="card"><h3>Squadre passate</h3><div class="row">${auctionState.passedTeams.length?auctionState.passedTeams.map(c=>`<span class="badge">${teamLabel(c)}</span>`).join(""):'<span class="muted">Nessuna.</span>'}</div></div><div class="card"><h3>Storico assegnazioni</h3>${auctionState.history.length?auctionState.history.slice().reverse().map((h,i)=>`<div class="card" style="margin:8px 0;background:rgba(4,16,30,.45)"><b>${esc(h.player)}</b><div class="muted">${teamLabel(h.team)} · ${esc(h.amount)} ${esc(h.type)} · ${esc(h.date)}</div></div>`).join(""):'<div class="muted">Nessuna assegnazione.</div>'}</div></div>`;
+}
+function selectAuctionPlayer(id){ auctionState.playerId=id; auctionState.manualPlayer=null; auctionState.bids=[]; auctionState.passedTeams=[]; saveAll(); renderAuction(); }
+function manualAuctionPlayer(){ const name=prompt("Nome calciatore in asta","Nuovo calciatore"); if(!name) return; const role=prompt("Ruolo","")||""; auctionState.manualPlayer={id:"manual_"+Date.now(),name,role}; auctionState.playerId=""; auctionState.bids=[]; auctionState.passedTeams=[]; saveAll(); renderAuction(); }
+function addAuctionBid(){ const teamCode=q("auctionBidTeam").value; const amount=Number(q("auctionBidAmount").value||0); const type=q("auctionBidType").value; if(!teamCode||!amount) return; auctionState.bids.push({team:teamCode,amount,type,time:new Date().toLocaleTimeString("it-IT")}); auctionState.winner={team:teamCode,amount,type}; saveAll(); renderAuction(); }
+function passAuctionTeam(){ const c=q("auctionBidTeam").value; if(c&&!auctionState.passedTeams.includes(c)) auctionState.passedTeams.push(c); saveAll(); renderAuction(); }
+function assignAuctionWinner(){
+  const current = auctionState.manualPlayer || players.find(p=>p.id===auctionState.playerId);
+  const win = auctionState.winner || auctionState.bids[auctionState.bids.length-1];
+  if(!current || !win){ alert("Manca calciatore o vincitore."); return; }
+  if(!confirm(`Assegnare ${current.name} a ${win.team} per ${win.amount} ${win.type}?`)) return;
+  if(!auctionState.manualPlayer){ const p=players.find(x=>x.id===auctionState.playerId); if(p){ p.owner=win.team; p.current=win.team; p.status="D"; p.contract=String(win.amount); } }
+  const t=team(win.team); if(t){ if(win.type==="HM Coin") t.hmcoin=(Number(t.hmcoin)||0)-Number(win.amount||0); else t.credits=(Number(t.credits)||0)-Number(win.amount||0); }
+  auctionState.history.push({player:current.name,team:win.team,amount:win.amount,type:win.type,date:new Date().toLocaleString("it-IT")});
+  auctionState.playerId=""; auctionState.manualPlayer=null; auctionState.bids=[]; auctionState.passedTeams=[]; auctionState.winner=null;
+  saveAll(); renderAuction();
+}
+function resetAuction(){ if(confirm("Azzerare asta corrente?")){ auctionState.playerId=""; auctionState.manualPlayer=null; auctionState.bids=[]; auctionState.passedTeams=[]; auctionState.winner=null; saveAll(); renderAuction(); } }
+
+function renderPresidentActions(){
+  q("view-actions").innerHTML = `
+    <div class="between"><div><h2>Azioni Presidente</h2><p class="muted">Registro comunicati, decisioni, multe, bonus, penalità e operazioni ufficiali del presidente/lega.</p></div><button class="btn primary" onclick="addPresidentAction()">Nuova azione</button></div>
+    <div class="grid grid3" style="margin-top:14px">${presidentActions.length?presidentActions.map((a,i)=>presidentActionCard(a,i)).join(""):'<div class="card muted">Nessuna azione inserita.</div>'}</div>`;
+}
+function presidentActionCard(a,i){
+  return `<div class="card"><div class="between"><span class="badge">${esc(a.type||'Azione')}</span><span class="muted">${esc(a.date||'')}</span></div><h3>${esc(a.title||'Senza titolo')}</h3><p>${esc(a.body||'')}</p><div class="muted">Squadra: ${a.team?teamLabel(a.team):'Tutte'} · Valore: ${esc(a.value||'-')}</div><div class="row" style="margin-top:12px"><button class="btn green" onclick="sharePresidentAction(${i})">WhatsApp</button><button class="btn" onclick="editPresidentAction(${i})">Modifica</button><button class="btn red" onclick="presidentActions.splice(${i},1);saveAll();renderPresidentActions()">Elimina</button></div></div>`;
+}
+function presidentActionText(a){ return `${a.title}\n\n${a.body}\n\nTipo: ${a.type||'-'}\nSquadra: ${a.team?teamLabel(a.team):'Tutte'}\nValore: ${a.value||'-'}\nData: ${a.date||''}`; }
+function sharePresidentAction(i){ shareTextToWhatsApp(presidentActionText(presidentActions[i])); }
+function addPresidentAction(){ editPresidentAction(null); }
+function editPresidentAction(i){
+  const a=i===null?{type:"Comunicazione",title:"",body:"",team:"",value:"",date:new Date().toLocaleDateString("it-IT")}:presidentActions[i];
+  const type=prompt("Tipo azione",a.type||"Comunicazione"); if(!type) return;
+  const title=prompt("Titolo",a.title||""); if(!title) return;
+  const body=prompt("Testo",a.body||"")||"";
+  const teamCode=(prompt("Squadra coinvolta, vuoto per tutte",a.team||"")||"").toUpperCase();
+  const value=prompt("Valore/importo/effetto",a.value||"")||"";
+  const item={type,title,body,team:teamCode,value,date:new Date().toLocaleDateString("it-IT")};
+  if(i===null) presidentActions.unshift(item); else presidentActions[i]=item;
+  saveAll(); renderPresidentActions();
 }
 
 function renderCompetitions(){

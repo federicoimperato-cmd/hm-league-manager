@@ -80,11 +80,12 @@ button{cursor:pointer}
       </div>
       <div class="row" id="hmTopControls">
         <span class="badge" id="totalPlayersBadge"></span>
+        <span class="badge">Registro Scambi FIX</span>
         <span class="badge" id="cloudStatusBadge">☁️ Solo locale</span>
         <span class="badge" id="authStatusBadge">👁️ Ospite sola lettura</span>
-        <button class="btn" id="hmLoginBtn" type="button" onclick="hmGoogleLoginToggle()">🔐 Login Google</button>
+        <button class="btn primary" id="hmLoginBtn" type="button" onclick="hmGoogleLoginOrAccount()">🔐 Login Google</button>
         <button class="btn green" id="manualSaveOnlineBtn" type="button" onclick="saveCloudNow(true)">💾 Salva online</button>
-        <button class="btn primary" type="button" onclick="downloadFullBackup()">⬇️ Backup</button>
+        <button class="btn" type="button" onclick="downloadFullBackup()">⬇️ Backup</button>
         <button class="btn yellow" type="button" onclick="triggerRestoreBackup()">↩️ Ripristina</button>
         <input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
       </div>
@@ -139,6 +140,9 @@ button{cursor:pointer}
   </div>
 </div>
 
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const HM_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbzmaw-1udciNZe1sBBEaSk8m8WknBnjLtfy_7J4X8JXysyTNdFGw5amkr57Rk97THmn/exec";
 let HM_CLOUD_READY = false;
@@ -181,6 +185,68 @@ let currentUser = JSON.parse(localStorage.getItem("hm_current_user_v1") || JSON.
 let selectedTeam = "IMP";
 let selectedPlayerId = null;
 let pendingTrade = null;
+
+// =========================
+// LOGIN GOOGLE FIREBASE
+// =========================
+const HM_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",
+  authDomain: "hm-league-manager.firebaseapp.com",
+  projectId: "hm-league-manager",
+  storageBucket: "hm-league-manager.firebasestorage.app",
+  messagingSenderId: "685194156294",
+  appId: "1:685194156294:web:516afa4e813a02b6fbe687"
+};
+let HM_FIREBASE_AUTH_READY = false;
+
+function hmEnsureFirebaseAuth(){
+  try{
+    if(!window.firebase || !firebase.auth){ alert("Firebase non caricato. Controlla connessione e riprova."); return null; }
+    if(!firebase.apps.length) firebase.initializeApp(HM_FIREBASE_CONFIG);
+    HM_FIREBASE_AUTH_READY = true;
+    return firebase.auth();
+  }catch(e){
+    console.error("Errore init Firebase Auth", e);
+    alert("Errore login Google. Controlla configurazione Firebase.");
+    return null;
+  }
+}
+
+function hmSetGoogleAdmin(user){
+  if(!user) return;
+  currentUser = {
+    username: user.displayName || user.email || "Federico",
+    email: user.email || "",
+    role: "admin",
+    teams: ["*"],
+    loginProvider: "google"
+  };
+  safeSetStorage("hm_current_user_v1", currentUser);
+  updateAuthBadge();
+  applyPermissionsToVisibleView();
+}
+
+function hmGoogleLoginOrAccount(){
+  if(isLoggedIn()){ openLoginModal(); return; }
+  const auth = hmEnsureFirebaseAuth();
+  if(!auth) return;
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).then(res=>{
+    hmSetGoogleAdmin(res.user);
+    loadCloudData();
+  }).catch(err=>{
+    console.error("Login Google non riuscito", err);
+    alert("Login Google non riuscito: " + (err && err.code ? err.code : "errore sconosciuto"));
+  });
+}
+
+function hmInitGoogleAuthListener(){
+  const auth = hmEnsureFirebaseAuth();
+  if(!auth) return;
+  auth.onAuthStateChanged(user=>{
+    if(user){ hmSetGoogleAdmin(user); }
+  });
+}
 
 
 // =========================
@@ -248,6 +314,7 @@ function loginUser(){
   loadCloudData();
 }
 function logoutUser(){
+  try{ if(window.firebase && firebase.auth) firebase.auth().signOut(); }catch(e){}
   currentUser={username:"Ospite",role:"guest",teams:[]};
   safeSetStorage("hm_current_user_v1", currentUser);
   closeTradeModal();
@@ -260,7 +327,7 @@ function updateAuthBadge(){
   if(!badge || !btn) return;
   if(isAdmin()){badge.textContent="🔓 Federico admin";btn.textContent="👤 Account";}
   else if(isLoggedIn()){badge.textContent=`🔐 ${currentUser.username} · ${userTeams().join("/")}`;btn.textContent="👤 Account";}
-  else{badge.textContent="👁️ Ospite sola lettura";btn.textContent="🔐 Login";}
+  else{badge.textContent="👁️ Ospite sola lettura";btn.textContent="🔐 Login Google";}
   const saveBtn=q("manualSaveOnlineBtn");
   if(saveBtn){saveBtn.disabled=!isLoggedIn();saveBtn.style.opacity=isLoggedIn()?"1":".45";}
 }
@@ -788,8 +855,11 @@ async function saveCloudNow(showAlert=false){
 }
 
 function scheduleCloudSave(){
-  // Salvataggio automatico disattivato: si salva online solo premendo "Salva online".
   markUnsavedChanges();
+  clearTimeout(HM_SAVE_TIMER);
+  if(isLoggedIn()){
+    HM_SAVE_TIMER = setTimeout(()=>saveCloudNow(false), 2500);
+  }
 }
 
 function saveAll(){
@@ -3084,6 +3154,7 @@ function renderStyle(){
   q("view-style").innerHTML = `<h2>Editor estetica sito</h2><div class="card"><p class="muted">Nella versione online questo pannello salverà tema, menu, colori, loghi e sezioni nel database.</p><div class="grid grid3"><label>Colore principale<input class="input" type="color" value="#7c3aed"></label><label>Colore sfondo<input class="input" type="color" value="#07111f"></label><label>Stile card<select class="input"><option>Arrotondato</option><option>Squadrato</option><option>Premium</option></select></label></div></div>`;
 }
 
+hmInitGoogleAuthListener();
 installPermissionGuards();
 updateAuthBadge();
 showView("dashboard");
@@ -3111,142 +3182,5 @@ window.addEventListener("beforeunload", function(e){
   }
 });
 </script>
-
-
-<!-- HM FIX: Google login solo Auth + salvataggio online originale AppScript potenziato. Niente Firestore. -->
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-<script>
-(function(){
-  const firebaseConfig={apiKey:"AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",authDomain:"hm-league-manager.firebaseapp.com",projectId:"hm-league-manager",storageBucket:"hm-league-manager.firebasestorage.app",messagingSenderId:"685194156294",appId:"1:685194156294:web:516afa4e813a02b6fbe687"};
-  let fbAuth=null;
-  let fbUser=null;
-
-  function makeAdmin(user){
-    fbUser=user||fbUser;
-    currentUser={username:(fbUser&&(fbUser.displayName||fbUser.email))||"Admin Google",role:"admin",teams:["*"]};
-    try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}
-    patchPermissions();
-    refreshGoogleUi();
-  }
-  function makeGuest(){
-    fbUser=null;
-    currentUser={username:"Ospite",role:"guest",teams:[]};
-    try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}
-    patchPermissions();
-    refreshGoogleUi();
-  }
-  function patchPermissions(){
-    isAdmin=function(){return !!fbUser};
-    isLoggedIn=function(){return !!fbUser};
-    userTeams=function(){return fbUser?["*"]:[]};
-    canEditTeam=function(){return !!fbUser};
-    canEditPlayerObj=function(){return !!fbUser};
-    requireLogin=function(){return !!fbUser || deny("Devi entrare con Google per modificare/salvare.")};
-    requireAdmin=function(){return !!fbUser || deny("Devi entrare con Google admin.")};
-    requireTeam=function(){return !!fbUser || deny("Devi entrare con Google admin.")};
-    Object.assign(window,{isAdmin,isLoggedIn,userTeams,canEditTeam,canEditPlayerObj,requireLogin,requireAdmin,requireTeam});
-  }
-  function refreshGoogleUi(){
-    try{updateAuthBadge()}catch(e){}
-    const login=document.getElementById("hmLoginBtn");
-    const auth=document.getElementById("authStatusBadge");
-    const save=document.getElementById("manualSaveOnlineBtn");
-    if(fbUser){
-      if(login) login.textContent="👤 Admin Google";
-      if(auth) auth.textContent="🔓 Admin Google";
-      if(save){save.disabled=false;save.style.opacity="1";}
-    }else{
-      if(login) login.textContent="🔐 Login Google";
-      if(auth) auth.textContent="👁️ Ospite sola lettura";
-      if(save){save.disabled=true;save.style.opacity=".45";}
-    }
-  }
-
-  window.hmGoogleLoginToggle=async function(){
-    try{
-      if(!fbAuth){alert("Google login non è pronto. Ricarica la pagina.");return;}
-      if(fbUser){
-        await fbAuth.signOut();
-        makeGuest();
-        try{renderCurrentView()}catch(e){}
-        return;
-      }
-      const provider=new firebase.auth.GoogleAuthProvider();
-      provider.setCustomParameters({prompt:"select_account"});
-      const res=await fbAuth.signInWithPopup(provider);
-      makeAdmin(res.user);
-      try{await loadCloudData()}catch(e){console.warn("Caricamento online dopo login non riuscito",e)}
-      try{renderCurrentView()}catch(e){}
-    }catch(e){
-      console.error(e);
-      alert("Login Google non riuscito: "+(e.code||e.message||e));
-    }
-  };
-
-  // Potenzia il vecchio salvataggio AppScript: invia lo stesso payload sia come FormData sia come testo raw.
-  // Non cambia database, non usa Firestore e non tocca asta/scambi.
-  const oldPostCloudPayloadRaw = typeof postCloudPayloadRaw === "function" ? postCloudPayloadRaw : null;
-  postCloudPayloadRaw = async function(text){
-    const jobs=[];
-    if(typeof fetch === "function" && HM_CLOUD_API_URL){
-      try{
-        const fd=new FormData();
-        fd.append("payload", text);
-        jobs.push(fetch(HM_CLOUD_API_URL,{method:"POST",mode:"no-cors",body:fd,cache:"no-store"}).catch(e=>console.warn("POST FormData cloud fallito",e)));
-      }catch(e){console.warn(e)}
-      try{
-        jobs.push(fetch(HM_CLOUD_API_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:text,cache:"no-store"}).catch(e=>console.warn("POST raw cloud fallito",e)));
-      }catch(e){console.warn(e)}
-    }
-    if(oldPostCloudPayloadRaw){
-      try{ jobs.push(oldPostCloudPayloadRaw(text).catch(e=>console.warn("POST iframe cloud fallito",e))); }catch(e){console.warn(e)}
-    }
-    if(jobs.length) await Promise.allSettled(jobs);
-    return true;
-  };
-
-  // Autosave più pronto: quando una modifica viene marcata, programma un salvataggio dopo pochi secondi.
-  const oldMarkUnsavedChanges = typeof markUnsavedChanges === "function" ? markUnsavedChanges : null;
-  let hmAutoTimer=null;
-  markUnsavedChanges = function(){
-    if(oldMarkUnsavedChanges) oldMarkUnsavedChanges();
-    else {HM_HAS_UNSAVED_CHANGES=true; try{updateCloudBadge()}catch(e){}}
-    clearTimeout(hmAutoTimer);
-    hmAutoTimer=setTimeout(()=>{
-      if(typeof isLoggedIn==="function" && isLoggedIn() && HM_HAS_UNSAVED_CHANGES && !HM_CLOUD_SAVING && !HM_CLOUD_LOADING){
-        saveCloudNow(false);
-      }
-    }, 5000);
-  };
-
-  function initGoogle(){
-    try{
-      if(!window.firebase){console.warn("Firebase Auth SDK non caricato");return;}
-      firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig);
-      fbAuth=firebase.auth();
-      fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn);
-      patchPermissions();
-      const login=document.getElementById("hmLoginBtn");
-      if(login) login.onclick=function(ev){ev.preventDefault(); hmGoogleLoginToggle();};
-      const save=document.getElementById("manualSaveOnlineBtn");
-      if(save) save.onclick=function(ev){ev.preventDefault(); saveCloudNow(true);};
-      fbAuth.onAuthStateChanged(async function(user){
-        if(user){
-          makeAdmin(user);
-          try{await loadCloudData()}catch(e){console.warn("Caricamento online non riuscito",e)}
-        }else{
-          makeGuest();
-        }
-        try{renderCurrentView()}catch(e){}
-      });
-      refreshGoogleUi();
-    }catch(e){console.error("Init Google login fallito",e);}
-  }
-  document.addEventListener("DOMContentLoaded",initGoogle);
-  if(document.readyState!=="loading") setTimeout(initGoogle,50);
-})();
-</script>
-
 </body>
 </html>

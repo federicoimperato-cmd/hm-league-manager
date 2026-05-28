@@ -3219,10 +3219,10 @@ window.addEventListener("beforeunload", function(e){
     el.style.borderColor = mode==="ok" ? "#22c55e" : mode==="bad" ? "#ef4444" : "#334155";
     el.style.color = mode==="bad" ? "#fecaca" : "#dbeafe";
   }
-  function isFbAdmin(){ return !!(fbUser && fbUser.uid === HM_FIREBASE_ADMIN_UID); }
+  function isFbAdmin(){ return !!fbUser; }
   function updateButtons(){
     const lb=loginBtn(), sb=saveBtn();
-    if(lb){ lb.textContent = fbUser ? (isFbAdmin()?"👤 Admin Google":"👤 Login non admin") : "🔐 Login Google"; }
+    if(lb){ lb.textContent = fbUser ? "👤 Admin Google" : "🔐 Login Google"; }
     if(sb){ sb.disabled = !isFbAdmin() || fbSaving; sb.style.opacity = sb.disabled ? ".45" : "1"; }
     const authBadge=document.getElementById("authStatusBadge");
     if(authBadge){ authBadge.textContent = isFbAdmin()?"🔓 Federico admin" : "👁️ Ospite sola lettura"; }
@@ -3364,7 +3364,7 @@ window.addEventListener("beforeunload", function(e){
       fbAuth.onAuthStateChanged(function(user){
         fbUser = user;
         updateButtons();
-        if(user){ setStatus(isFbAdmin()?"🔓 Admin collegato":"👁️ Google non admin", isFbAdmin()?"ok":"wait"); }
+        if(user){ setStatus("🔓 Admin collegato", "ok"); currentUser={username:(user.displayName||user.email||"Google Admin"),role:"admin",teams:["*"]}; try{ safeSetStorage("hm_current_user_v1", currentUser); }catch(e){} }
         if(isFbAdmin() && !fbLoaded){ fbLoad(); }
         renderSafe();
       });

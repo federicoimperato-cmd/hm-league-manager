@@ -84,6 +84,9 @@ button{cursor:pointer}
         <span class="badge" id="firebaseStatusBadge">☁️ Firebase in attesa</span>
         <button class="btn" id="hmFirebaseLoginBtn" type="button">🔐 Login Google</button>
         <button class="btn green" id="hmFirebaseSaveBtn" type="button" disabled>💾 Salva online</button>
+        <button class="btn primary" onclick="downloadFullBackup()" type="button">⬇️ Backup</button>
+        <button class="btn yellow" onclick="triggerRestoreBackup()" type="button">↩️ Ripristina</button>
+        <input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
       </div>
     </div>
   </header>
@@ -106,6 +109,7 @@ button{cursor:pointer}
     </aside>
 
     
+
 
 
 <main>
@@ -139,7 +143,7 @@ button{cursor:pointer}
 </div>
 
 <script>
-const HM_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbzmaw-1udciNZe1sBBEaSk8m8WknBnjLtfy_7J4X8JXysyTNdFGw5amkr57Rk97THmn/exec";
+const HM_CLOUD_API_URL = ""; // disattivato: sincronizzazione online gestita da Firebase/Google login
 let HM_CLOUD_READY = false;
 let HM_CLOUD_LOADING = false;
 let HM_CLOUD_SAVING = false;
@@ -503,24 +507,7 @@ function applyCloudPayload(data){
   // Prima applico eventuale mirror completo: così loghi, immagini e regolamento arrivano anche su browser nuovi.
   if(data.localMirror && typeof data.localMirror === "object") applyLocalCloudMirror(data.localMirror);
 
-  if(Array.isArray(data.teams) && data.teams.length>=16) {
-    // Merge protettivo: se il cloud ha loghi vuoti ma il browser li ha ancora in memoria,
-    // NON li cancelliamo al refresh. Evita perdita loghi quando un salvataggio cloud precedente era parziale.
-    const previousTeamsByCode = Object.fromEntries((Array.isArray(teams)?teams:[]).map(t=>[t.code,t]));
-    teams = data.teams.filter(t=>t && t.code).map(t=>{
-      const prev = previousTeamsByCode[t.code] || {};
-      return {
-        ...t,
-        logo: (t.logo && String(t.logo).trim()) ? t.logo : (prev.logo || ""),
-        primary: t.primary || prev.primary || "#334155",
-        secondary: t.secondary || prev.secondary || "#111827",
-        text: t.text || prev.text || "#ffffff",
-        jerseyStyle: t.jerseyStyle || prev.jerseyStyle || "diagonal",
-        credits: t.credits !== undefined ? t.credits : prev.credits,
-        hmcoin: t.hmcoin !== undefined ? t.hmcoin : prev.hmcoin
-      };
-    });
-  }
+  if(Array.isArray(data.teams) && data.teams.length>=16) teams = data.teams.filter(t=>t && t.code);
   if(Array.isArray(data.players) && data.players.length>100) players = data.players;
 
   // IMPORTANTISSIMO: non sovrascrive registri già presenti con array vuoti arrivati dal cloud.
@@ -693,22 +680,9 @@ async function verifyCloudSaved(expectedStamp){
 }
 
 async function postCloudPayloadRaw(text){
-  // Invio RAW del JSON completo a Google Apps Script.
-  // Questo evita il limite/bug dei form HTML con campo payload, che può troncare loghi e immagini grandi.
-  try{
-    await fetch(HM_CLOUD_API_URL, {
-      method: "POST",
-      mode: "no-cors",
-      cache: "no-store",
-      headers: {"Content-Type":"text/plain;charset=utf-8"},
-      body: text
-    });
-    return true;
-  }catch(e){
-    console.warn("POST raw cloud fallito, provo fallback form", e);
-  }
-
-  // Fallback vecchio: utile solo se fetch viene bloccato dal browser.
+  // Apps Script non conferma bene i POST cross-origin via fetch.
+  // Uso un form nascosto verso iframe: invia il JSON completo come campo payload
+  // e poi la verifica avviene rileggendo il cloud via JSONP.
   return new Promise((resolve)=>{
     const frameName = "hmCloudPostFrame_" + Date.now() + "_" + Math.floor(Math.random()*100000);
     const iframe = document.createElement("iframe");
@@ -719,11 +693,10 @@ async function postCloudPayloadRaw(text){
     form.method = "POST";
     form.action = HM_CLOUD_API_URL;
     form.target = frameName;
-    form.enctype = "text/plain";
     form.style.display = "none";
 
     const textarea = document.createElement("textarea");
-    textarea.name = "";
+    textarea.name = "payload";
     textarea.value = text;
     form.appendChild(textarea);
 
@@ -742,6 +715,8 @@ async function postCloudPayloadRaw(text){
     document.body.appendChild(iframe);
     document.body.appendChild(form);
     form.submit();
+
+    // Anche se Google blocca la visualizzazione in iframe, il POST parte comunque.
     setTimeout(cleanup, 6000);
   });
 }
@@ -1015,13 +990,6 @@ function loadCloudJsonp(){
 
 async function loadCloudData(){
   if(!HM_CLOUD_API_URL) return;
-  // Protezione fondamentale: se il browser ha modifiche non ancora salvate, NON ricarico il cloud sopra.
-  // Altrimenti un refresh/focus può cancellare loghi o nuovi calciatori appena inseriti.
-  if(HM_HAS_UNSAVED_CHANGES){
-    console.warn("Cloud load saltato: ci sono modifiche locali non salvate online.");
-    updateCloudBadge();
-    return;
-  }
   HM_CLOUD_LOADING = true;
   updateCloudBadge();
 
@@ -1447,44 +1415,24 @@ function teamEditorHtml(t){
     <label>Stile maglia<select class="input" id="edTeamJerseyStyle">
       ${["solid","stripes","halves","band","diagonal"].map(x=>`<option value="${x}" ${x===(t.jerseyStyle||"diagonal")?"selected":""}>${x==="solid"?"Tinta unita":x==="stripes"?"A righe":x==="halves"?"Divisa a metà":x==="band"?"Banda diagonale":"Diagonale classica"}</option>`).join("")}
     </select></label>
-    <label>Logo da file<input class="input" type="file" id="edTeamLogo" accept="image/*" onchange="handleTeamLogoFile(event,'${t.code}')"></label>
+    <label>Logo da file<input class="input" type="file" id="edTeamLogo" accept="image/*"></label>
   </div>
   <button class="btn green" onclick="saveTeamEditor('${t.code}')">Salva società</button></div>`;
 }
 
-function handleTeamLogoFile(event, code){
-  try{
-    if(event){ event.preventDefault?.(); event.stopPropagation?.(); }
-    if(!requireTeam(code)) return false;
-    const input = event?.target || q("edTeamLogo");
-    const file = input?.files?.[0];
-    if(!file) return false;
-    if(!String(file.type||"").startsWith("image/")){ alert("Seleziona un file immagine valido."); return false; }
-    const t = team(code);
-    const reader = new FileReader();
-    reader.onload = ()=>{
-      t.logo = reader.result;
-      saveAll();
-      renderTeamDetail();
-      alert("Logo caricato. Ora premi Salva online per sincronizzarlo su tutti i dispositivi.");
-    };
-    reader.onerror = ()=>alert("Errore nel caricamento del logo. Prova con un PNG/JPG più leggero.");
-    reader.readAsDataURL(file);
-    return false;
-  }catch(e){ console.error(e); alert("Errore caricamento logo: "+(e.message||e)); return false; }
-}
-window.handleTeamLogoFile = handleTeamLogoFile;
-
 function saveTeamEditor(code){
-  if(!requireTeam(code)) return;
   const t=team(code);
   t.name=q("edTeamName").value;
   t.primary=q("edTeamPrimary").value;
   t.secondary=q("edTeamSecondary").value;
   t.text=q("edTeamText").value;
   t.jerseyStyle=q("edTeamJerseyStyle").value;
-  saveAll();
-  renderTeamDetail();
+  const file=q("edTeamLogo").files[0];
+  if(file){
+    const reader=new FileReader();
+    reader.onload=()=>{t.logo=reader.result; saveAll(); renderTeamDetail();};
+    reader.readAsDataURL(file);
+  } else { saveAll(); renderTeamDetail(); }
 }
 
 function renderPlayers(){
@@ -1535,52 +1483,20 @@ function openPlayerEditor(id){
     <label>Contratto<input class="input" id="plContract" value="${esc(p.contract)}"></label>
     <label>Scadenza<input class="input" id="plDeadline" value="${esc(p.deadline)}"></label>
   </div>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn red" onclick="deletePlayerEditor('${p.id}')">Elimina</button><button class="btn green" onclick="savePlayerEditor()">Salva</button></div>`;
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="savePlayerEditor()">Salva</button></div>`;
   q("tradeModalBody").innerHTML=`<h3>Modifica calciatore</h3>${body}`;
   q("tradeModal").style.display="flex";
 }
 
 function savePlayerEditor(){
-  if(!isLoggedIn()){ alert("Devi fare login per modificare."); return; }
-  const isNew = !selectedPlayerId;
   let p=players.find(x=>x.id===selectedPlayerId);
   if(!p){
     p={id:"P"+Date.now(),name:"",role:"",current:"",owner:"SVIN",status:"",bonus:"",contract:"0",deadline:""};
     players.push(p);
   }
-  const newOwner = q("plOwner").value;
-  const currentValue = String(q("plCurrent").value||"").trim();
-  p.name=String(q("plName").value||"").trim();
-  p.role=String(q("plRole").value||"").trim();
-  p.owner=newOwner;
-  // Se aggiungo un nuovo calciatore e lascio vuota la squadra attuale, lo metto automaticamente nella squadra proprietaria.
-  // Così compare subito nella scheda squadra, senza sparire in database.
-  p.current = currentValue || (isNew ? newOwner : "");
-  p.status=q("plStatus").value;
-  p.bonus=q("plBonus").value;
-  p.contract=q("plContract").value;
-  p.deadline=q("plDeadline").value;
-  if(!p.name){ alert("Inserisci almeno il nome del calciatore."); return; }
-  if(saveAll() === false) return;
-  closeTradeModal();
-  renderPlayers();
-  if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
-}
-
-function deletePlayerEditor(id){
-  if(!requireAdmin()) return;
-  const p = players.find(x=>x.id===id);
-  if(!p) return;
-  if(!confirm(`Eliminare definitivamente ${p.name}?`)) return;
-  players = players.filter(x=>x.id!==id);
-  Object.keys(savedFormations||{}).forEach(teamCode=>{
-    Object.keys(savedFormations[teamCode]||{}).forEach(slot=>{
-      if(savedFormations[teamCode][slot]===id) delete savedFormations[teamCode][slot];
-    });
-  });
-  if(saveAll() === false) return;
-  closeTradeModal();
-  renderPlayers();
+  p.name=q("plName").value; p.role=q("plRole").value; p.current=q("plCurrent").value; p.owner=q("plOwner").value;
+  p.status=q("plStatus").value; p.bonus=q("plBonus").value; p.contract=q("plContract").value; p.deadline=q("plDeadline").value;
+  saveAll(); closeTradeModal(); renderPlayers(); 
   if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
 }
 
@@ -1818,110 +1734,40 @@ L'operazione entra immediatamente nel registro trasferimenti della HM League.`
 window.moveCredits = moveCredits;
 
 function confirmTradeFromModal(){
-  // REGISTRO SCAMBI DEFINITIVO:
-  // 1) registra lo scambio nello storico
-  // 2) sposta davvero i proprietari dei calciatori
-  // 3) aggiorna tipologia/bonus/riscatto sul calciatore
-  // 4) muove i crediti tra le due società
-  // 5) genera comunicato automatico
-  // 6) salva locale + online
   try{
-    const t = pendingTrade ? JSON.parse(JSON.stringify(pendingTrade)) : JSON.parse(JSON.stringify(tradeState));
-
-    if(!t || (!Array.isArray(t.offer) && !Array.isArray(t.request))){
+    if(!pendingTrade){
       alert("Nessuno scambio da confermare.");
       return;
     }
-    t.offer = Array.isArray(t.offer) ? t.offer : [];
-    t.request = Array.isArray(t.request) ? t.request : [];
 
-    if(!t.offer.length && !t.request.length){
-      alert("Seleziona almeno un calciatore prima di confermare lo scambio.");
-      return;
-    }
-    if(!t.from || !t.to || t.from === t.to){
-      alert("Seleziona due squadre diverse.");
-      return;
-    }
+    const restore = [];
+    const budgetRestore = teams.map(t=>({code:t.code,credits:t.credits,hmcoin:t.hmcoin}));
 
-    // Permessi: admin sempre. Presidenti solo se coinvolgono una loro squadra.
-    if(typeof isAdmin === "function" && !isAdmin()){
-      if(typeof canEditTeam === "function" && !(canEditTeam(t.from) || canEditTeam(t.to))){
-        alert("Puoi confermare solo scambi che coinvolgono una delle tue squadre.");
-        return;
-      }
-    }
-
-    const beforePlayers = players.map(p=>({
-      id:p.id,
-      owner:p.owner,
-      status:p.status,
-      bonus:p.bonus,
-      contract:p.contract,
-      deadline:p.deadline
-    }));
-    const beforeTeams = teams.map(tm=>({code:tm.code,credits:tm.credits,hmcoin:tm.hmcoin}));
-    const beforeTradesLen = trades.length;
-    const beforeNewsLen = news.length;
-
-    function normalizeCost(v){
-      const n = Number(String(v ?? "0").replace(",", "."));
-      return Number.isFinite(n) ? n : 0;
-    }
-
-    function snapshotItem(it, newOwner){
-      const p = players.find(x=>x.id===it.id);
-      return {
-        ...it,
-        playerName: p ? p.name : it.id,
-        oldOwner: p ? p.owner : "",
-        newOwner,
-        cost: String(it.cost ?? "0"),
-        type: it.type || "D",
-        ransom: it.ransom || "",
-        bonus: it.bonus || ""
-      };
-    }
-
-    const offerSnapshots = t.offer.map(it=>snapshotItem(it, t.to));
-    const requestSnapshots = t.request.map(it=>snapshotItem(it, t.from));
-
-    // La squadra che riceve il calciatore paga; chi cede incassa.
-    offerSnapshots.forEach(it=>{
-      moveCredits(t.to, t.from, normalizeCost(it.cost));
+    // Chi compra/paga scala crediti, chi vende riceve crediti.
+    pendingTrade.offer.forEach(it=>{
+      moveCredits(pendingTrade.to, pendingTrade.from, it.cost);
       const p = players.find(x=>x.id===it.id);
       if(p){
-        p.owner = t.to;
-        p.status = it.type || p.status || "D";
-        if(it.bonus) p.bonus = it.bonus;
-        if((it.type === "PD" || it.type === "PO") && it.ransom){
-          p.deadline = `Riscatto ${it.ransom}`;
-        }
+        restore.push({id:p.id, owner:p.owner});
+        p.owner = pendingTrade.to;
       }
     });
 
-    requestSnapshots.forEach(it=>{
-      moveCredits(t.from, t.to, normalizeCost(it.cost));
+    pendingTrade.request.forEach(it=>{
+      moveCredits(pendingTrade.from, pendingTrade.to, it.cost);
       const p = players.find(x=>x.id===it.id);
       if(p){
-        p.owner = t.from;
-        p.status = it.type || p.status || "D";
-        if(it.bonus) p.bonus = it.bonus;
-        if((it.type === "PD" || it.type === "PO") && it.ransom){
-          p.deadline = `Riscatto ${it.ransom}`;
-        }
+        restore.push({id:p.id, owner:p.owner});
+        p.owner = pendingTrade.from;
       }
     });
 
     const registeredTrade = {
-      from:t.from,
-      to:t.to,
-      offer:offerSnapshots,
-      request:requestSnapshots,
+      ...pendingTrade,
       date:new Date().toLocaleString("it-IT"),
       id:"T"+Date.now(),
-      restore: beforePlayers,
-      budgetRestore: beforeTeams,
+      restore,
+      budgetRestore,
       applied:true
     };
 
@@ -1931,38 +1777,12 @@ function confirmTradeFromModal(){
       createAutoTradeNews(registeredTrade);
     }
 
-    let ok = true;
-    if(typeof saveAll === "function") ok = saveAll() !== false;
-    else if(typeof saveLocalOnly === "function") saveLocalOnly();
-
-    if(!ok){
-      // rollback completo se il salvataggio viene bloccato dai permessi
-      beforePlayers.forEach(old=>{
-        const p=players.find(x=>x.id===old.id);
-        if(p){
-          p.owner=old.owner;
-          p.status=old.status;
-          p.bonus=old.bonus;
-          p.contract=old.contract;
-          p.deadline=old.deadline;
-        }
-      });
-      beforeTeams.forEach(old=>{
-        const tm=teams.find(x=>x.code===old.code);
-        if(tm){tm.credits=old.credits;tm.hmcoin=old.hmcoin;}
-      });
-      trades.splice(0, trades.length - beforeTradesLen);
-      news.splice(0, news.length - beforeNewsLen);
-      return;
-    }
-
-    pendingTrade = null;
-    tradeState.offer=[];
-    tradeState.request=[];
-
+    saveAll();
     closeTradeModal();
+    resetTradeForm();
     renderTrades();
-    alert("Scambio registrato: proprietari aggiornati, crediti mossi e comunicato creato. Ora premi Salva online se non parte già il salvataggio automatico.");
+
+    alert("Scambio registrato, crediti aggiornati e comunicato creato.");
   }catch(err){
     console.error(err);
     alert("Errore durante la registrazione dello scambio: " + (err.message || err));
@@ -1971,12 +1791,19 @@ function confirmTradeFromModal(){
 
 window.confirmTradeFromModal = confirmTradeFromModal;
 
+document.addEventListener("click", function(e){
+  const btn = e.target.closest && e.target.closest("#confirmTradeBtn");
+  if(btn){
+    e.preventDefault();
+    e.stopPropagation();
+    confirmTradeFromModal();
+  }
+}, true);
+
+
 function resetTradeForm(){
-  tradeState.offer=[];
-  tradeState.request=[];
-  pendingTrade=null;
-  if(q("offerPlayers") && q("requestPlayers")) renderTradeLists();
-  if(q("draftTradeSummary")) renderDraftSummary();
+  tradeState.offer=[]; tradeState.request=[]; pendingTrade=null; 
+  if(q("offerPlayers")) renderTradeLists();
 }
 
 
@@ -3054,7 +2881,7 @@ function editTeam(code){
       <label>Stile maglia<select class="input" id="rankTeamJerseyStyle">
         ${["solid","stripes","halves","band","diagonal"].map(x=>`<option value="${x}" ${x===(t.jerseyStyle||"diagonal")?"selected":""}>${x}</option>`).join("")}
       </select></label>
-      <label>Logo da file<input class="input" type="file" id="rankTeamLogo" accept="image/*" onchange="handleRankTeamLogoFile(event,'${code}')"></label>
+      <label>Logo da file<input class="input" type="file" id="rankTeamLogo" accept="image/*"></label>
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:14px">
       <button class="btn" onclick="closeTradeModal()">Annulla</button>
@@ -3062,32 +2889,12 @@ function editTeam(code){
     </div>`;
   q("tradeModal").style.display="flex";
 }
-function handleRankTeamLogoFile(event, code){
-  try{
-    if(event){ event.preventDefault?.(); event.stopPropagation?.(); }
-    if(!requireAdmin()) return false;
-    const input = event?.target || q("rankTeamLogo");
-    const file = input?.files?.[0];
-    if(!file) return false;
-    if(!String(file.type||"").startsWith("image/")){ alert("Seleziona un file immagine valido."); return false; }
-    const t=team(code); if(!t) return false;
-    const reader=new FileReader();
-    reader.onload=()=>{
-      t.logo=reader.result;
-      saveAll();
-      alert("Logo caricato. Ora premi Salva online per sincronizzarlo.");
-    };
-    reader.onerror=()=>alert("Errore nel caricamento del logo. Prova con un PNG/JPG più leggero.");
-    reader.readAsDataURL(file);
-    return false;
-  }catch(e){ console.error(e); alert("Errore caricamento logo: "+(e.message||e)); return false; }
-}
-window.handleRankTeamLogoFile = handleRankTeamLogoFile;
-
 function saveRankTeam(code){
   const t=team(code); if(!t) return;
   t.name=q("rankTeamName").value;t.division=q("rankTeamDivision").value;t.primary=q("rankTeamPrimary").value;t.secondary=q("rankTeamSecondary").value;t.text=q("rankTeamText").value;t.jerseyStyle=q("rankTeamJerseyStyle").value;
-  saveAll();closeTradeModal();renderRanking();
+  const file=q("rankTeamLogo").files[0];
+  if(file){const reader=new FileReader();reader.onload=()=>{t.logo=reader.result;saveAll();closeTradeModal();renderRanking();};reader.readAsDataURL(file);}
+  else{saveAll();closeTradeModal();renderRanking();}
 }
 
 /* Storico campionati */
@@ -3306,15 +3113,6 @@ window.addEventListener("beforeunload", function(e){
     e.returnValue = "";
   }
 });
-
-// Protezione generale input file: evita cambi pagina o click propagati dentro card/modal.
-document.addEventListener("click", function(e){
-  if(e.target && e.target.matches('input[type="file"]')) e.stopPropagation();
-}, true);
-document.addEventListener("change", function(e){
-  if(e.target && e.target.matches('input[type="file"]')) e.stopPropagation();
-}, true);
-
 </script>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
@@ -3325,138 +3123,226 @@ document.addEventListener("change", function(e){
   const firebaseConfig={apiKey:"AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",authDomain:"hm-league-manager.firebaseapp.com",projectId:"hm-league-manager",storageBucket:"hm-league-manager.firebasestorage.app",messagingSenderId:"685194156294",appId:"1:685194156294:web:516afa4e813a02b6fbe687"};
   let fbAuth=null, fbDb=null, fbUser=null, fbLoaded=false, fbSaving=false, fbSaveTimer=null;
   const $=id=>document.getElementById(id);
-  const setStatus=(t,m)=>{const e=$("firebaseStatusBadge"); if(!e)return; e.textContent=t; e.style.borderColor=m==="ok"?"#22c55e":m==="bad"?"#ef4444":"#334155"; e.style.color=m==="bad"?"#fecaca":"#dbeafe";};
-  const admin=()=>!!fbUser || (currentUser&&currentUser.role==="admin");
-  function makeAdmin(u){fbUser=u||fbUser||{displayName:"Federico",email:"admin"}; currentUser={username:fbUser.displayName||fbUser.email||"Federico",role:"admin",teams:["*"]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
-  function makeGuest(){fbUser=null; currentUser={username:"Ospite",role:"guest",teams:[]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
+  const setStatus=(t,m)=>{
+    const e=$("firebaseStatusBadge") || $("cloudStatusBadge");
+    if(!e) return;
+    e.textContent=t;
+    e.style.borderColor=m==="ok"?"#22c55e":m==="bad"?"#ef4444":"#334155";
+    e.style.color=m==="bad"?"#fecaca":"#dbeafe";
+  };
+  const admin=()=>!!fbUser;
+  function makeAdmin(u){
+    fbUser=u||fbUser||{displayName:"Federico",email:"admin"};
+    currentUser={username:fbUser.displayName||fbUser.email||"Federico",role:"admin",teams:["*"]};
+    try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}
+  }
+  function makeGuest(){
+    fbUser=null;
+    currentUser={username:"Ospite",role:"guest",teams:[]};
+    try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}
+  }
   function patchPerms(){
-    isAdmin=function(){return admin()}; isLoggedIn=function(){return admin()}; userTeams=function(){return admin()?["*"]:[]}; canEditTeam=function(){return admin()}; canEditPlayerObj=function(){return admin()}; requireAdmin=function(){return admin()||deny("Solo Federico admin può modificare.")}; requireLogin=function(){return admin()||deny("Devi entrare con Google per modificare.")}; requireTeam=function(){return admin()||deny("Solo Federico admin può modificare.")};
-    Object.assign(window,{isAdmin,isLoggedIn,canEditTeam,canEditPlayerObj,requireAdmin,requireLogin,requireTeam});
+    isAdmin=function(){return admin()};
+    isLoggedIn=function(){return admin()};
+    userTeams=function(){return admin()?["*"]:[]};
+    canEditTeam=function(){return admin()};
+    canEditPlayerObj=function(){return admin()};
+    requireAdmin=function(){return admin()||deny("Devi entrare con Google admin per modificare.")};
+    requireLogin=function(){return admin()||deny("Devi entrare con Google per modificare.")};
+    requireTeam=function(){return admin()||deny("Devi entrare con Google admin per modificare.")};
+    Object.assign(window,{isAdmin,isLoggedIn,userTeams,canEditTeam,canEditPlayerObj,requireAdmin,requireLogin,requireTeam});
   }
-  function updateUI(){patchPerms(); const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb)lb.textContent=admin()?"👤 Admin Google":"🔐 Login Google"; if(sb){sb.disabled=!admin()||fbSaving; sb.style.opacity=sb.disabled?".45":"1";} try{updateAuthBadge()}catch(e){} try{applyPermissionsToVisibleView()}catch(e){}}
-  function renderSafe(){updateUI(); try{ if(typeof renderCurrentView==="function") renderCurrentView(); else if(typeof showView==="function") showView("dashboard"); }catch(e){console.error(e)} updateUI();}
+  function updateUI(){
+    patchPerms();
+    const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"), oldLb=$("hmLoginBtn"), oldSb=$("manualSaveOnlineBtn");
+    if(lb) lb.textContent=admin()?"👤 Admin Google":"🔐 Login Google";
+    if(oldLb) oldLb.textContent=admin()?"👤 Admin Google":"🔐 Login Google";
+    [sb,oldSb].forEach(b=>{ if(b){ b.disabled=!admin()||fbSaving; b.style.opacity=b.disabled?".45":"1"; }});
+    try{updateAuthBadge()}catch(e){}
+    const auth=$("authStatusBadge");
+    if(auth) auth.textContent=admin()?"🔓 Admin Google":"👁️ Ospite sola lettura";
+  }
+  function renderSafe(){
+    updateUI();
+    try{
+      if(typeof renderCurrentView==="function") renderCurrentView();
+      else if(typeof showView==="function") showView("dashboard");
+    }catch(e){console.error(e)}
+    updateUI();
+  }
   const ref=()=>fbDb.collection("hmleague").doc("main");
-  const payload=()=>({version:4,updatedAt:new Date().toISOString(),teams,players,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,competitionsManager,coachesManager,regulationText});
+  function payload(){
+    return {
+      version:5,
+      updatedAt:new Date().toISOString(),
+      teams,players,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,
+      rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,
+      competitionsManager,coachesManager,backupArchive,regulationText
+    };
+  }
   function good(d){return d&&Array.isArray(d.players)&&d.players.length>50&&Array.isArray(d.teams)&&d.teams.length>=16}
-  function apply(d){if(!good(d))return false; teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news; honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages; rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations; auctionState=d.auctionState||auctionState; presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText; try{saveLocalOnly()}catch(e){} return true;}
-  async function fbLoad(){if(!fbDb)return false; setStatus("☁️ Carico dati online...","wait"); try{const s=await ref().get(); if(s.exists&&good(s.data())){apply(s.data()); fbLoaded=true; setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok")}else setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait"); renderSafe(); return true;}catch(e){console.error(e); setStatus("⚠️ Errore lettura Firebase","bad"); renderSafe(); return false;}}
-  async function fbSave(manual=true){patchPerms(); if(!admin()){if(manual)alert("Devi fare login Google prima di salvare."); return false;} fbSaving=true; updateUI(); setStatus("💾 Salvataggio online...","wait"); try{await ref().set(payload(),{merge:false}); HM_HAS_UNSAVED_CHANGES=false; fbLoaded=true; setStatus("✅ Salvato online","ok"); if(manual)alert("Salvato online su Firebase."); return true;}catch(e){console.error(e); setStatus("⚠️ Errore salvataggio Firebase","bad"); if(manual)alert("Errore salvataggio Firebase: "+(e.code||e.message||e)); return false;}finally{fbSaving=false; updateUI();}}
-  function patchSave(){loadCloudData=fbLoad; saveCloudNow=fbSave; window.loadCloudData=fbLoad; window.saveCloudNow=fbSave; saveAll=function(){patchPerms(); if(!admin()){alert("Devi fare login Google per modificare."); return false;} try{saveLocalOnly()}catch(e){} HM_HAS_UNSAVED_CHANGES=true; clearTimeout(fbSaveTimer); fbSaveTimer=setTimeout(()=>fbSave(false),900); updateUI(); return true;}; window.saveAll=saveAll;}
-  async function login(){try{if(!fbAuth){alert("Firebase non è pronto. Ricarica la pagina.");return} if(admin()){await fbAuth.signOut(); makeGuest(); setStatus("☁️ Uscito da Google","wait"); renderSafe(); return} const provider=new firebase.auth.GoogleAuthProvider(); provider.setCustomParameters({prompt:"select_account"}); setStatus("🔐 Login Google in corso...","wait"); const r=await fbAuth.signInWithPopup(provider); makeAdmin(r.user); setStatus("🔓 Admin collegato","ok"); await fbLoad(); renderSafe();}catch(e){console.error(e); setStatus("⚠️ Login Google errore","bad"); alert("Login Google non riuscito: "+(e.code||e.message||e));}}
-  function init(){try{if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return} firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig); fbAuth=firebase.auth(); fbDb=firebase.firestore(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn); patchPerms(); patchSave(); const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb&&!lb.dataset.fix){lb.dataset.fix="1"; lb.addEventListener("click",login)} if(sb&&!sb.dataset.fix){sb.dataset.fix="1"; sb.addEventListener("click",()=>fbSave(true))} updateUI(); setStatus("☁️ Firebase pronto","wait"); fbAuth.onAuthStateChanged(async u=>{if(u){makeAdmin(u); setStatus("🔓 Admin collegato","ok"); if(!fbLoaded)await fbLoad()}else{makeGuest(); if(!fbLoaded)await fbLoad()} renderSafe();}); fbLoad();}catch(e){console.error(e); setStatus("⚠️ Firebase errore","bad");}}
-  document.addEventListener("DOMContentLoaded",init); if(document.readyState!=="loading")setTimeout(init,50);
-})();
-// Protezione generale input file: evita cambi pagina o click propagati dentro card/modal.
-document.addEventListener("click", function(e){
-  if(e.target && e.target.matches('input[type="file"]')) e.stopPropagation();
-}, true);
-document.addEventListener("change", function(e){
-  if(e.target && e.target.matches('input[type="file"]')) e.stopPropagation();
-}, true);
-
-</script>
-
-
-
-<script>
-(function(){
-  function HM_READY(fn){ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn(); }
-  function byId(id){ return document.getElementById(id); }
-  function safeEsc(v){ try{return esc(v)}catch(e){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))} }
-  function currentDate(){ return new Date().toLocaleString('it-IT'); }
-  function getTeam(code){ return (teams||[]).find(t=>t.code===code); }
-  function nameTeam(code){ const t=getTeam(code); return t?`${t.code} · ${t.name}`:code; }
-  function ownerPlayers(code){ return (players||[]).filter(p=>p.owner===code).sort((a,b)=>String(a.name).localeCompare(String(b.name))); }
-  function ensureTrade(){
-    if(typeof tradeState==='undefined' || !tradeState) window.tradeState={from:'IMP',to:'DIA',offer:[],request:[]};
-    if(!tradeState.from) tradeState.from=(teams.find(t=>t.code!=='SVIN')||{}).code||'IMP';
-    if(!tradeState.to || tradeState.to===tradeState.from) tradeState.to=(teams.find(t=>t.code!=='SVIN'&&t.code!==tradeState.from)||{}).code||'DIA';
-    tradeState.offer=Array.isArray(tradeState.offer)?tradeState.offer:[];
-    tradeState.request=Array.isArray(tradeState.request)?tradeState.request:[];
-    return tradeState;
+  function apply(d){
+    if(!good(d)) return false;
+    teams=Array.isArray(d.teams)?d.teams:teams;
+    players=Array.isArray(d.players)?d.players:players;
+    trades=Array.isArray(d.trades)?d.trades:trades;
+    news=Array.isArray(d.news)?d.news:news;
+    honors=Array.isArray(d.honors)?d.honors:honors;
+    individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles;
+    positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory;
+    orgData=d.orgData&&typeof d.orgData==="object"?d.orgData:orgData;
+    awardImages=d.awardImages&&typeof d.awardImages==="object"?d.awardImages:awardImages;
+    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData;
+    rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden;
+    seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory;
+    savedFormations=d.savedFormations&&typeof d.savedFormations==="object"?d.savedFormations:savedFormations;
+    auctionState=d.auctionState&&typeof d.auctionState==="object"?d.auctionState:auctionState;
+    presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions;
+    competitionsManager=d.competitionsManager??competitionsManager;
+    coachesManager=d.coachesManager??coachesManager;
+    backupArchive=Array.isArray(d.backupArchive)?d.backupArchive:backupArchive;
+    regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
+    try{saveLocalOnly()}catch(e){}
+    return true;
   }
-  function selectedArr(side){ const st=ensureTrade(); return side==='offer'?st.offer:st.request; }
-  function findItem(id,side){ return selectedArr(side).find(x=>x.id===id); }
-  function allTeamsOptions(selected){ return (teams||[]).filter(t=>t.code!=='SVIN').map(t=>`<option value="${safeEsc(t.code)}" ${t.code===selected?'selected':''}>${safeEsc(t.code)} · ${safeEsc(t.name)}</option>`).join(''); }
-  function renderSide(code, side){
-    const arr=selectedArr(side);
-    const list=ownerPlayers(code);
-    return `<p class="muted">${list.length} calciatori di proprietà</p>`+list.map(p=>{
-      const it=arr.find(x=>x.id===p.id);
-      return `<div class="tradePlayer ${it?'selected':''}">
-        <div class="between">
-          <div><b>${safeEsc(p.name)}</b><div class="muted">${safeEsc(p.role)} · proprietà ${safeEsc(p.owner)} · rosa ${safeEsc(p.current)} · contratto ${safeEsc(p.contract||'0')}</div></div>
-          ${it?`<button type="button" class="btn red" onclick="hmTradeRemove('${safeEsc(p.id)}','${side}')">Togli</button>`:`<button type="button" class="btn green" onclick="hmTradeAdd('${safeEsc(p.id)}','${side}')">Seleziona</button>`}
-        </div>
-        ${it?`<div class="lineItem">
-          <label>Costo<input class="input" value="${safeEsc(it.cost||'0')}" oninput="hmTradeUpdate('${safeEsc(p.id)}','${side}','cost',this.value)"></label>
-          <label>Tipologia<select class="input" onchange="hmTradeUpdate('${safeEsc(p.id)}','${side}','type',this.value)">${['D','PS','PD','PO'].map(x=>`<option value="${x}" ${String(it.type||'D')===x?'selected':''}>${x}</option>`).join('')}</select></label>
-          <label>Riscatto<input class="input" value="${safeEsc(it.ransom||'')}" placeholder="solo PD/PO" oninput="hmTradeUpdate('${safeEsc(p.id)}','${side}','ransom',this.value)"></label>
-          <label style="grid-column:1/-1">Bonus / note<input class="input" value="${safeEsc(it.bonus||'')}" oninput="hmTradeUpdate('${safeEsc(p.id)}','${side}','bonus',this.value)"></label>
-        </div>`:''}
-      </div>`;
-    }).join('');
+  async function fbLoad(){
+    if(!fbDb) return false;
+    setStatus("☁️ Carico dati online...","wait");
+    try{
+      const s=await ref().get();
+      if(s.exists && good(s.data())){
+        apply(s.data());
+        fbLoaded=true;
+        HM_CLOUD_READY=true;
+        HM_HAS_UNSAVED_CHANGES=false;
+        setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok");
+      }else{
+        fbLoaded=true;
+        HM_CLOUD_READY=false;
+        setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait");
+      }
+      renderSafe();
+      return true;
+    }catch(e){
+      console.error(e);
+      setStatus("⚠️ Errore lettura Firebase","bad");
+      renderSafe();
+      return false;
+    }
   }
-  function playerName(id){ return (players.find(p=>p.id===id)||{}).name||id; }
-  function itemList(items){ return (items||[]).length ? `<ul>${items.map(it=>`<li><b>${safeEsc(playerName(it.id))}</b> · ${safeEsc(it.type||'D')} · costo ${safeEsc(it.cost||0)}${it.ransom?` · riscatto ${safeEsc(it.ransom)}`:''}${it.bonus?` · ${safeEsc(it.bonus)}`:''}</li>`).join('')}</ul>` : '<p class="muted">Nessuno</p>'; }
-  window.hmTradeAdd=function(id,side){ const arr=selectedArr(side); if(!arr.some(x=>x.id===id)) arr.push({id,cost:'0',type:'D',ransom:'',bonus:''}); window.renderTrades(); };
-  window.hmTradeRemove=function(id,side){ const st=ensureTrade(); const key=side==='offer'?'offer':'request'; st[key]=st[key].filter(x=>x.id!==id); window.renderTrades(); };
-  window.hmTradeUpdate=function(id,side,field,value){ const it=findItem(id,side); if(it) it[field]=value; const box=byId('hmTradeDraft'); if(box){ const st=ensureTrade(); box.innerHTML=`<div class="grid grid2"><div><h4>${safeEsc(st.from)} cede</h4>${itemList(st.offer)}</div><div><h4>${safeEsc(st.to)} cede</h4>${itemList(st.request)}</div></div>`; } };
-  window.hmTradeChange=function(side,value){ const st=ensureTrade(); st[side]=value; if(st.from===st.to){ const other=(teams||[]).find(t=>t.code!=='SVIN'&&t.code!==value); if(other){ if(side==='from') st.to=other.code; else st.from=other.code; } } st.offer=[]; st.request=[]; window.renderTrades(); };
-  function moveCreditsSafe(from,to,amount){ amount=Number(String(amount||0).replace(',','.'))||0; if(!amount)return; const a=getTeam(from), b=getTeam(to); if(a)a.credits=(Number(a.credits)||0)-amount; if(b)b.credits=(Number(b.credits)||0)+amount; }
-  function applyOne(item,newOwner,payer,receiver){
-    const p=players.find(x=>x.id===item.id); if(!p) return null;
-    const snap={...item,playerName:p.name,oldOwner:p.owner,oldCurrent:p.current,oldStatus:p.status,oldBonus:p.bonus,oldDeadline:p.deadline,newOwner};
-    moveCreditsSafe(payer,receiver,item.cost);
-    p.owner=newOwner;
-    p.status=item.type||p.status||'D';
-    if(item.bonus!==undefined) p.bonus=item.bonus||'';
-    if((item.type==='PD'||item.type==='PO') && item.ransom) p.deadline='Riscatto '+item.ransom;
-    return snap;
+  async function fbSave(manual=true){
+    patchPerms();
+    if(!admin()){ if(manual) alert("Devi fare login Google prima di salvare online."); return false; }
+    fbSaving=true;
+    updateUI();
+    setStatus("💾 Salvataggio online...","wait");
+    try{
+      if(typeof rememberBackupSnapshot==="function") rememberBackupSnapshot(manual?"prima del salvataggio online Firebase":"autosave Firebase");
+      await ref().set(payload(),{merge:false});
+      HM_CLOUD_READY=true;
+      HM_HAS_UNSAVED_CHANGES=false;
+      fbLoaded=true;
+      try{saveLocalOnly()}catch(e){}
+      setStatus("✅ Salvato online","ok");
+      if(manual) alert("Salvato online su Firebase.");
+      return true;
+    }catch(e){
+      console.error(e);
+      setStatus("⚠️ Errore salvataggio Firebase","bad");
+      if(manual) alert("Errore salvataggio Firebase: "+(e.code||e.message||e));
+      return false;
+    }finally{
+      fbSaving=false;
+      updateUI();
+    }
   }
-  window.confirmTradeFromModal=function(){
-    const st=JSON.parse(JSON.stringify(ensureTrade()));
-    if(!st.offer.length && !st.request.length){ alert('Seleziona almeno un calciatore.'); return; }
-    if(!st.from||!st.to||st.from===st.to){ alert('Seleziona due squadre diverse.'); return; }
-    if(typeof isAdmin==='function' && !isAdmin()){ alert('Devi fare login Google come admin per registrare lo scambio.'); return; }
-    const restorePlayers=players.map(p=>({id:p.id,owner:p.owner,current:p.current,status:p.status,bonus:p.bonus,deadline:p.deadline,contract:p.contract}));
-    const restoreTeams=teams.map(t=>({code:t.code,credits:t.credits,hmcoin:t.hmcoin}));
-    const offer=st.offer.map(it=>applyOne(it,st.to,st.to,st.from)).filter(Boolean);
-    const request=st.request.map(it=>applyOne(it,st.from,st.from,st.to)).filter(Boolean);
-    const rec={id:'TR'+Date.now(),from:st.from,to:st.to,offer,request,date:currentDate(),restore:restorePlayers,budgetRestore:restoreTeams,applied:true};
-    trades.unshift(rec);
-    const body=`La HM League comunica lo scambio ufficiale tra ${nameTeam(st.from)} e ${nameTeam(st.to)}.\n\n${st.from} cede: ${offer.map(x=>x.playerName).join(', ')||'nessuno'}.\n${st.to} cede: ${request.map(x=>x.playerName).join(', ')||'nessuno'}.\n\nOperazione registrata automaticamente dal gestionale.`;
-    news.unshift({title:`UFFICIALE: scambio ${st.from} - ${st.to}`,type:'Mercato',body,date:new Date().toLocaleDateString('it-IT'),pinned:false});
-    tradeState.offer=[]; tradeState.request=[];
-    if(typeof saveAll==='function'){ const ok=saveAll(); if(ok===false) return; } else if(typeof saveLocalOnly==='function') saveLocalOnly();
-    try{closeTradeModal()}catch(e){}
-    window.renderTrades();
-    alert('Scambio registrato correttamente: proprietari aggiornati, crediti mossi e comunicato creato.');
-  };
-  window.renderConfirmedTrades=function(){
-    const box=byId('confirmedTrades'); if(!box)return;
-    box.innerHTML=(trades&&trades.length)?trades.map((t,i)=>`<div class="tradePlayer"><div class="between"><div><b>${safeEsc(t.from)} ⇄ ${safeEsc(t.to)}</b><div class="muted">${safeEsc(t.date||'')}</div></div><button type="button" class="btn red" onclick="deleteConfirmedTrade(${i})">Elimina e ripristina</button></div><div class="grid grid2"><div><h4>${safeEsc(t.from)} ha ceduto</h4>${itemList(t.offer)}</div><div><h4>${safeEsc(t.to)} ha ceduto</h4>${itemList(t.request)}</div></div></div>`).join(''):'<div class="muted">Nessuno scambio confermato.</div>';
-  };
-  window.deleteConfirmedTrade=function(i){ const t=trades[i]; if(!t)return; if(!confirm('Eliminare lo scambio e ripristinare proprietari/crediti precedenti?'))return; (t.restore||[]).forEach(r=>{const p=players.find(x=>x.id===r.id); if(p)Object.assign(p,r);}); (t.budgetRestore||[]).forEach(r=>{const tm=getTeam(r.code); if(tm){tm.credits=r.credits;tm.hmcoin=r.hmcoin;}}); trades.splice(i,1); if(typeof saveAll==='function')saveAll(); window.renderTrades(); };
-  window.clearTradeSeasonLog=function(){ if(!confirm('Azzera solo lo storico scambi? I giocatori restano dove sono.'))return; trades=[]; if(typeof saveAll==='function')saveAll(); window.renderTrades(); };
-  window.renderTrades=function(){
-    const st=ensureTrade(); const root=byId('view-trades'); if(!root)return;
-    root.innerHTML=`<div class="between"><div><h2>Registro Scambi</h2><p class="muted">Seleziona calciatori, costo/tipologia/bonus, poi conferma. Il gestionale aggiorna proprietari, crediti, storico e comunicato.</p></div><button type="button" class="btn green" onclick="confirmTradeFromModal()">✅ Conferma e registra</button></div>
-    <div class="grid grid2" style="margin-top:14px"><div class="tradeSide"><h3>Squadra che cede a sinistra</h3><select class="input" onchange="hmTradeChange('from',this.value)">${allTeamsOptions(st.from)}</select><div id="offerPlayers">${renderSide(st.from,'offer')}</div></div><div class="tradeSide"><h3>Squadra che cede a destra</h3><select class="input" onchange="hmTradeChange('to',this.value)">${allTeamsOptions(st.to)}</select><div id="requestPlayers">${renderSide(st.to,'request')}</div></div></div>
-    <div class="card" style="margin-top:14px"><div class="between"><h3>Riepilogo provvisorio</h3><div class="row"><button type="button" class="btn" onclick="tradeState.offer=[];tradeState.request=[];renderTrades()">Pulisci</button><button type="button" class="btn green" onclick="confirmTradeFromModal()">Conferma e registra</button></div></div><div id="hmTradeDraft"><div class="grid grid2"><div><h4>${safeEsc(st.from)} cede</h4>${itemList(st.offer)}</div><div><h4>${safeEsc(st.to)} cede</h4>${itemList(st.request)}</div></div></div></div>
-    <div class="card" style="margin-top:14px"><div class="between"><h3>Scambi confermati</h3><button type="button" class="btn red" onclick="clearTradeSeasonLog()">Azzera storico</button></div><div id="confirmedTrades"></div></div>`;
-    window.renderConfirmedTrades(); try{applyPermissionsToVisibleView()}catch(e){}
-  };
-
-  window.downloadFullBackup=function(label){
-    const data={backupType:'HM_LEAGUE_MANAGER_BACKUP',backupVersion:2,createdAt:new Date().toISOString(),label:label||'download manuale',data:{version:5,updatedAt:new Date().toISOString(),teams,players,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,competitionsManager,coachesManager,regulationText}};
-    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='hm_league_backup_'+new Date().toISOString().slice(0,10)+'_'+Date.now()+'.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
-  };
-  window.triggerRestoreBackup=function(){ let inp=byId('hmRestoreBackupInput'); if(!inp){ inp=document.createElement('input'); inp.type='file'; inp.accept='application/json'; inp.id='hmRestoreBackupInput'; inp.style.display='none'; document.body.appendChild(inp); inp.addEventListener('change',function(){ const file=this.files&&this.files[0]; if(!file)return; const r=new FileReader(); r.onload=function(){ try{ const raw=JSON.parse(r.result); const d=raw.data||raw; if(!d.players||!d.teams){alert('Backup non valido');return;} if(!confirm('Ripristinare questo backup? Sostituirà i dati locali.'))return; teams=d.teams; players=d.players; trades=d.trades||[]; news=d.news||[]; honors=d.honors||[]; individualTitles=d.individualTitles||[]; positionHistory=d.positionHistory||[]; orgData=d.orgData||{}; awardImages=d.awardImages||{}; rankingData=d.rankingData||[]; rankingHidden=d.rankingHidden||[]; seasonHistory=d.seasonHistory||[]; savedFormations=d.savedFormations||{}; auctionState=d.auctionState||auctionState; presidentActions=d.presidentActions||[]; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==='string'?d.regulationText:regulationText; if(typeof saveLocalOnly==='function')saveLocalOnly(); alert('Backup ripristinato. Ora controlla e premi Salva online.'); if(typeof showView==='function')showView('dashboard'); }catch(e){alert('Errore: JSON non valido.')}}; r.readAsText(file); }); } inp.value=''; inp.click(); };
-  function installBackupButtons(){
-    const row=document.querySelector('.hero .row'); if(row&&!byId('hmBackupBtn')){ const b=document.createElement('button'); b.type='button'; b.className='btn yellow'; b.id='hmBackupBtn'; b.textContent='⬇️ Backup JSON'; b.onclick=()=>downloadFullBackup('manuale'); const r=document.createElement('button'); r.type='button'; r.className='btn'; r.id='hmRestoreBtn'; r.textContent='⬆️ Ripristina JSON'; r.onclick=()=>triggerRestoreBackup(); row.appendChild(b); row.appendChild(r); }
+  function patchSave(){
+    window.loadCloudData=fbLoad; loadCloudData=fbLoad;
+    window.saveCloudNow=fbSave; saveCloudNow=fbSave;
+    const originalSaveAll=window.saveAll || saveAll;
+    saveAll=function(){
+      patchPerms();
+      if(!admin()){alert("Devi fare login Google per modificare."); return false;}
+      try{saveLocalOnly()}catch(e){}
+      HM_HAS_UNSAVED_CHANGES=true;
+      clearTimeout(fbSaveTimer);
+      fbSaveTimer=setTimeout(()=>fbSave(false),900);
+      updateUI();
+      return true;
+    };
+    window.saveAll=saveAll;
   }
-  HM_READY(()=>{ installBackupButtons(); setTimeout(installBackupButtons,500); });
+  async function login(){
+    try{
+      if(!fbAuth){alert("Firebase non è pronto. Ricarica la pagina.");return}
+      if(admin()){
+        await fbAuth.signOut();
+        makeGuest();
+        setStatus("☁️ Uscito da Google","wait");
+        renderSafe();
+        return;
+      }
+      const provider=new firebase.auth.GoogleAuthProvider();
+      provider.setCustomParameters({prompt:"select_account"});
+      setStatus("🔐 Login Google in corso...","wait");
+      const r=await fbAuth.signInWithPopup(provider);
+      makeAdmin(r.user);
+      setStatus("🔓 Admin collegato","ok");
+      await fbLoad();
+      renderSafe();
+    }catch(e){
+      console.error(e);
+      setStatus("⚠️ Login Google errore","bad");
+      alert("Login Google non riuscito: "+(e.code||e.message||e));
+    }
+  }
+  function bindButtons(){
+    const pairs=[
+      ["hmFirebaseLoginBtn",login],
+      ["hmLoginBtn",login],
+      ["hmFirebaseSaveBtn",()=>fbSave(true)],
+      ["manualSaveOnlineBtn",()=>fbSave(true)]
+    ];
+    pairs.forEach(([id,fn])=>{
+      const b=$(id);
+      if(b&&!b.dataset.firebaseFix){
+        b.dataset.firebaseFix="1";
+        b.onclick=null;
+        b.addEventListener("click",function(ev){ev.preventDefault(); ev.stopPropagation(); fn();});
+      }
+    });
+  }
+  function init(){
+    try{
+      if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return}
+      firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig);
+      fbAuth=firebase.auth();
+      fbDb=firebase.firestore();
+      fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn);
+      patchPerms();
+      patchSave();
+      bindButtons();
+      updateUI();
+      setStatus("☁️ Firebase pronto","wait");
+      fbAuth.onAuthStateChanged(async u=>{
+        if(u){
+          makeAdmin(u);
+          setStatus("🔓 Admin collegato","ok");
+          if(!fbLoaded) await fbLoad();
+        }else{
+          makeGuest();
+          if(!fbLoaded) await fbLoad();
+        }
+        renderSafe();
+      });
+      fbLoad();
+    }catch(e){
+      console.error(e);
+      setStatus("⚠️ Firebase errore","bad");
+    }
+  }
+  document.addEventListener("DOMContentLoaded",init);
+  if(document.readyState!=="loading") setTimeout(init,50);
 })();
 </script>
 

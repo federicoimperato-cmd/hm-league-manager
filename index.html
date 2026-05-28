@@ -81,6 +81,9 @@ button{cursor:pointer}
       <div class="row">
         <span class="badge" id="totalPlayersBadge"></span>
         <span class="badge">Registro Scambi FIX</span>
+        <span class="badge" id="firebaseStatusBadge">☁️ Firebase in attesa</span>
+        <button class="btn" id="firebaseLoginBtn" onclick="firebaseLogin()">🔐 Login Google</button>
+        <button class="btn green" id="firebaseSaveBtn" onclick="saveCloudNow(true)" disabled>💾 Salva online</button>
       </div>
     </div>
   </header>
@@ -103,16 +106,6 @@ button{cursor:pointer}
     </aside>
 
     
-<div id="cloudSaveBar" style="position:fixed;left:10px;right:10px;bottom:10px;z-index:99999;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:10px 12px;border-radius:18px;box-shadow:0 12px 35px rgba(0,0,0,.45);font-size:13px">
-  <span id="cloudStatusBadge">☁️ Solo locale</span>
-  <span id="authStatusBadge" class="badge">👁️ Ospite sola lettura</span>
-  <button id="hmLoginBtn" onclick="openLoginModal()" style="background:#334155;border:1px solid #64748b;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">🔐 Login</button>
-  <button id="manualSaveOnlineBtn" onclick="saveCloudNow(true)" style="background:#16a34a;border:1px solid #22c55e;color:white;padding:10px 14px;border-radius:14px;font-size:14px;font-weight:900;white-space:nowrap">💾 Salva online</button>
-  <button onclick="downloadFullBackup()" style="background:#2563eb;border:1px solid #38bdf8;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">⬇️ Backup</button>
-  <button onclick="triggerRestoreBackup()" style="background:#ca8a04;border:1px solid #facc15;color:white;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:900;white-space:nowrap">↩️ Ripristina</button>
-  <input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
-</div>
-
 <main>
       <section id="view-dashboard" class="panel view"></section>
       <section id="view-teams" class="panel view hidden"></section>
@@ -1316,2025 +1309,272 @@ function formationHtml(code){
       </select>
     </div>
     <div id="pitchBox" style="margin-top:14px"></div>
-  </div><script>setTimeout(()=>renderPitch('${code}'),0)<\/script>`;
-}
-
-function roleTokensForPlayer(p){
-  return String(p.role||"")
-    .replaceAll(";",",")
-    .replaceAll("/",",")
-    .replaceAll(" ","")
-    .split(",")
-    .map(x=>x.trim())
-    .filter(Boolean);
-}
-
-function allowedForSlot(slot){
-  const map={
-    "Por":["Por"],
-    "Dc":["Dc"],
-    "Dd":["Dd","Dc"],
-    "Ds":["Ds","Dc"],
-    "Dc/B":["Dc","Dd","Ds"],
-    "M":["M"],
-    "C":["C"],
-    "M/C":["M","C"],
-    "E":["E"],
-    "W":["W"],
-    "E/W":["E","W"],
-    "T":["T"],
-    "T/A":["T","A"],
-    "A":["A"],
-    "Pc":["Pc"],
-    "A/Pc":["A","Pc"],
-    "W/A":["W","A"],
-    "W/T":["W","T"],
-    "C/T":["C","T"]
-  };
-  return map[slot] || [slot];
-}
-
-function playerCompatibleStrict(p,slot){
-  const playerRoles=roleTokensForPlayer(p);
-  const allowed=allowedForSlot(slot);
-  return playerRoles.some(r=>allowed.includes(r));
-}
-
-function moduleRows(module){
-  // dalla porta verso l'attacco, campo verticale. Le righe sono già ordinate in modo pulito.
-  const data={
-    "343":[["Por"],["Dc","Dc","Dc"],["E","M/C","C","E"],["W/A","A/Pc","W/A"]],
-    "3421":[["Por"],["Dc","Dc","Dc"],["E","M/C","C","E"],["T","T/A"],["A/Pc"]],
-    "352":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","M","C","E/W"],["A/Pc","A/Pc"]],
-    "3412":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","C","E/W"],["T"],["A/Pc","A/Pc"]],
-    "433":[["Por"],["Dd","Dc","Dc","Ds"],["M/C","M","C"],["W/A","A/Pc","W/A"]],
-    "4312":[["Por"],["Dd","Dc","Dc","Ds"],["M/C","M","C"],["T"],["A/Pc","A/Pc"]],
-    "442":[["Por"],["Dd","Dc","Dc","Ds"],["E/W","M/C","C","E/W"],["A/Pc","A/Pc"]],
-    "4141":[["Por"],["Dd","Dc","Dc","Ds"],["M"],["E/W","C/T","T","W"],["A/Pc"]],
-    "4231":[["Por"],["Dd","Dc","Dc","Ds"],["M","M/C"],["W/T","T","W/A"],["A/Pc"]]
-  };
-  return data[module] || data["343"];
-}
-
-function renderPitch(code){
-  const module=q("modulo")?.value || "343";
-  savedFormations[code]=savedFormations[code] || {module,slots:{}};
-  if(savedFormations[code].module!==module){
-    savedFormations[code].module=module;
-    savedFormations[code].slots={};
-  }
-
-  const roster=currentRoster(code).sort((a,b)=>a.name.localeCompare(b.name));
-  const rows=moduleRows(module);
-  const box=q("pitchBox");
-
-  box.innerHTML = `
-    <div class="pitch" style="
-      min-height:720px;
-      display:flex;
-      flex-direction:column-reverse;
-      justify-content:space-between;
-      background:
-        linear-gradient(90deg,rgba(255,255,255,.16) 1px,transparent 1px),
-        linear-gradient(0deg,rgba(255,255,255,.13) 1px,transparent 1px),
-        radial-gradient(circle at center,rgba(255,255,255,.16) 0 60px,transparent 61px),
-        #138a38;
-      background-size: 100% 100%, 100% 25%, 100% 100%;
-      border:3px solid rgba(255,255,255,.75);
-    ">
-      ${rows.map((line,li)=>`
-        <div class="pitchLine" style="display:flex;justify-content:center;gap:18px;align-items:center;min-height:105px">
-          ${line.map((slot,si)=>{
-            const key=`${module}_${li}_${si}`;
-            const selected=savedFormations[code]?.slots?.[key] || "";
-            const available=roster.filter(p=>playerCompatibleStrict(p,slot));
-            return `
-              <div class="slot" style="min-width:135px;background:rgba(4,16,30,.58);border:2px solid rgba(255,255,255,.65);color:white">
-                <div style="width:100%">
-                  <div style="font-weight:900;margin-bottom:6px">${slot}</div>
-                  <select class="input" style="width:100%;font-size:12px" onchange="saveFormationSlot('${code}','${key}',this.value)">
-                    <option value="">-- scegli --</option>
-                    ${available.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} (${esc(p.role)})</option>`).join("")}
-                  </select>
-                </div>
-              </div>`;
-          }).join("")}
-        </div>`).join("")}
-    </div>
-    <div class="row" style="justify-content:flex-end;margin-top:12px">
-      <button class="btn green" onclick="saveAll();alert('Formazione salvata')">Salva formazione</button>
-      <button class="btn red" onclick="clearFormation('${code}')">Svuota formazione</button>
-    </div>`;
-  saveAll();
-}
-
-function saveFormationSlot(code,key,value){
-  savedFormations[code]=savedFormations[code] || {module:q("modulo")?.value||"343",slots:{}};
-  savedFormations[code].slots[key]=value;
-  saveAll();
-}
-
-function clearFormation(code){
-  if(!confirm("Svuotare la formazione?")) return;
-  savedFormations[code]={module:q("modulo")?.value||"343",slots:{}};
-  saveAll();
-  renderPitch(code);
-}
-
-
-function teamEditorHtml(t){
-  return `<div class="card"><h3>Editor società</h3>
-  <div class="grid grid3">
-    <label>Nome<input class="input" id="edTeamName" value="${esc(t.name)}"></label>
-    <label>Colore 1<input class="input" type="color" id="edTeamPrimary" value="${t.primary}"></label>
-    <label>Colore 2<input class="input" type="color" id="edTeamSecondary" value="${t.secondary}"></label>
-    <label>Colore sigla maglia<input class="input" type="color" id="edTeamText" value="${t.text}"></label>
-    <label>Stile maglia<select class="input" id="edTeamJerseyStyle">
-      ${["solid","stripes","halves","band","diagonal"].map(x=>`<option value="${x}" ${x===(t.jerseyStyle||"diagonal")?"selected":""}>${x==="solid"?"Tinta unita":x==="stripes"?"A righe":x==="halves"?"Divisa a metà":x==="band"?"Banda diagonale":"Diagonale classica"}</option>`).join("")}
-    </select></label>
-    <label>Logo da file<input class="input" type="file" id="edTeamLogo" accept="image/*"></label>
   </div>
-  <button class="btn green" onclick="saveTeamEditor('${t.code}')">Salva società</button></div>`;
+
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
+<script>
+/* ==========================================================
+   HM LEAGUE MANAGER — FIREBASE ONLINE ENGINE
+   Obiettivo: admin modifica, tutti vedono online.
+   ========================================================== */
+
+const HM_FIREBASE_ADMIN_UID = "XTKbTifbcROUUcjl7eeHsDU6tGQ2";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAXcSoKmROLspjqizwvp3DShysk2n-cET",
+  authDomain: "hm-league-manager.firebaseapp.com",
+  projectId: "hm-league-manager",
+  storageBucket: "hm-league-manager.firebasestorage.app",
+  messagingSenderId: "685194156294",
+  appId: "1:685194156294:web:516afa4e813a02b6fbe687"
+};
+
+let hmFirebaseApp = null;
+let hmAuth = null;
+let hmDb = null;
+let hmFirebaseUser = null;
+let hmFirebaseLoadedOnce = false;
+let hmFirebaseSaveTimer = null;
+const HM_FIRESTORE_CHUNK_SIZE = 650000;
+
+function hmSetFirebaseStatus(text, good=false, bad=false){
+  const el = document.getElementById("firebaseStatusBadge");
+  if(!el) return;
+  el.textContent = text;
+  el.style.borderColor = bad ? "#ef4444" : (good ? "#22c55e" : "#334155");
+  el.style.color = bad ? "#fecaca" : (good ? "#bbf7d0" : "#dbeafe");
 }
 
-function saveTeamEditor(code){
-  const t=team(code);
-  t.name=q("edTeamName").value;
-  t.primary=q("edTeamPrimary").value;
-  t.secondary=q("edTeamSecondary").value;
-  t.text=q("edTeamText").value;
-  t.jerseyStyle=q("edTeamJerseyStyle").value;
-  const file=q("edTeamLogo").files[0];
-  if(file){
-    const reader=new FileReader();
-    reader.onload=()=>{t.logo=reader.result; saveAll(); renderTeamDetail();};
-    reader.readAsDataURL(file);
-  } else { saveAll(); renderTeamDetail(); }
-}
-
-function renderPlayers(){
-  q("view-players").innerHTML = `
-    <div class="between"><div><h2>Database Calciatori</h2><p class="muted">Filtra per nome, ruolo, squadra attuale, proprietario, stato, bonus, contratto e scadenza.</p></div><div class="row"><button class="btn primary" onclick="openNewPlayerEditor()">Aggiungi calciatore</button></div></div>
-    <details class="card" style="margin:12px 0">
-      <summary style="cursor:pointer;font-weight:900;font-size:18px">Apri filtri avanzati</summary>
-      ${filtersHtml("pl")}
-    </details>
-    <div id="playersList" style="margin-top:14px"></div>`;
-  filterPlayers();
-}
-
-function filterPlayers(){
-  const list=players.filter(p=>matchesAdvancedFilters(p,"pl")).slice(0,500);
-  q("playersList").innerHTML = `<div class="between"><span class="badge">${list.length} calciatori trovati</span></div>
-  <table class="table"><tr><th>Maglia</th><th>Nome</th><th>Ruolo</th><th>Squadra attuale</th><th>Proprietario</th><th>Stato</th><th>Bonus</th><th>Contratto</th><th>Scadenza</th><th></th></tr>${list.map(p=>`<tr><td>${jersey(p.owner,44)}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.role)}</td><td>${esc(p.current)}</td><td>${esc(p.owner)}</td><td>${esc(p.status)}</td><td>${esc(p.bonus)}</td><td>${esc(p.contract)}</td><td>${esc(p.deadline)}</td><td><button class="btn" onclick="openPlayerEditor('${p.id}')">Modifica</button></td></tr>`).join("")}</table>`;
-}
-
-
-function openNewPlayerEditor(){
-  selectedPlayerId=null;
-  q("tradeModalBody").innerHTML=`<h3>Aggiungi calciatore al database</h3>
-  <div class="grid grid3">
-    <label>Nome<input class="input" id="plName" value=""></label>
-    <label>Ruolo<input class="input" id="plRole" value="" placeholder="Por / Dc / C / A..."></label>
-    <label>Squadra attuale<input class="input" id="plCurrent" value=""></label>
-    <label>Proprietario<select id="plOwner" class="input">${teams.map(t=>`<option value="${t.code}">${t.code} · ${t.name}</option>`).join("")}</select></label>
-    <label>Stato<input class="input" id="plStatus" value=""></label>
-    <label>Bonus<input class="input" id="plBonus" value=""></label>
-    <label>Contratto<input class="input" id="plContract" value="0"></label>
-    <label>Scadenza<input class="input" id="plDeadline" value=""></label>
-  </div>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="savePlayerEditor()">Aggiungi</button></div>`;
-  q("tradeModal").style.display="flex";
-}
-
-function openPlayerEditor(id){
-  const p=players.find(x=>x.id===id); if(!p) return;
-  selectedPlayerId=id;
-  const body=`<div class="grid grid3">
-    <label>Nome<input class="input" id="plName" value="${esc(p.name)}"></label>
-    <label>Ruolo<input class="input" id="plRole" value="${esc(p.role)}"></label>
-    <label>Squadra attuale<input class="input" id="plCurrent" value="${esc(p.current)}"></label>
-    <label>Proprietario<select id="plOwner" class="input">${teams.map(t=>`<option value="${t.code}" ${t.code===p.owner?"selected":""}>${t.code} · ${t.name}</option>`).join("")}</select></label>
-    <label>Stato<input class="input" id="plStatus" value="${esc(p.status)}"></label>
-    <label>Bonus<input class="input" id="plBonus" value="${esc(p.bonus)}"></label>
-    <label>Contratto<input class="input" id="plContract" value="${esc(p.contract)}"></label>
-    <label>Scadenza<input class="input" id="plDeadline" value="${esc(p.deadline)}"></label>
-  </div>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn red" onclick="deletePlayerEditor('${p.id}')">Elimina</button><button class="btn green" onclick="savePlayerEditor()">Salva</button></div>`;
-  q("tradeModalBody").innerHTML=`<h3>Modifica calciatore</h3>${body}`;
-  q("tradeModal").style.display="flex";
-}
-
-function savePlayerEditor(){
-  if(!isLoggedIn()){ alert("Devi fare login per modificare."); return; }
-  const isNew = !selectedPlayerId;
-  let p=players.find(x=>x.id===selectedPlayerId);
-  if(!p){
-    p={id:"P"+Date.now(),name:"",role:"",current:"",owner:"SVIN",status:"",bonus:"",contract:"0",deadline:""};
-    players.push(p);
-  }
-  const newOwner = q("plOwner").value;
-  const currentValue = String(q("plCurrent").value||"").trim();
-  p.name=String(q("plName").value||"").trim();
-  p.role=String(q("plRole").value||"").trim();
-  p.owner=newOwner;
-  // Se aggiungo un nuovo calciatore e lascio vuota la squadra attuale, lo metto automaticamente nella squadra proprietaria.
-  // Così compare subito nella scheda squadra, senza sparire in database.
-  p.current = currentValue || (isNew ? newOwner : "");
-  p.status=q("plStatus").value;
-  p.bonus=q("plBonus").value;
-  p.contract=q("plContract").value;
-  p.deadline=q("plDeadline").value;
-  if(!p.name){ alert("Inserisci almeno il nome del calciatore."); return; }
-  if(saveAll() === false) return;
-  closeTradeModal();
-  renderPlayers();
-  if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
-}
-
-function deletePlayerEditor(id){
-  if(!requireAdmin()) return;
-  const p = players.find(x=>x.id===id);
-  if(!p) return;
-  if(!confirm(`Eliminare definitivamente ${p.name}?`)) return;
-  players = players.filter(x=>x.id!==id);
-  Object.keys(savedFormations||{}).forEach(teamCode=>{
-    Object.keys(savedFormations[teamCode]||{}).forEach(slot=>{
-      if(savedFormations[teamCode][slot]===id) delete savedFormations[teamCode][slot];
-    });
-  });
-  if(saveAll() === false) return;
-  closeTradeModal();
-  renderPlayers();
-  if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
-}
-
-function closeTradeModal(){ q("tradeModal").style.display="none"; q("tradeModalBody").innerHTML=""; }
-
-/* REGISTRO SCAMBI - ricostruito stabile */
-let tradeState={from:"IMP",to:"DIA",offer:[],request:[]};
-
-function clearTradeSeasonLog(){
-  if(!confirm("Azzera il registro scambi della stagione? I giocatori resteranno dove sono. NON verranno ripristinati proprietari o crediti.")) return;
-  if(!confirm("Conferma definitiva: verrà eliminato solo il LOG degli scambi confermati.")) return;
-  trades = [];
-  saveAll();
-  renderTrades();
-}
-
-function renderTrades(){
-  q("view-trades").innerHTML = `
-    <div class="between"><div><h2>Registro Scambi</h2><p class="muted">Scegli squadre, seleziona uno o più calciatori, compila costo/tipologia/bonus per ogni calciatore e conferma.</p></div></div>
-    <div class="grid grid2" style="margin-top:14px">
-      <div class="tradeSide">
-        <h3>Squadra che propone</h3>
-        <select id="tradeFrom" onchange="changeTradeTeam('from',this.value)" class="input">${teams.filter(t=>t.code!=='SVIN').map(t=>`<option value="${t.code}" ${t.code===tradeState.from?"selected":""}>${t.code} · ${t.name}</option>`).join("")}</select>
-        <div id="offerPlayers"></div>
-      </div>
-      <div class="tradeSide">
-        <h3>Squadra richiesta</h3>
-        <select id="tradeTo" onchange="changeTradeTeam('to',this.value)" class="input">${teams.filter(t=>t.code!=='SVIN').map(t=>`<option value="${t.code}" ${t.code===tradeState.to?"selected":""}>${t.code} · ${t.name}</option>`).join("")}</select>
-        <div id="requestPlayers"></div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <h3>Riepilogo provvisorio</h3>
-      <div id="draftTradeSummary"></div>
-      <div class="row" style="justify-content:flex-end">
-        <button class="btn" onclick="resetTradeForm()">Pulisci</button>
-        <button class="btn primary" onclick="openTradeReview()">Rivedi e conferma</button>
-        <button class="btn green" onclick="pendingTrade=JSON.parse(JSON.stringify(tradeState));confirmTradeFromModal()">Conferma subito</button>
-      </div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <div class="between"><h3>Scambi confermati</h3><button class="btn red" onclick="clearTradeSeasonLog()">Azzera stagione</button></div>
-      <div id="confirmedTrades"></div>
-    </div>`;
-  renderTradeLists();
-  renderConfirmedTrades();
-}
-
-function changeTradeTeam(side,value){
-  tradeState[side]=value;
-  if(tradeState.from===tradeState.to){
-    const other=teams.find(t=>t.code!=="SVIN" && t.code!==value);
-    if(side==="from") tradeState.to=other.code; else tradeState.from=other.code;
-  }
-  tradeState.offer=[]; tradeState.request=[];
-  renderTrades();
-}
-
-function createLineItem(player, side){
-  const key = side==="offer" ? "offer" : "request";
-  let arr=tradeState[key];
-  let item=arr.find(x=>x.id===player.id);
-  if(!item){
-    item={id:player.id,cost:"0",type:"D",ransom:"",bonus:""};
-    arr.push(item);
-  }
-  return item;
-}
-
-function removeLineItem(id, side){
-  const key = side==="offer" ? "offer" : "request";
-  tradeState[key]=tradeState[key].filter(x=>x.id!==id);
-  renderTradeLists();
-}
-
-function updateLineItem(id, side, field, value){
-  const key = side==="offer" ? "offer" : "request";
-  const item=tradeState[key].find(x=>x.id===id); if(item) item[field]=value;
-  renderDraftSummary();
-}
-
-function renderPlayerTradeCard(p, side){
-  const selected=(side==="offer"?tradeState.offer:tradeState.request).some(x=>x.id===p.id);
-  const item=(side==="offer"?tradeState.offer:tradeState.request).find(x=>x.id===p.id);
-  return `<div class="tradePlayer ${selected?"selected":""}">
-    <div class="between"><div class="row">${jersey(p.owner,42)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role)} · ${esc(p.current)} · contratto ${esc(p.contract||"0")}</div></div></div>
-    ${selected?`<button class="btn red" onclick="removeLineItem('${p.id}','${side}')">Togli</button>`:`<button class="btn green" onclick="createLineItemById('${p.id}','${side}')">Seleziona</button>`}</div>
-    ${selected?`<div class="lineItem">
-      <label>Costo<input class="input" value="${esc(item.cost)}" onchange="updateLineItem('${p.id}','${side}','cost',this.value)"></label>
-      <label>Tipologia<select class="input" onchange="updateLineItem('${p.id}','${side}','type',this.value)">
-        ${["D","PS","PD","PO"].map(x=>`<option value="${x}" ${item.type===x?"selected":""}>${x}</option>`).join("")}
-      </select></label>
-      <label>Riscatto<input class="input" value="${esc(item.ransom)}" placeholder="solo PD/PO" onchange="updateLineItem('${p.id}','${side}','ransom',this.value)"></label>
-      <label style="grid-column:1/-1">Bonus per questo calciatore<input class="input" value="${esc(item.bonus)}" onchange="updateLineItem('${p.id}','${side}','bonus',this.value)"></label>
-    </div>`:""}
-  </div>`;
-}
-
-function createLineItemById(id,side){
-  const p=players.find(x=>x.id===id); if(!p) return;
-  createLineItem(p,side);
-  renderTradeLists();
-}
-
-function renderTradeLists(){
-  const offer=ownedPlayers(tradeState.from).sort((a,b)=>a.name.localeCompare(b.name));
-  const req=ownedPlayers(tradeState.to).sort((a,b)=>a.name.localeCompare(b.name));
-  q("offerPlayers").innerHTML=`<p class="muted">${offer.length} calciatori di proprietà</p>`+offer.map(p=>renderPlayerTradeCard(p,"offer")).join("");
-  q("requestPlayers").innerHTML=`<p class="muted">${req.length} calciatori di proprietà</p>`+req.map(p=>renderPlayerTradeCard(p,"request")).join("");
-  renderDraftSummary();
-}
-
-function itemSummary(item){
-  const p=players.find(x=>x.id===item.id);
-  if(!p) return "";
-  return `<li><b>${esc(p.name)}</b> · costo ${esc(item.cost||"0")} · ${esc(item.type)}${(item.type==="PD"||item.type==="PO")?` · riscatto ${esc(item.ransom||"0")}`:""}${item.bonus?` · bonus: ${esc(item.bonus)}`:""}</li>`;
-}
-
-function renderDraftSummary(){
-  q("draftTradeSummary").innerHTML = `
-  <div class="grid grid2">
-    <div><h4>${tradeState.from} cede</h4><ul>${tradeState.offer.map(itemSummary).join("") || "<li>Nessuno</li>"}</ul></div>
-    <div><h4>${tradeState.to} cede</h4><ul>${tradeState.request.map(itemSummary).join("") || "<li>Nessuno</li>"}</ul></div>
-  </div>`;
-}
-
-function openTradeReview(){
-  if(!tradeState.offer.length && !tradeState.request.length){
-    alert("Seleziona almeno un calciatore.");
-    return;
-  }
-
-  pendingTrade = JSON.parse(JSON.stringify(tradeState));
-
-  q("tradeModalBody").innerHTML = `
-    <div class="card">
-      <h3>Riepilogo proposta scambio</h3>
-      <p class="muted">${pendingTrade.from} ⇄ ${pendingTrade.to}</p>
-
-      <div class="grid grid2">
-        <div>
-          <h4>${pendingTrade.from} cede</h4>
-          <ul>${pendingTrade.offer.map(itemSummary).join("") || "<li>Nessuno</li>"}</ul>
-        </div>
-        <div>
-          <h4>${pendingTrade.to} cede</h4>
-          <ul>${pendingTrade.request.map(itemSummary).join("") || "<li>Nessuno</li>"}</ul>
-        </div>
-      </div>
-
-      <p class="muted">Confermando, verranno aggiornati i proprietari, scalati/aggiunti i crediti e creato il comunicato ufficiale.</p>
-
-      <div class="row" style="justify-content:flex-end;margin-top:14px">
-        <button type="button" class="btn" onclick="closeTradeModal()">Modifica</button>
-        <button type="button" class="btn red" onclick="resetTradeForm();closeTradeModal()">Annulla</button>
-        <button type="button" id="confirmTradeBtn" class="btn green" style="position:relative;z-index:9999;pointer-events:auto" onclick="confirmTradeFromModal()">Conferma e registra</button>
-      </div>
-    </div>
-  `;
-
-  q("tradeModal").style.display = "flex";
-}
-
-
-function tradePlayerNames(items){
-  return (items||[]).map(it=>players.find(p=>p.id===it.id)?.name || it.id).join(", ") || "nessun calciatore";
-}
-function tradeMoneyText(items){
-  const parts=(items||[]).map(it=>{
-    const p=players.find(x=>x.id===it.id);
-    const name=p?.name || it.id;
-    const typ=it.type || "D";
-    const cost=it.cost || "0";
-    const ransom=(typ==="PD"||typ==="PO") ? `, riscatto fissato a ${it.ransom||0}` : "";
-    const bonus=it.bonus ? `, bonus: ${it.bonus}` : "";
-    return `${name}: ${typ}, costo ${cost}${ransom}${bonus}`;
-  });
-  return parts.join(" | ");
-}
-function createAutoTradeNews(t){
-  const fromName=teamFullName(t.from);
-  const toName=teamFullName(t.to);
-  const offer=tradePlayerNames(t.offer);
-  const request=tradePlayerNames(t.request);
-
-  const templates=[
-    {
-      title:`UFFICIALE: accordo raggiunto tra ${fromName} e ${toName}`,
-      body:`La HM League registra una nuova operazione di mercato: ${fromName} e ${toName} hanno trovato l'accordo definitivo per uno scambio.
-
-${fromName} saluta ${offer}, mentre ${toName} inserisce nell'operazione ${request}.
-
-L'affare è stato completato e registrato nel database ufficiale della Lega. Le rose sono state aggiornate automaticamente.`
-    },
-    {
-      title:`HERE WE GO: scambio chiuso tra ${fromName} e ${toName}`,
-      body:`HERE WE GO! Dopo una trattativa portata avanti tra le parti, ${fromName} e ${toName} hanno definito lo scambio.
-
-Nell'operazione, ${fromName} cede ${offer}. Percorso inverso per ${request}, che passa a ${fromName}.
-
-Operazione ufficiale: database aggiornato, crediti registrati e nuovo equilibrio sul mercato HM League.`
-    },
-    {
-      title:`COMUNICATO MERCATO: ${fromName} e ${toName} chiudono lo scambio`,
-      body:`Movimento importante nel mercato HM League.
-
-${fromName} e ${toName} hanno raggiunto l'intesa per uno scambio che coinvolge ${offer} e ${request}.
-
-La Segreteria HM League conferma la registrazione dell'operazione e l'aggiornamento automatico delle proprietà dei calciatori.`
-    },
-    {
-      title:`TRATTATIVA CONCLUSA: affare tra ${fromName} e ${toName}`,
-      body:`La trattativa è arrivata alla fumata bianca: ${fromName} e ${toName} hanno concluso uno scambio ufficiale.
-
-${fromName} mette sul tavolo ${offer}; ${toName} risponde con ${request}.
-
-L'operazione entra immediatamente nel registro trasferimenti della HM League.`
-    }
-  ];
-
-  const chosen=templates[Math.floor(Math.random()*templates.length)];
-
-  const details=`\n\nDettagli economici:\n${fromName}: ${tradeMoneyText(t.offer)}\n${toName}: ${tradeMoneyText(t.request)}`;
-
-  news.unshift({
-    title:chosen.title,
-    type:"Trasferimento",
-    body:chosen.body + details,
-    author:"Ufficio Comunicati HM League",
-    pinned:false,
-    date:new Date().toLocaleDateString("it-IT")
-  });
-}
-
-window.moveCredits = moveCredits;
-
-function confirmTradeFromModal(){
-  try{
-    if(!pendingTrade){
-      alert("Nessuno scambio da confermare.");
-      return;
-    }
-
-    const restore = [];
-    const budgetRestore = teams.map(t=>({code:t.code,credits:t.credits,hmcoin:t.hmcoin}));
-
-    // Chi compra/paga scala crediti, chi vende riceve crediti.
-    pendingTrade.offer.forEach(it=>{
-      moveCredits(pendingTrade.to, pendingTrade.from, it.cost);
-      const p = players.find(x=>x.id===it.id);
-      if(p){
-        restore.push({id:p.id, owner:p.owner});
-        p.owner = pendingTrade.to;
-      }
-    });
-
-    pendingTrade.request.forEach(it=>{
-      moveCredits(pendingTrade.from, pendingTrade.to, it.cost);
-      const p = players.find(x=>x.id===it.id);
-      if(p){
-        restore.push({id:p.id, owner:p.owner});
-        p.owner = pendingTrade.from;
-      }
-    });
-
-    const registeredTrade = {
-      ...pendingTrade,
-      date:new Date().toLocaleString("it-IT"),
-      id:"T"+Date.now(),
-      restore,
-      budgetRestore,
-      applied:true
-    };
-
-    trades.unshift(registeredTrade);
-
-    if(typeof createAutoTradeNews === "function"){
-      createAutoTradeNews(registeredTrade);
-    }
-
-    saveAll();
-    closeTradeModal();
-    resetTradeForm();
-    renderTrades();
-
-    alert("Scambio registrato, crediti aggiornati e comunicato creato.");
-  }catch(err){
-    console.error(err);
-    alert("Errore durante la registrazione dello scambio: " + (err.message || err));
-  }
-}
-
-window.confirmTradeFromModal = confirmTradeFromModal;
-
-document.addEventListener("click", function(e){
-  const btn = e.target.closest && e.target.closest("#confirmTradeBtn");
-  if(btn){
-    e.preventDefault();
-    e.stopPropagation();
-    confirmTradeFromModal();
-  }
-}, true);
-
-
-function resetTradeForm(){
-  tradeState.offer=[]; tradeState.request=[]; pendingTrade=null; 
-  if(q("offerPlayers")) renderTradeLists();
-}
-
-
-function adminEditTrade(i){
-  const t=trades[i];
-  if(!t) return;
-
-  q("tradeModalBody").innerHTML = `
-    <h3>Modifica admin scambio registrato</h3>
-    <p class="muted">Qui puoi modificare dati dello scambio senza cambiare automaticamente i proprietari. Usa “Ricalcola proprietari” per applicare di nuovo il trasferimento.</p>
-    <div class="grid grid2">
-      <label>Squadra A
-        <select id="adminTradeFrom" class="input">
-          ${teams.filter(x=>x.code!=="SVIN").map(x=>`<option value="${x.code}" ${x.code===t.from?"selected":""}>${x.code} · ${x.name}</option>`).join("")}
-        </select>
-      </label>
-      <label>Squadra B
-        <select id="adminTradeTo" class="input">
-          ${teams.filter(x=>x.code!=="SVIN").map(x=>`<option value="${x.code}" ${x.code===t.to?"selected":""}>${x.code} · ${x.name}</option>`).join("")}
-        </select>
-      </label>
-    </div>
-
-    <div class="grid grid2" style="margin-top:14px">
-      <div class="card">
-        <h4>Giocatori ceduti da ${esc(t.from)}</h4>
-        <div id="adminOfferBox">${adminTradeItemsHtml(t.offer || [], "offer")}</div>
-      </div>
-      <div class="card">
-        <h4>Giocatori ceduti da ${esc(t.to)}</h4>
-        <div id="adminRequestBox">${adminTradeItemsHtml(t.request || [], "request")}</div>
-      </div>
-    </div>
-
-    <div class="row" style="justify-content:flex-end;margin-top:16px">
-      <button class="btn" onclick="closeTradeModal()">Chiudi</button>
-      <button class="btn yellow" onclick="saveAdminTrade(${i},false)">Salva solo registro</button>
-      <button class="btn green" onclick="saveAdminTrade(${i},true)">Salva e ricalcola proprietari</button>
-    </div>
-  `;
-  q("tradeModal").style.display="flex";
-}
-
-function adminTradeItemsHtml(items, side){
-  return items.map((it,idx)=>{
-    const p=players.find(x=>x.id===it.id);
-    return `
-      <div class="tradePlayer">
-        <b>${esc(p?.name || it.id)}</b>
-        <div class="lineItem">
-          <label>Costo<input class="input admin-${side}-cost" data-idx="${idx}" value="${esc(it.cost || "0")}"></label>
-          <label>Tipologia<select class="input admin-${side}-type" data-idx="${idx}">
-            ${["D","PS","PD","PO"].map(x=>`<option value="${x}" ${it.type===x?"selected":""}>${x}</option>`).join("")}
-          </select></label>
-          <label>Riscatto<input class="input admin-${side}-ransom" data-idx="${idx}" value="${esc(it.ransom || "")}"></label>
-          <label style="grid-column:1/-1">Bonus<input class="input admin-${side}-bonus" data-idx="${idx}" value="${esc(it.bonus || "")}"></label>
-        </div>
-      </div>
-    `;
-  }).join("") || `<div class="muted">Nessun calciatore</div>`;
-}
-
-function readAdminItems(items, side){
-  return items.map((it,idx)=>({
-    ...it,
-    cost:document.querySelector(`.admin-${side}-cost[data-idx="${idx}"]`)?.value || "0",
-    type:document.querySelector(`.admin-${side}-type[data-idx="${idx}"]`)?.value || "D",
-    ransom:document.querySelector(`.admin-${side}-ransom[data-idx="${idx}"]`)?.value || "",
-    bonus:document.querySelector(`.admin-${side}-bonus[data-idx="${idx}"]`)?.value || ""
-  }));
-}
-
-function saveAdminTrade(i, recalcOwners){
-  const t=trades[i];
-  if(!t) return;
-
-  if(recalcOwners) restoreBudgets(t);
-  if(recalcOwners && t.applied && Array.isArray(t.restore)){
-    t.restore.forEach(r=>{
-      const p=players.find(x=>x.id===r.id);
-      if(p) p.owner=r.owner;
-    });
-  }
-
-  t.from=q("adminTradeFrom").value;
-  t.to=q("adminTradeTo").value;
-  t.offer=readAdminItems(t.offer || [], "offer");
-  t.request=readAdminItems(t.request || [], "request");
-  t.editedAt=new Date().toLocaleString("it-IT");
-
-  if(recalcOwners){
-    const restore=[];
-    const budgetRestore=teams.map(tm=>({code:tm.code,credits:tm.credits,hmcoin:tm.hmcoin}));
-    t.offer.forEach(it=>{
-      moveCredits(t.to, t.from, it.cost);
-      const p=players.find(x=>x.id===it.id);
-      if(p){
-        restore.push({id:p.id, owner:p.owner});
-        p.owner=t.to;
-      }
-    });
-    t.request.forEach(it=>{
-      moveCredits(t.from, t.to, it.cost);
-      const p=players.find(x=>x.id===it.id);
-      if(p){
-        restore.push({id:p.id, owner:p.owner});
-        p.owner=t.from;
-      }
-    });
-    t.restore=restore;
-    t.budgetRestore=budgetRestore;
-    t.applied=true;
-  }
-
-  saveAll();
-  closeTradeModal();
-  renderTrades();
-}
-
-function renderConfirmedTrades(){
-  if(!q("confirmedTrades")) return;
-  q("confirmedTrades").innerHTML = trades.length ? trades.map((t,i)=>`<div class="tradePlayer">
-    <div class="between"><div><b>${esc(t.from)} ⇄ ${esc(t.to)}</b><div class="muted">${esc(t.date)}</div></div><div><button class="btn" onclick="adminEditTrade(${i})">Modifica admin</button><button class="btn yellow" onclick="editConfirmedTrade(${i})">Riapri proposta</button><button class="btn red" onclick="deleteConfirmedTrade(${i})">Elimina e ripristina</button></div></div>
-    <div class="grid grid2"><div><h4>${esc(t.from)} ha ceduto</h4><ul>${t.offer.map(itemSummary).join("")}</ul></div><div><h4>${esc(t.to)} ha ceduto</h4><ul>${t.request.map(itemSummary).join("")}</ul></div></div>
-  </div>`).join("") : `<div class="muted">Nessuno scambio confermato.</div>`;
-}
-
-
-function restoreBudgets(t){
-  if(Array.isArray(t.budgetRestore)){
-    t.budgetRestore.forEach(r=>{
-      const tm=team(r.code);
-      if(tm){tm.credits=r.credits;tm.hmcoin=r.hmcoin;}
-    });
-  }
-}
-
-function deleteConfirmedTrade(i){
-  const t=trades[i];
-  if(!t) return;
-
-  if(!confirm("Eliminare lo scambio e ripristinare i proprietari precedenti?")) return;
-
-  restoreBudgets(t);
-  restoreBudgets(t);
-  if(t.applied && Array.isArray(t.restore)){
-    t.restore.forEach(r=>{
-      const p=players.find(x=>x.id===r.id);
-      if(p) p.owner=r.owner;
-    });
-  }
-
-  trades.splice(i,1);
-  saveAll();
-  renderTrades();
-}
-
-function editConfirmedTrade(i){
-  const t=trades[i];
-  if(!t) return;
-
-  if(!confirm("Modificare questo scambio? Verrà tolto dal registro, i proprietari verranno ripristinati e lo ritroverai nella proposta da modificare.")) return;
-
-  if(t.applied && Array.isArray(t.restore)){
-    t.restore.forEach(r=>{
-      const p=players.find(x=>x.id===r.id);
-      if(p) p.owner=r.owner;
-    });
-  }
-
-  tradeState={
-    from:t.from,
-    to:t.to,
-    offer:JSON.parse(JSON.stringify(t.offer || [])),
-    request:JSON.parse(JSON.stringify(t.request || []))
-  };
-
-  trades.splice(i,1);
-  saveAll();
-  renderTrades();
-  window.scrollTo({top:0,behavior:"smooth"});
-}
-
-function renewalsHtml(code){
-  const list=ownedPlayers(code).sort((a,b)=>a.name.localeCompare(b.name));
-  return `<div class="card"><div class="between"><div><h3>Calcolo rinnovi/stipendi</h3><p class="muted">Mostra solo calciatori di proprietà, inclusi dati in prestito e primavera.</p></div><div class="row"><button class="btn" onclick="selectAllRenewals(true)">Seleziona tutti</button><button class="btn" onclick="selectAllRenewals(false)">Deseleziona tutti</button><button class="btn green" onclick="renewSelected('${code}')">Rinnova e scala crediti</button></div></div><div id="renList">${list.map(p=>`<label class="playerRow"><input type="checkbox" class="renChk" data-id="${p.id}" data-val="${Number(String(p.contract||0).replace(',','.'))||0}" onchange="calcRenewals()"> ${jersey(p.owner,44)} <span><b>${esc(p.name)}</b><div class="muted">${esc(p.current)} · contratto ${esc(p.contract||"0")}</div></span></label>`).join("")}</div><div class="stat" style="margin-top:12px"><div class="muted">Totale selezionato</div><div class="n" id="renTotal">0</div></div></div>`;
-}
-function selectAllRenewals(flag){document.querySelectorAll(".renChk").forEach(c=>c.checked=flag);calcRenewals();}
-function calcRenewals(){let sum=0;document.querySelectorAll(".renChk:checked").forEach(c=>sum+=Number(c.dataset.val||0));q("renTotal").textContent=sum.toFixed(1).replace(".0","");}
-function renewSelected(code){
-  const selectedIds=[...document.querySelectorAll(".renChk:checked")].map(c=>c.dataset.id).filter(Boolean);
-  let sum=0;
-  document.querySelectorAll(".renChk:checked").forEach(c=>sum+=Number(c.dataset.val||0));
-
-  if(!confirm("Confermi rinnovi? I selezionati avranno Scadenza = RINNOVATO, gli esclusi Scadenza = IN SCADENZA. Verranno scalati "+sum+" crediti da "+code+".")) return;
-
-  ownedPlayers(code).forEach(p=>{
-    if(selectedIds.includes(p.id)){
-      p.deadline="RINNOVATO";
+function hmUpdateFirebaseButtons(){
+  const loginBtn = document.getElementById("firebaseLoginBtn");
+  const saveBtn = document.getElementById("firebaseSaveBtn");
+
+  if(loginBtn){
+    if(hmFirebaseUser && hmFirebaseUser.uid === HM_FIREBASE_ADMIN_UID){
+      loginBtn.textContent = "👤 Admin Google";
+      loginBtn.onclick = firebaseLogout;
+    }else if(hmFirebaseUser){
+      loginBtn.textContent = "👁️ Google lettura";
+      loginBtn.onclick = firebaseLogout;
     }else{
-      p.deadline="IN SCADENZA";
-    }
-  });
-
-  const t=team(code);
-  t.credits=(Number(t.credits)||0)-sum;
-
-  saveAll();
-  renderTeamDetail();
-}
-function renderRenewals(){
-  q("view-renewals").innerHTML = `<div class="between"><h2>Rinnovi/Stipendi</h2><select class="input" onchange="selectedTeam=this.value;renderRenewals()">${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===selectedTeam?"selected":""}>${t.code} · ${t.name}</option>`).join("")}</select></div>${renewalsHtml(selectedTeam)}`;
-}
-
-
-function teamTrophyBadges(code){
-  const rows=honors.filter(h=>h.team===code);
-  if(!rows.length) return `<span class="badge">Nessun trofeo registrato</span>`;
-  const count={};
-  rows.forEach(h=>count[h.award]=(count[h.award]||0)+1);
-  return Object.entries(count).map(([k,v])=>`
-    <span class="badge" style="gap:6px;align-items:center">
-      ${imgPreview("honor_"+k,26)}
-      ${esc(k)}: ${v}
-    </span>
-  `).join("");
-}
-
-function imgPreview(key, size=54){
-  const src=awardImages[key];
-  return src ? `<img src="${src}" style="width:${size}px;height:${size}px;object-fit:contain;border-radius:12px;background:#0b1627;border:1px solid #334155;padding:4px">` : `<div class="logoBox" style="width:${size}px;height:${size}px">🏆</div>`;
-}
-
-function uploadAwardImage(input, key){
-  const file=input.files[0]; if(!file) return;
-  const reader=new FileReader();
-  reader.onload=()=>{awardImages[key]=reader.result;saveAll();renderTeamDetail();};
-  reader.readAsDataURL(file);
-}
-
-function teamHonorsHtml(code){
-  const h=honors.filter(x=>x.team===code);
-  const ind=individualTitles.filter(x=>x.team===code);
-  const pos=positionHistory.filter(x=>x.team===code);
-  return `<div class="grid">
-    <div class="card">
-      <div class="between"><h3>Albo d'oro società</h3><button class="btn primary" onclick="addHonor('${code}')">Aggiungi trofeo</button></div>
-      <p class="muted">I trofei inseriti qui aggiornano anche l'Albo d'oro generale.</p>
-      <div class="grid">${h.length?h.map((x,i)=>honorCard(x,"honors",i,code)).join(""):'<div class="muted">Nessun trofeo inserito.</div>'}</div>
-    </div>
-    <div class="card">
-      <div class="between"><h3>Titoli individuali</h3><button class="btn primary" onclick="addIndividualTitle('${code}')">Aggiungi titolo individuale</button></div>
-      <div class="grid">${ind.length?ind.map((x,i)=>individualCard(x,i,code)).join(""):'<div class="muted">Nessun titolo individuale inserito.</div>'}</div>
-    </div>
-    <div class="card">
-      <div class="between"><h3>Storico posizionamenti</h3><button class="btn primary" onclick="addPosition('${code}')">Aggiungi posizione</button></div>
-      <table class="table"><tr><th>Stagione</th><th>Serie</th><th>Posizione</th><th></th></tr>${pos.map((p,i)=>`<tr><td>${esc(p.season)}</td><td>${esc(p.series)}</td><td>${esc(p.position)}</td><td><button class="btn" onclick="editPosition('${code}',${i})">Modifica</button><button class="btn red" onclick="deletePosition('${code}',${i})">Elimina</button></td></tr>`).join("")}</table>
-    </div>
-  </div>`;
-}
-
-function honorCard(x,type,i,code){
-  return `<div class="playerRow">${imgPreview("honor_"+x.award,48)}<div><b>${esc(x.award)}</b><div class="muted">Stagione ${esc(x.season)}</div><label class="muted">Immagine premio valida per tutti <input type="file" accept="image/*" onchange="uploadAwardImage(this,'honor_${esc(x.award)}')"></label></div><div><button class="btn" onclick="editHonor('${code}',${i})">Modifica</button><button class="btn red" onclick="deleteHonor('${code}',${i})">Elimina</button></div></div>`;
-}
-
-function individualCard(x,i,code){
-  return `<div class="playerRow">${imgPreview("individual_"+x.award,48)}<div><b>${esc(x.award)}</b><div class="muted">${esc(x.player||"")} · stagione ${esc(x.season)}</div><label class="muted">Immagine titolo valida per tutti <input type="file" accept="image/*" onchange="uploadAwardImage(this,'individual_${esc(x.award)}')"></label></div><div><button class="btn" onclick="editIndividualTitle('${code}',${i})">Modifica</button><button class="btn red" onclick="deleteIndividualTitle('${code}',${i})">Elimina</button></div></div>`;
-}
-
-function addHonor(code){
-  const award=prompt("Nome trofeo/competizione","HM League"); if(!award) return;
-  const season=prompt("Stagione di riferimento","2025/2026") || "";
-  honors.push({team:code,award,season});
-  saveAll(); renderTeamDetail();
-}
-function editHonor(code,localIndex){
-  const list=honors.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
-  const row=list[localIndex]; if(!row) return;
-  const award=prompt("Nome trofeo/competizione",row.award); if(!award) return;
-  const season=prompt("Stagione",row.season) || "";
-  honors[row._i]={team:code,award,season};
-  saveAll(); renderTeamDetail();
-}
-function deleteHonor(code,localIndex){
-  const list=honors.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
-  const row=list[localIndex]; if(!row) return;
-  if(confirm("Eliminare trofeo?")){honors.splice(row._i,1);saveAll();renderTeamDetail();}
-}
-
-function addIndividualTitle(code){
-  const award=prompt("Premio individuale: Capocannoniere, Assistman, Miglior Giocatore, Miglior Allenatore","Capocannoniere");
-  if(!award || !INDIVIDUAL_AWARDS.includes(award)){alert("Scegli uno dei 4 premi previsti.");return;}
-  const player=prompt("Nome calciatore/allenatore","");
-  const season=prompt("Stagione","2025/2026") || "";
-  individualTitles.push({team:code,award,player,season});
-  saveAll(); renderTeamDetail();
-}
-function editIndividualTitle(code,localIndex){
-  const list=individualTitles.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
-  const row=list[localIndex]; if(!row) return;
-  const award=prompt("Nome titolo",row.award); if(!award) return;
-  const player=prompt("Vincitore",row.player||"") || "";
-  const season=prompt("Stagione",row.season||"") || "";
-  individualTitles[row._i]={team:code,award,player,season};
-  saveAll(); renderTeamDetail();
-}
-function deleteIndividualTitle(code,localIndex){
-  const list=individualTitles.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
-  const row=list[localIndex]; if(!row) return;
-  if(confirm("Eliminare titolo individuale?")){individualTitles.splice(row._i,1);saveAll();renderTeamDetail();}
-}
-
-function addPosition(code){
-  const season=prompt("Stagione","2025/2026"); if(!season) return;
-  const position=prompt("Posizionamento","1°") || "";
-  const series=prompt("Serie","Serie A") || "";
-  positionHistory.push({team:code,season,position,series});
-  saveAll(); renderTeamDetail();
-}
-function editPosition(code,localIndex){
-  const list=positionHistory.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
-  const row=list[localIndex]; if(!row) return;
-  const season=prompt("Stagione",row.season); if(!season) return;
-  const position=prompt("Posizionamento",row.position) || "";
-  const series=prompt("Serie",row.series) || "";
-  positionHistory[row._i]={team:code,season,position,series};
-  saveAll(); renderTeamDetail();
-}
-function deletePosition(code,localIndex){
-  const list=positionHistory.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
-  const row=list[localIndex]; if(!row) return;
-  if(confirm("Eliminare posizione storica?")){positionHistory.splice(row._i,1);saveAll();renderTeamDetail();}
-}
-
-function teamOrgHtml(code){
-  const o=orgData[code] || {};
-  const t=team(code);
-  return `<div class="grid grid2">
-    <div class="card">
-      <h3>Organigramma società</h3>
-      <div class="grid">
-        <label>Presidente
-          <input class="input" id="orgPresident" value="${esc(o.president||"")}" placeholder="Nome presidente">
-        </label>
-        <label>Foto presidente
-          <input class="input" type="file" id="orgPresidentImg" accept="image/*">
-        </label>
-        <label>Allenatore
-          <select class="input" id="orgCoach">
-            <option value="">Nessun allenatore</option>
-            ${coachOptions(o.coachId || "", code)}
-          </select>
-        </label>
-        <label>Anni contratto allenatore
-          <select class="input" id="orgCoachYears">
-            ${[1,2,3,4,5].map(y=>`<option value="${y}" ${String(o.coachYears||1)===String(y)?"selected":""}>${y} anno/i</option>`).join("")}
-          </select>
-        </label>
-        <label>Direttore Sportivo
-          <input class="input" id="orgSportingDirector" value="${esc(o.sportingDirector||"")}" placeholder="Nome direttore sportivo">
-        </label>
-        <label>Sponsor
-          <input class="input" id="orgSponsor" value="${esc(o.sponsor||"")}" placeholder="Sponsor principale">
-        </label>
-        <label>Fondazione
-          <input class="input" id="orgFounded" value="${esc(o.founded||"")}" placeholder="Anno fondazione">
-        </label>
-        <label>Colori sociali
-          <input class="input" id="orgColors" value="${esc(o.colors||"")}" placeholder="Es. Nero / Viola">
-        </label>
-        <label>Nome stadio
-          <input class="input" id="orgStadium" value="${esc(o.stadium||"")}" placeholder="Nome stadio">
-        </label>
-        <label>Posti stadio
-          <input class="input" id="orgStadiumSeats" value="${esc(o.stadiumSeats||"")}" placeholder="Es. 32.000">
-        </label>
-        <label>Immagine stadio
-          <input class="input" type="file" id="orgStadiumImg" accept="image/*">
-        </label>
-        <button class="btn green" onclick="saveOrg('${code}')">Salva organigramma</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Anteprima organigramma</h3>
-      <div class="row" style="align-items:flex-start">
-        ${o.presidentImg?`<img src="${o.presidentImg}" style="width:96px;height:96px;object-fit:cover;border-radius:22px;border:1px solid #334155">`:logo(code,96)}
-        <div>
-          <h2>${esc(t.name)}</h2>
-          <p>Presidente: <b>${esc(o.president||"-")}</b></p>
-          <p>Allenatore: <b>${esc(coachName(o.coachId) || "-")}</b></p>
-          <p>Direttore Sportivo: <b>${esc(o.sportingDirector||"-")}</b></p>
-          <p>Sponsor: <b>${esc(o.sponsor||"-")}</b></p>
-          <p>Fondazione: <b>${esc(o.founded||"-")}</b></p>
-          <p>Colori sociali: <b>${esc(o.colors||"-")}</b></p>
-        </div>
-      </div>
-
-      <div style="margin-top:16px">
-        ${o.stadiumImg?`<img src="${o.stadiumImg}" style="width:100%;max-height:260px;object-fit:cover;border-radius:18px;border:1px solid #334155">`:`<div class="muted">Nessuna immagine stadio caricata.</div>`}
-        <h2>${esc(o.stadium||"Stadio non inserito")}</h2>
-        <p>Posti: <b>${esc(o.stadiumSeats||"-")}</b></p>
-      </div>
-    </div>
-  </div>`;
-}
-
-function saveOrg(code){
-  orgData[code]=orgData[code] || {};
-  orgData[code].president=q("orgPresident").value;
-  assignCoachToTeam(code, q("orgCoach").value, Number(q("orgCoachYears").value||1));
-  orgData[code].sportingDirector=q("orgSportingDirector").value;
-  orgData[code].sponsor=q("orgSponsor").value;
-  orgData[code].founded=q("orgFounded").value;
-  orgData[code].colors=q("orgColors").value;
-  orgData[code].stadium=q("orgStadium").value;
-  orgData[code].stadiumSeats=q("orgStadiumSeats").value;
-
-  const presidentFile=q("orgPresidentImg").files[0];
-  const stadiumFile=q("orgStadiumImg").files[0];
-
-  const finish=()=>{saveAll();renderTeamDetail();};
-
-  if(presidentFile){
-    const reader=new FileReader();
-    reader.onload=()=>{
-      orgData[code].presidentImg=reader.result;
-      if(stadiumFile){
-        const reader2=new FileReader();
-        reader2.onload=()=>{orgData[code].stadiumImg=reader2.result;finish();};
-        reader2.readAsDataURL(stadiumFile);
-      }else{
-        finish();
-      }
-    };
-    reader.readAsDataURL(presidentFile);
-  }else if(stadiumFile){
-    const reader2=new FileReader();
-    reader2.onload=()=>{orgData[code].stadiumImg=reader2.result;finish();};
-    reader2.readAsDataURL(stadiumFile);
-  }else{
-    finish();
-  }
-}
-
-
-
-function ensureCoachesManager(){
-  if(coachesManager) return;
-  coachesManager = {selectedTier:1, coaches:INITIAL_COACHES};
-  saveAll();
-}
-function coachCostByTier(tier){
-  return Number(tier)===1?40:Number(tier)===2?25:10;
-}
-function coachById(id){
-  ensureCoachesManager();
-  return coachesManager.coaches.find(c=>c.id===id);
-}
-function coachName(id){
-  const c=coachById(id);
-  return c ? c.name : "";
-}
-function coachOptions(selected="", teamCode=""){
-  ensureCoachesManager();
-  return coachesManager.coaches
-    .filter(c=>!c.owner || c.owner===teamCode || c.id===selected)
-    .sort((a,b)=>a.tier-b.tier || a.name.localeCompare(b.name))
-    .map(c=>`<option value="${c.id}" ${c.id===selected?"selected":""}>${esc(c.name)} · ${c.tier}ª fascia · costo ${c.cost}</option>`)
-    .join("");
-}
-function assignCoachToTeam(teamCode, coachId, years=1){
-  ensureCoachesManager();
-  orgData[teamCode]=orgData[teamCode]||{};
-  const oldId=orgData[teamCode].coachId;
-  if(oldId===coachId && Number(orgData[teamCode].coachYears||1)===Number(years)) return;
-
-  if(oldId){
-    const old=coachById(oldId);
-    if(old){old.owner="";old.status="Svincolato";}
-  }
-
-  orgData[teamCode].coachId=coachId;
-  orgData[teamCode].coachYears=years;
-
-  if(coachId){
-    const c=coachById(coachId);
-    if(c){
-      const total=(Number(c.cost)||coachCostByTier(c.tier))*Number(years||1);
-      c.owner=teamCode;
-      c.status="Contratto";
-      c.contractYears=years;
-      const tm=team(teamCode);
-      if(tm) tm.credits=(Number(tm.credits)||0)-total;
-      news.unshift({
-        title:`UFFICIALE: ${c.name} nuovo allenatore di ${teamFullName(teamCode)}`,
-        type:"Comunicazione Lega",
-        body:`${teamFullName(teamCode)} ha scelto ${c.name} come allenatore. Contratto di ${years} anno/i, costo totale ${total} crediti scalati dal budget società.`,
-        author:"Segreteria HM League",
-        pinned:false,
-        date:new Date().toLocaleDateString("it-IT")
-      });
-    }
-  }
-}
-
-function renderCoaches(){
-  ensureCoachesManager();
-  const tier=coachesManager.selectedTier||1;
-  const list=coachesManager.coaches.filter(c=>Number(c.tier)===Number(tier));
-  q("view-coaches").innerHTML=`
-    <div class="between">
-      <div><h2>Allenatori</h2><p class="muted">Allenatori divisi per fascia. Puoi modificarli, aggiungerli e assegnarli dall'organigramma.</p></div>
-      <button class="btn primary" onclick="openCoachEditor()">Aggiungi allenatore</button>
-    </div>
-    <div class="tabs">
-      ${[1,2,3].map(f=>`<button class="tab ${Number(tier)===f?"active":""}" onclick="coachesManager.selectedTier=${f};saveAll();renderCoaches()">${f}ª Fascia · costo ${coachCostByTier(f)}</button>`).join("")}
-    </div>
-    <div class="grid grid3">
-      ${list.map(c=>`<div class="card">
-        <div class="between"><span class="badge">${c.tier}ª fascia</span><span class="badge">${c.owner?teamLabel(c.owner):"Svincolato"}</span></div>
-        <h3>${esc(c.name)}</h3>
-        <p class="muted">${esc(c.traits)}</p>
-        <p><b>Costo base:</b> ${esc(c.cost)} crediti</p>
-        <div class="row"><button class="btn" onclick="openCoachEditor('${c.id}')">Modifica</button>${c.owner?`<button class="btn red" onclick="freeCoach('${c.id}')">Svincola</button>`:""}</div>
-      </div>`).join("")}
-    </div>
-  `;
-}
-function openCoachEditor(id=null){
-  ensureCoachesManager();
-  const c=id?coachById(id):{id:"C"+Date.now(),name:"",tier:3,cost:10,traits:"",trigger:"manual",owner:"",status:"Svincolato"};
-  q("tradeModalBody").innerHTML=`
-    <h3>${id?"Modifica allenatore":"Nuovo allenatore"}</h3>
-    <div class="grid grid2">
-      <label>Nome<input class="input" id="coachName" value="${esc(c.name)}"></label>
-      <label>Fascia<select class="input" id="coachTier" onchange="q('coachCost').value=coachCostByTier(this.value)">
-        ${[1,2,3].map(f=>`<option value="${f}" ${Number(c.tier)===f?"selected":""}>${f}ª Fascia</option>`).join("")}
-      </select></label>
-      <label>Costo<input class="input" id="coachCost" value="${esc(c.cost)}"></label>
-      <label>Tipo bonus<select class="input" id="coachTrigger">
-        ${["afterSP","def3","def4","oneStriker","ew","tw2","wa","treq","manual"].map(x=>`<option value="${x}" ${c.trigger===x?"selected":""}>${x}</option>`).join("")}
-      </select></label>
-      <label style="grid-column:1/-1">Caratteristiche<textarea class="input" id="coachTraits" rows="5">${esc(c.traits)}</textarea></label>
-    </div>
-    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="saveCoach('${id||""}')">Salva</button></div>
-  `;
-  q("tradeModal").style.display="flex";
-}
-function saveCoach(id=""){
-  ensureCoachesManager();
-  let c=id?coachById(id):null;
-  if(!c){
-    c={id:"C"+Date.now(),owner:"",status:"Svincolato",contractYears:1};
-    coachesManager.coaches.push(c);
-  }
-  c.name=q("coachName").value;
-  c.tier=Number(q("coachTier").value);
-  c.cost=Number(q("coachCost").value||coachCostByTier(c.tier));
-  c.trigger=q("coachTrigger").value;
-  c.traits=q("coachTraits").value;
-  saveAll();closeTradeModal();renderCoaches();
-}
-function freeCoach(id){
-  const c=coachById(id); if(!c) return;
-  if(!confirm("Svincolare allenatore? Non rimborsa crediti.")) return;
-  if(c.owner && orgData[c.owner]){orgData[c.owner].coachId="";orgData[c.owner].coachYears=1;}
-  c.owner="";c.status="Svincolato";saveAll();renderCoaches();
-}
-
-function coachPositionBonus(coach, pos, afterJan, isNew){
-  if(!afterJan) return 0;
-  pos=Number(pos||0);
-  if(Number(coach.tier)===1){
-    return pos>=1 && pos<=4 ? 1 : -1;
-  }
-  if(Number(coach.tier)===2){
-    return pos>=1 && pos<=4 ? 0.5 : -0.5;
-  }
-  if(Number(coach.tier)===3){
-    if(isNew && pos>=5 && pos<=8) return 1;
-    if(pos>=1 && pos<=4) return 0.5;
-    if(pos===7 || pos===8) return -1;
-  }
-  return 0;
-}
-function coachConditionBonus(coach, opts){
-  const tr=coach.trigger;
-  if(tr==="afterSP") return opts.afterSP ? 0.5 : 0;
-  if(tr==="def3") return opts.module==="def3" ? 1 : opts.module==="def4" ? -1 : 0;
-  if(tr==="def4") return opts.module==="def4" ? 1 : opts.module==="def3" ? -1 : 0;
-  if(tr==="oneStriker") return opts.module==="one" ? 1 : opts.module==="two" ? -1 : 0;
-  if(tr==="ew") return opts.module==="ew" ? 1 : opts.module==="noew" ? -1 : 0;
-  if(tr==="tw2") return opts.module==="tw2" ? 1 : opts.module==="notw2" ? -1 : 0;
-  if(tr==="wa") return opts.module==="wa" ? 1 : opts.module==="nowa" ? -1 : 0;
-  if(tr==="treq") return opts.module==="treq" ? 1 : opts.module==="notreq" ? -1 : 0;
-  return 0;
-}
-function coachEuropeNote(coach){
-  const m=String(coach.traits||"").match(/Coppe Europee\\s*([+\\-]?\\d+(?:,\\d+)?)/i);
-  return m ? `Coppe europee: ${m[1]} da aggiungere solo in partita europea` : "";
-}
-
-function coachesSimulatorHtml(c, sortedRows){
-  ensureCoachesManager();
-  const rows=(sortedRows||[]).filter(r=>r.teamCode && team(r.teamCode));
-  return `<div class="card" style="margin-top:14px">
-    <h3>Simulazione bonus allenatori</h3>
-    <p class="muted">Il bonus coppe europee viene solo segnalato e non sommato in campionato.</p>
-    <table class="table">
-      <tr><th>Pos</th><th>Squadra</th><th>Allenatore</th><th>Condizione</th><th>Fedeltà</th><th>Dopo gennaio</th><th>Nuovo</th><th>Bonus stimato</th><th>Note coppe</th></tr>
-      ${rows.map((r,idx)=>{
-        const org=orgData[r.teamCode]||{};
-        const coach=coachById(org.coachId);
-        if(!coach) return `<tr><td>${idx+1}</td><td>${teamLabel(r.teamCode)}</td><td colspan="7" class="muted">Nessun allenatore assegnato</td></tr>`;
-        const baseId=`sim_${c.id}_${r.teamCode}`;
-        return `<tr>
-          <td><b>${idx+1}</b></td>
-          <td>${teamLabel(r.teamCode)}</td>
-          <td><b>${esc(coach.name)}</b><div class="muted">${esc(coach.traits)}</div></td>
-          <td>
-            <select class="input" id="${baseId}_module" onchange="updateCoachSim('${c.id}','${r.teamCode}',${idx+1})">
-              <option value="">Nessuna</option>
-              <option value="def3">Difesa a 3</option><option value="def4">Difesa a 4</option>
-              <option value="one">1 punta</option><option value="two">2 punte</option>
-              <option value="ew">E/W sì</option><option value="noew">No E/W</option>
-              <option value="tw2">2+ T/W</option><option value="notw2">No 2+ T/W</option>
-              <option value="wa">W/A sì</option><option value="nowa">No W/A</option>
-              <option value="treq">Trequartista</option><option value="notreq">No trequartista</option>
-            </select>
-            <label class="muted"><input type="checkbox" id="${baseId}_afterSP" onchange="updateCoachSim('${c.id}','${r.teamCode}',${idx+1})"> Dopo S/P</label>
-          </td>
-          <td><input type="checkbox" id="${baseId}_faith" onchange="updateCoachSim('${c.id}','${r.teamCode}',${idx+1})"> +0,5</td>
-          <td><input type="checkbox" id="${baseId}_jan" onchange="updateCoachSim('${c.id}','${r.teamCode}',${idx+1})"></td>
-          <td><input type="checkbox" id="${baseId}_new" onchange="updateCoachSim('${c.id}','${r.teamCode}',${idx+1})"></td>
-          <td><b id="${baseId}_total">0</b></td>
-          <td class="muted">${esc(coachEuropeNote(coach))}</td>
-        </tr>`;
-      }).join("")}
-    </table>
-  </div>`;
-}
-function updateCoachSim(compId,teamCode,pos){
-  const org=orgData[teamCode]||{};
-  const coach=coachById(org.coachId);
-  if(!coach) return;
-  const baseId=`sim_${compId}_${teamCode}`;
-  const opts={
-    module:q(baseId+"_module")?.value||"",
-    afterSP:q(baseId+"_afterSP")?.checked||false
-  };
-  const faith=q(baseId+"_faith")?.checked ? 0.5 : 0;
-  const afterJan=q(baseId+"_jan")?.checked||false;
-  const isNew=q(baseId+"_new")?.checked||false;
-  const total=coachConditionBonus(coach,opts)+faith+coachPositionBonus(coach,pos,afterJan,isNew);
-  q(baseId+"_total").textContent=String(total).replace(".",",");
-}
-
-function ensureCompetitionsManager(){
-  if(competitionsManager) return;
-  competitionsManager = {
-    selected:"HML",
-    competitions:[
-      {id:"HML",name:"HML",type:"league",description:"Serie A HM League",participants:["TOT","JOS","BVB","FLO","IMP","IAR","SKU","DIA","IRO","BEA"],standings:[]},
-      {id:"HMB",name:"HMB",type:"league",description:"Serie B HM League",participants:["PAL","LEG","YOU","KRA","TDT","RED"],standings:[]},
-      {id:"HMCUP",name:"HML Cup",type:"bracket",description:"Coppa a tabellone con tutte le 16 squadre",participants:teams.filter(t=>t.code!=="SVIN").map(t=>t.code),bracket:[]},
-      {id:"HMSUPER",name:"HM Super Cup",type:"final",description:"Finale secca",participants:[],final:{teamA:"",teamB:"",scoreA:"",scoreB:"",winner:""}},
-      {id:"CHAMPIONS",name:"Champions League",type:"manual",description:"Competizione manuale",participants:[],standings:[],matches:[]},
-      {id:"EUROPA",name:"Europa League",type:"manual",description:"Competizione manuale",participants:[],standings:[],matches:[]},
-      {id:"CONFERENCE",name:"Conference League",type:"manual",description:"Competizione manuale",participants:[],standings:[],matches:[]}
-    ]
-  };
-  competitionsManager.competitions.forEach(c=>{
-    if(c.type==="league") initLeagueStandings(c);
-    if(c.type==="bracket" && (!c.bracket || !c.bracket.length)) initBracket(c);
-  });
-  saveAll();
-}
-
-function currentCompetition(){
-  ensureCompetitionsManager();
-  return competitionsManager.competitions.find(c=>c.id===competitionsManager.selected) || competitionsManager.competitions[0];
-}
-
-function initLeagueStandings(c){
-  c.standings = (c.participants||[]).map(code=>{
-    const existing=(c.standings||[]).find(r=>r.teamCode===code);
-    return existing || {teamCode:code,teamName:"",played:0,points:0,totalPoints:0};
-  });
-}
-
-function compTeamName(rowOrCode){
-  const code = typeof rowOrCode==="string" ? rowOrCode : rowOrCode.teamCode;
-  const free = typeof rowOrCode==="string" ? "" : rowOrCode.teamName;
-  if(code && team(code)) return team(code).name;
-  return free || code || "-";
-}
-
-function renderCompetitionManager(){
-  ensureCompetitionsManager();
-  const c=currentCompetition();
-  q("view-compmanager").innerHTML = `
-    <div class="between">
-      <div>
-        <h2>Competizioni</h2>
-        <p class="muted">Gestisci classifiche manuali, tabelloni, finale secca e competizioni personalizzate.</p>
-      </div>
-      <button class="btn primary" onclick="addCompetition()">Aggiungi competizione</button>
-    </div>
-
-    <div class="tabs">
-      ${competitionsManager.competitions.map(x=>`<button class="tab ${x.id===c.id?"active":""}" onclick="competitionsManager.selected='${x.id}';saveAll();renderCompetitionManager()">${esc(x.name)}</button>`).join("")}
-    </div>
-
-    <div class="card">
-      <div class="between">
-        <div>
-          <h3>${esc(c.name)}</h3>
-          <p class="muted">${esc(c.description||"")}</p>
-          <span class="badge">Tipo: ${esc(c.type)}</span>
-        </div>
-        <div class="row">
-          <button class="btn" onclick="editCompetitionSettings('${c.id}')">Impostazioni</button>
-          ${!["HML","HMB","HMCUP","HMSUPER"].includes(c.id)?`<button class="btn red" onclick="deleteCompetition('${c.id}')">Elimina</button>`:""}
-        </div>
-      </div>
-    </div>
-
-    <div style="margin-top:14px">
-      ${c.type==="league" ? competitionLeagueHtml(c) : ""}
-      ${c.type==="manual" ? competitionManualHtml(c) : ""}
-      ${c.type==="bracket" ? competitionBracketHtml(c) : ""}
-      ${c.type==="final" ? competitionFinalHtml(c) : ""}
-    </div>
-  `;
-}
-
-function participantEditorHtml(c){
-  return `<div class="card">
-    <div class="between">
-      <h3>Partecipanti</h3>
-      <button class="btn primary" onclick="addParticipant('${c.id}')">Aggiungi partecipante</button>
-    </div>
-    <div class="row" style="margin-top:10px">
-      ${(c.participants||[]).map(code=>`<span class="badge">${esc(team(code)?.name || code)} <button style="margin-left:6px" class="btn red" onclick="removeParticipant('${c.id}','${code}')">x</button></span>`).join("") || '<span class="muted">Nessun partecipante</span>'}
-    </div>
-  </div>`;
-}
-
-function addParticipant(compId){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  if(!c) return;
-  const code=prompt("Sigla squadra esistente oppure nome libero").trim();
-  if(!code) return;
-  if(!c.participants.includes(code)) c.participants.push(code.toUpperCase());
-  if(c.type==="league" || c.type==="manual") initLeagueStandings(c);
-  if(c.type==="bracket") initBracket(c);
-  saveAll();renderCompetitionManager();
-}
-
-function removeParticipant(compId,code){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  if(!c) return;
-  c.participants=(c.participants||[]).filter(x=>x!==code);
-  c.standings=(c.standings||[]).filter(r=>r.teamCode!==code);
-  if(c.type==="bracket") initBracket(c);
-  saveAll();renderCompetitionManager();
-}
-
-function competitionLeagueHtml(c){
-  initLeagueStandings(c);
-  const rows=[...(c.standings||[])].sort((a,b)=>{
-    const pts=Number(b.points||0)-Number(a.points||0);
-    if(pts!==0) return pts;
-    return Number(b.totalPoints||0)-Number(a.totalPoints||0);
-  });
-
-  const tableHtml = `${participantEditorHtml(c)}
-  <div class="card" style="margin-top:14px">
-    <h3>Classifica</h3>
-    <p class="muted">Ordine automatico: punti più alti; a parità, punti totali più alti.</p>
-    <table class="table">
-      <tr><th>Pos</th><th>Squadra</th><th>PG</th><th>Punti</th><th>Punti totali</th></tr>
-      ${rows.map((r,i)=>`<tr>
-        <td><b>${i+1}</b></td>
-        <td><b>${esc(compTeamName(r))}</b></td>
-        <td><input class="input" style="width:80px" value="${esc(r.played||0)}" onchange="updateStandingFieldComp('${c.id}','${r.teamCode}','played',this.value)"></td>
-        <td><input class="input" style="width:80px" value="${esc(r.points||0)}" onchange="updateStandingFieldComp('${c.id}','${r.teamCode}','points',this.value)"></td>
-        <td><input class="input" style="width:100px" value="${esc(r.totalPoints||0)}" onchange="updateStandingFieldComp('${c.id}','${r.teamCode}','totalPoints',this.value)"></td>
-      </tr>`).join("")}
-    </table>
-  </div>`;
-
-  const simulator = (c.id==="HML" || c.id==="HMB") ? coachesSimulatorHtml(c, rows) : "";
-  return tableHtml + simulator;
-}
-
-function updateStandingFieldComp(compId,teamCode,field,value){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  let row=(c.standings||[]).find(r=>r.teamCode===teamCode);
-  if(row) row[field]=value;
-  saveAll();
-}
-
-function competitionManualHtml(c){
-  if(!c.matches) c.matches=[];
-  return `${competitionLeagueHtml(c)}
-  <div class="card" style="margin-top:14px">
-    <div class="between"><h3>Partite manuali</h3><button class="btn primary" onclick="addManualMatch('${c.id}')">Aggiungi partita</button></div>
-    <table class="table">
-      <tr><th>Data/Giornata</th><th>Casa</th><th>Risultato</th><th>Trasferta</th><th></th></tr>
-      ${c.matches.map((m,i)=>`<tr>
-        <td><input class="input" value="${esc(m.label||"")}" onchange="updateManualMatch('${c.id}',${i},'label',this.value)"></td>
-        <td><input class="input" value="${esc(m.home||"")}" onchange="updateManualMatch('${c.id}',${i},'home',this.value)"></td>
-        <td><input class="input" style="width:90px" value="${esc(m.score||"")}" onchange="updateManualMatch('${c.id}',${i},'score',this.value)"></td>
-        <td><input class="input" value="${esc(m.away||"")}" onchange="updateManualMatch('${c.id}',${i},'away',this.value)"></td>
-        <td><button class="btn red" onclick="deleteManualMatch('${c.id}',${i})">Elimina</button></td>
-      </tr>`).join("")}
-    </table>
-  </div>`;
-}
-
-function addManualMatch(compId){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  c.matches=c.matches||[];
-  c.matches.push({label:"",home:"",score:"",away:""});
-  saveAll();renderCompetitionManager();
-}
-function updateManualMatch(compId,i,field,value){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  c.matches[i][field]=value;saveAll();
-}
-function deleteManualMatch(compId,i){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  c.matches.splice(i,1);saveAll();renderCompetitionManager();
-}
-
-function initBracket(c){
-  const p=[...(c.participants||[])];
-  while(p.length<16) p.push("");
-  c.bracket=[
-    {round:"Ottavi",matches:Array.from({length:8},(_,i)=>({a:p[i*2]||"",b:p[i*2+1]||"",sa:"",sb:"",winner:""}))},
-    {round:"Quarti",matches:Array.from({length:4},()=>({a:"",b:"",sa:"",sb:"",winner:""}))},
-    {round:"Semifinali",matches:Array.from({length:2},()=>({a:"",b:"",sa:"",sb:"",winner:""}))},
-    {round:"Finale",matches:Array.from({length:1},()=>({a:"",b:"",sa:"",sb:"",winner:""}))}
-  ];
-}
-
-function competitionBracketHtml(c){
-  if(!c.bracket || !c.bracket.length) initBracket(c);
-  return `${participantEditorHtml(c)}
-  <div class="card" style="margin-top:14px">
-    <div class="between"><h3>Tabellone</h3><button class="btn" onclick="initBracket(currentCompetition());saveAll();renderCompetitionManager()">Rigenera tabellone</button></div>
-    <div class="grid grid4">
-      ${c.bracket.map((round,ri)=>`<div class="card"><h3>${round.round}</h3>${round.matches.map((m,mi)=>bracketMatchHtml(c.id,ri,mi,m)).join("")}</div>`).join("")}
-    </div>
-  </div>`;
-}
-
-function bracketMatchHtml(compId,ri,mi,m){
-  return `<div class="card" style="margin:8px 0;background:rgba(4,16,30,.45)">
-    <input class="input" value="${esc(m.a||"")}" placeholder="Squadra A" onchange="updateBracket('${compId}',${ri},${mi},'a',this.value)">
-    <input class="input" style="width:70px" value="${esc(m.sa||"")}" placeholder="Gol" onchange="updateBracket('${compId}',${ri},${mi},'sa',this.value)">
-    <div class="muted">vs</div>
-    <input class="input" value="${esc(m.b||"")}" placeholder="Squadra B" onchange="updateBracket('${compId}',${ri},${mi},'b',this.value)">
-    <input class="input" style="width:70px" value="${esc(m.sb||"")}" placeholder="Gol" onchange="updateBracket('${compId}',${ri},${mi},'sb',this.value)">
-    <div class="row"><button class="btn green" onclick="advanceBracket('${compId}',${ri},${mi},'a')">Avanza A</button><button class="btn green" onclick="advanceBracket('${compId}',${ri},${mi},'b')">Avanza B</button></div>
-    <div class="muted">Vincitore: ${esc(m.winner||"-")}</div>
-  </div>`;
-}
-
-function updateBracket(compId,ri,mi,field,value){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  c.bracket[ri].matches[mi][field]=value;saveAll();
-}
-
-function advanceBracket(compId,ri,mi,side){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  const match=c.bracket[ri].matches[mi];
-  const winner=side==="a"?match.a:match.b;
-  match.winner=winner;
-  if(c.bracket[ri+1]){
-    const nextMatch=c.bracket[ri+1].matches[Math.floor(mi/2)];
-    if(mi%2===0) nextMatch.a=winner; else nextMatch.b=winner;
-  }
-  saveAll();renderCompetitionManager();
-}
-
-function competitionFinalHtml(c){
-  if(!c.final) c.final={teamA:"",teamB:"",scoreA:"",scoreB:"",winner:""};
-  return `<div class="card">
-    <h3>Finale secca</h3>
-    <div class="grid grid3">
-      <label>Squadra A<select class="input" onchange="cFinal('${c.id}','teamA',this.value)"><option value="">Scegli</option>${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===c.final.teamA?"selected":""}>${t.code} · ${esc(t.name)}</option>`).join("")}</select></label>
-      <label>Gol A<input class="input" value="${esc(c.final.scoreA||"")}" onchange="cFinal('${c.id}','scoreA',this.value)"></label>
-      <label>Vincitore<select class="input" onchange="cFinal('${c.id}','winner',this.value)"><option value="">Scegli</option>${[c.final.teamA,c.final.teamB].filter(Boolean).map(x=>`<option value="${x}" ${x===c.final.winner?"selected":""}>${teamLabel(x)}</option>`).join("")}</select></label>
-      <label>Squadra B<select class="input" onchange="cFinal('${c.id}','teamB',this.value)"><option value="">Scegli</option>${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===c.final.teamB?"selected":""}>${t.code} · ${esc(t.name)}</option>`).join("")}</select></label>
-      <label>Gol B<input class="input" value="${esc(c.final.scoreB||"")}" onchange="cFinal('${c.id}','scoreB',this.value)"></label>
-    </div>
-    <div class="stat" style="margin-top:14px"><div class="muted">Vincitore</div><div class="n">${c.final.winner?teamLabel(c.final.winner):"-"}</div></div>
-  </div>`;
-}
-
-function cFinal(compId,field,value){
-  const c=competitionsManager.competitions.find(x=>x.id===compId);
-  c.final[field]=value;saveAll();renderCompetitionManager();
-}
-
-function addCompetition(){
-  const name=prompt("Nome competizione","Nuova Competizione"); if(!name) return;
-  const type=prompt("Tipo: league / manual / bracket / final","manual") || "manual";
-  const id="COMP"+Date.now();
-  competitionsManager.competitions.push({id,name,type,description:"",participants:[],standings:[],matches:[],bracket:[],final:{teamA:"",teamB:"",scoreA:"",scoreB:"",winner:""}});
-  competitionsManager.selected=id;
-  saveAll();renderCompetitionManager();
-}
-
-function editCompetitionSettings(id){
-  const c=competitionsManager.competitions.find(x=>x.id===id);
-  const name=prompt("Nome competizione",c.name); if(!name) return;
-  const type=prompt("Tipo: league / manual / bracket / final",c.type) || c.type;
-  const description=prompt("Descrizione",c.description||"") || "";
-  c.name=name;c.type=type;c.description=description;
-  if(type==="league" || type==="manual") initLeagueStandings(c);
-  if(type==="bracket" && (!c.bracket || !c.bracket.length)) initBracket(c);
-  saveAll();renderCompetitionManager();
-}
-
-function deleteCompetition(id){
-  if(!confirm("Eliminare competizione?")) return;
-  competitionsManager.competitions=competitionsManager.competitions.filter(c=>c.id!==id);
-  competitionsManager.selected=competitionsManager.competitions[0]?.id||"HML";
-  saveAll();renderCompetitionManager();
-}
-
-function renderCompetitions(){
-  const awards=[...new Set(honors.map(h=>h.award))];
-  q("view-competitions").innerHTML = `<div class="between"><div><h2>Albo d'oro generale</h2><p class="muted">Si aggiorna insieme agli albi delle singole società.</p></div><button class="btn primary" onclick="addGeneralHonor()">Aggiungi vincitore</button></div>
-  <div class="grid" style="margin-top:14px">${awards.length?awards.map(a=>`<div class="card"><div class="row">${imgPreview("honor_"+a,64)}<div><h3>${esc(a)}</h3><label class="muted">Logo/coppa <input type="file" accept="image/*" onchange="uploadAwardImage(this,'honor_${esc(a)}')"></label></div></div><table class="table"><tr><th>Stagione</th><th>Vincitore</th><th></th></tr>${honors.filter(h=>h.award===a).map((h,i)=>`<tr><td>${esc(h.season)}</td><td>${h.team ? teamLabel(h.team) : esc(h.manualTeam || "-")}</td><td><button class="btn" onclick="editGeneralHonor('${esc(a)}',${i})">Modifica</button><button class="btn red" onclick="deleteGeneralHonor('${esc(a)}',${i})">Elimina</button></td></tr>`).join("")}</table></div>`).join(""):'<div class="card muted">Nessun trofeo inserito.</div>'}</div>`;
-}
-function addGeneralHonor(){
-  const award=prompt("Competizione/trofeo","HM League"); 
-  if(!award) return;
-  const season=prompt("Stagione","2025/2026") || "";
-  const teamCode=prompt("Sigla squadra esistente, oppure lascia vuoto se vuoi inserire un nome manuale","IMP") || "";
-  let manualTeam="";
-  let finalTeam=teamCode.toUpperCase();
-
-  if(!finalTeam || !team(finalTeam)){
-    manualTeam=prompt("Nome squadra vincitrice manuale/storica","") || "";
-    finalTeam="";
-  }
-
-  honors.push({team:finalTeam,manualTeam,award,season});
-  saveAll(); 
-  renderCompetitions();
-}
-function editGeneralHonor(award,localIndex){
-  const list=honors.map((x,i)=>({...x,_i:i})).filter(x=>x.award===award);
-  const row=list[localIndex]; 
-  if(!row) return;
-  const season=prompt("Stagione",row.season) || "";
-  const teamCode=prompt("Sigla squadra esistente, oppure lascia vuoto per nome manuale",row.team||"") || "";
-  let manualTeam=row.manualTeam||"";
-  let finalTeam=teamCode.toUpperCase();
-
-  if(!finalTeam || !team(finalTeam)){
-    manualTeam=prompt("Nome squadra vincitrice manuale/storica",manualTeam) || "";
-    finalTeam="";
-  }
-
-  honors[row._i]={team:finalTeam,manualTeam,award,season};
-  saveAll(); 
-  renderCompetitions();
-}
-
-function deleteGeneralHonor(award,localIndex){
-  const list=honors.map((x,i)=>({...x,_i:i})).filter(x=>x.award===award);
-  const row=list[localIndex]; 
-  if(!row) return;
-  if(!confirm("Eliminare questa voce dall'Albo d'Oro?")) return;
-  honors.splice(row._i,1);
-  saveAll();
-  renderCompetitions();
-}
-
-/* ===== MODULI RIPRISTINATI: Ranking, Storico, Asta, Azioni Presidente ===== */
-
-function trophiesCount(code){
-  return (honors||[]).filter(h=>h.team===code).length;
-}
-
-function ensureRanking(){
-  if(!Array.isArray(rankingData)) rankingData=[];
-  if(!Array.isArray(rankingHidden)) rankingHidden=[];
-  teams.filter(t=>t.code!=="SVIN" && !rankingHidden.includes(t.code)).forEach(t=>{
-    if(!rankingData.find(r=>r.code===t.code)){
-      rankingData.push({code:t.code,points:0,manualOrder:""});
-    }
-  });
-}
-
-function renderRanking(){
-  if(!Array.isArray(rankingData)) rankingData=[];
-  rankingData = cleanRankingRows(rankingData);
-  ensureRanking();
-  rankingData = cleanRankingRows(rankingData);
-  const rows = rankingData
-    .filter(r=>r.code && teamExistsStrict(r.code) && r.code!=="SVIN" && !rankingHidden.includes(r.code))
-    .map(r=>({...r,trophies:trophiesCount(r.code)}))
-    .sort((a,b)=>{
-      const ma = a.manualOrder==="" ? 9999 : Number(a.manualOrder);
-      const mb = b.manualOrder==="" ? 9999 : Number(b.manualOrder);
-      if(ma!==9999 || mb!==9999) return ma-mb;
-      return Number(b.points||0)-Number(a.points||0);
-    });
-
-  q("view-ranking").innerHTML = `
-    <div class="between">
-      <div><h2>Ranking società</h2><p class="muted">Classifica ordinata per punti. I trofei vengono presi automaticamente dall'Albo d'oro.</p></div>
-      <div class="row"><button class="btn primary" onclick="addTeam()">Aggiungi società</button><button class="btn" onclick="addRankingRow()">Aggiungi al ranking</button></div>
-    </div>
-    <table class="table" style="margin-top:14px">
-      <tr><th>#</th><th>Società</th><th>Punti</th><th>Trofei</th><th>Ordine manuale</th><th>Azioni</th></tr>
-      ${rows.map((r,i)=>{
-        const t=team(r.code);
-        return `<tr>
-          <td><b>${i+1}</b></td>
-          <td><div class="row">${logo(r.code,42)}<div><b>${esc(t.name)}</b><div class="muted">${r.code} · ${esc(t.division)}</div></div></div></td>
-          <td><input class="input" style="width:90px" value="${esc(r.points||0)}" onchange="updateRanking('${r.code}','points',this.value)"></td>
-          <td><b>${r.trophies}</b></td>
-          <td><input class="input" style="width:90px" placeholder="auto" value="${esc(r.manualOrder||"")}" onchange="updateRanking('${r.code}','manualOrder',this.value)"></td>
-          <td><button class="btn" onclick="editTeam('${r.code}')">Modifica società</button><button class="btn red" onclick="removeRanking('${r.code}')">Togli ranking</button></td>
-        </tr>`;
-      }).join("")}
-    </table>`;
-}
-
-function updateRanking(code,field,value){
-  ensureRanking();
-  const row=rankingData.find(r=>r.code===code);
-  if(row){row[field]=value;saveAll();renderRanking();}
-}
-function removeRanking(code){
-  if(!confirm("Togliere questa società dal ranking?")) return;
-  if(!rankingHidden.includes(code)) rankingHidden.push(code);
-  rankingData=rankingData.filter(r=>r.code!==code);
-  saveAll();renderRanking();
-}
-function addRankingRow(){
-  const code=(prompt("Sigla società da inserire nel ranking","IMP")||"").toUpperCase();
-  if(!code || !teamExistsStrict(code)){alert("Sigla non trovata");return;}
-  rankingHidden=rankingHidden.filter(x=>x!==code);
-  if(!rankingData.find(r=>r.code===code)) rankingData.push({code,points:0,manualOrder:""});
-  saveAll();renderRanking();
-}
-function addTeam(){
-  const code=(prompt("Sigla nuova società","NEW")||"").toUpperCase();
-  if(!code || teamExistsStrict(code)){alert("Sigla vuota o già esistente");return;}
-  const name=prompt("Nome società","Nuova Società") || "Nuova Società";
-  const division=prompt("Serie","Serie B") || "Serie B";
-  teams.push({code,name,division,primary:"#1e293b",secondary:"#7c3aed",text:"#ffffff",logo:"",credits:500,hmcoin:100,jerseyStyle:"diagonal"});
-  rankingData.push({code,points:0,manualOrder:""});
-  saveAll();renderRanking();
-}
-function editTeam(code){
-  const t=team(code); if(!t) return;
-  q("tradeModalBody").innerHTML = `
-    <h3>Modifica società ${code}</h3>
-    <div class="grid grid3">
-      <label>Nome<input class="input" id="rankTeamName" value="${esc(t.name)}"></label>
-      <label>Serie<input class="input" id="rankTeamDivision" value="${esc(t.division)}"></label>
-      <label>Colore 1<input class="input" type="color" id="rankTeamPrimary" value="${t.primary||"#1e293b"}"></label>
-      <label>Colore 2<input class="input" type="color" id="rankTeamSecondary" value="${t.secondary||"#7c3aed"}"></label>
-      <label>Colore sigla<input class="input" type="color" id="rankTeamText" value="${t.text||"#ffffff"}"></label>
-      <label>Stile maglia<select class="input" id="rankTeamJerseyStyle">
-        ${["solid","stripes","halves","band","diagonal"].map(x=>`<option value="${x}" ${x===(t.jerseyStyle||"diagonal")?"selected":""}>${x}</option>`).join("")}
-      </select></label>
-      <label>Logo da file<input class="input" type="file" id="rankTeamLogo" accept="image/*"></label>
-    </div>
-    <div class="row" style="justify-content:flex-end;margin-top:14px">
-      <button class="btn" onclick="closeTradeModal()">Annulla</button>
-      <button class="btn green" onclick="saveRankTeam('${code}')">Salva</button>
-    </div>`;
-  q("tradeModal").style.display="flex";
-}
-function saveRankTeam(code){
-  const t=team(code); if(!t) return;
-  t.name=q("rankTeamName").value;t.division=q("rankTeamDivision").value;t.primary=q("rankTeamPrimary").value;t.secondary=q("rankTeamSecondary").value;t.text=q("rankTeamText").value;t.jerseyStyle=q("rankTeamJerseyStyle").value;
-  const file=q("rankTeamLogo").files[0];
-  if(file){const reader=new FileReader();reader.onload=()=>{t.logo=reader.result;saveAll();closeTradeModal();renderRanking();};reader.readAsDataURL(file);}
-  else{saveAll();closeTradeModal();renderRanking();}
-}
-
-/* Storico campionati */
-let tempSeasonRows=[];
-let tempSeasonAwards=[];
-let editingSeasonIndex=null;
-function makeEmptyStandingRow(){return {teamCode:"",team:"",points:"",gf:"",ga:"",fm:"",series:"Serie A"};}
-function renderHistory(){
-  q("view-history").innerHTML = `
-    <div class="between">
-      <div><h2>Storico campionati passati</h2><p class="muted">Compila direttamente la classifica storica.</p></div>
-      <button class="btn primary" onclick="openSeasonTable()">Nuova classifica</button>
-    </div>
-    <div class="grid grid3" style="margin-top:14px">
-      ${seasonHistory.length?seasonHistory.map((s,i)=>`<div class="card team-card" onclick="openSeasonDetail(${i})"><span class="badge">${esc(s.season)}</span><h3>${esc(s.title||"Campionato")}</h3><p class="muted">${(s.standings||[]).length} posizioni inserite</p><div class="row"><button class="btn" onclick="event.stopPropagation();openSeasonTable(${i})">Modifica</button><button class="btn red" onclick="event.stopPropagation();deleteSeason(${i})">Elimina</button></div></div>`).join(""):'<div class="card muted">Nessuna classifica inserita. Premi “Nuova classifica”.</div>'}
-    </div>
-    <div id="seasonDetail" style="margin-top:14px"></div>`;
-}
-function openSeasonTable(index=null){
-  editingSeasonIndex=index;
-  const s=index!==null?seasonHistory[index]:{season:"2009/2010",title:"HM League",standings:Array.from({length:8},()=>makeEmptyStandingRow()),awards:[]};
-  tempSeasonRows=JSON.parse(JSON.stringify(s.standings&&s.standings.length?s.standings:Array.from({length:8},()=>makeEmptyStandingRow())));
-  tempSeasonAwards=JSON.parse(JSON.stringify(s.awards||[]));
-  q("tradeModalBody").innerHTML=`
-    <h3>${index!==null?"Modifica classifica storica":"Nuova classifica storica"}</h3>
-    <div class="grid grid2"><label>Stagione<input class="input" id="histSeason" value="${esc(s.season||"")}"></label><label>Competizione<input class="input" id="histTitle" value="${esc(s.title||"HM League")}"></label></div>
-    <div class="card" style="margin-top:12px"><div class="between"><h3>Classifica</h3><div class="row"><button class="btn primary" onclick="addStandingPosition()">Aggiungi posizione</button><button class="btn red" onclick="removeLastStandingPosition()">Togli ultima</button></div></div><div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>Pos</th><th>Società esistente</th><th>Nome libero</th><th>Serie</th><th>Punti</th><th>GF</th><th>GS</th><th>FM</th><th></th></tr></thead><tbody id="standingEditorRows"></tbody></table></div></div>
-    <div class="card" style="margin-top:12px"><div class="between"><h3>Titoli individuali stagione</h3><button class="btn primary" onclick="addSeasonAward()">Aggiungi premio individuale</button></div><p class="muted">Qui puoi inserire Capocannoniere, Assistman, Miglior Giocatore e Miglior Allenatore della stagione. Se scegli una società esistente, il premio compare anche nella scheda società.</p><div id="seasonAwardsBox" style="margin-top:10px"></div></div>
-    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="saveSeasonTable()">Salva classifica</button></div>`;
-  q("tradeModal").style.display="flex";
-  renderStandingEditorRows();
-  renderSeasonAwardsEditor();
-}
-function teamOptions(selected){return `<option value="">-- nome libero --</option>`+teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===selected?"selected":""}>${t.code} · ${esc(t.name)}</option>`).join("");}
-function renderStandingEditorRows(){
-  q("standingEditorRows").innerHTML=tempSeasonRows.map((r,i)=>`<tr><td><b>${i+1}</b></td><td><select class="input" onchange="standingChooseTeam(${i},this.value)">${teamOptions(r.teamCode)}</select></td><td><input class="input" value="${esc(r.team||"")}" onchange="updateStandingField(${i},'team',this.value)"></td><td><input class="input" value="${esc(r.series||"")}" onchange="updateStandingField(${i},'series',this.value)"></td><td><input class="input" style="width:80px" value="${esc(r.points||"")}" onchange="updateStandingField(${i},'points',this.value)"></td><td><input class="input" style="width:80px" value="${esc(r.gf||"")}" onchange="updateStandingField(${i},'gf',this.value)"></td><td><input class="input" style="width:80px" value="${esc(r.ga||"")}" onchange="updateStandingField(${i},'ga',this.value)"></td><td><input class="input" style="width:90px" value="${esc(r.fm||"")}" onchange="updateStandingField(${i},'fm',this.value)"></td><td><button class="btn red" onclick="removeStandingPosition(${i})">X</button></td></tr>`).join("");
-}
-function standingChooseTeam(i,code){tempSeasonRows[i].teamCode=code;if(code){const t=team(code);tempSeasonRows[i].team=t?t.name:"";}renderStandingEditorRows();}
-function updateStandingField(i,field,value){tempSeasonRows[i][field]=value;}
-function addStandingPosition(){tempSeasonRows.push(makeEmptyStandingRow());renderStandingEditorRows();}
-function removeLastStandingPosition(){if(tempSeasonRows.length>0)tempSeasonRows.pop();renderStandingEditorRows();}
-function removeStandingPosition(i){tempSeasonRows.splice(i,1);renderStandingEditorRows();}
-
-function addSeasonAward(){
-  tempSeasonAwards.push({award:"Capocannoniere",player:"",teamCode:"",teamFree:""});
-  renderSeasonAwardsEditor();
-}
-
-function removeSeasonAward(i){
-  tempSeasonAwards.splice(i,1);
-  renderSeasonAwardsEditor();
-}
-
-function updateSeasonAward(i,field,value){
-  tempSeasonAwards[i][field]=value;
-}
-
-function renderSeasonAwardsEditor(){
-  const box=q("seasonAwardsBox");
-  if(!box) return;
-  box.innerHTML=tempSeasonAwards.map((a,i)=>{
-    const award=a.award || a.label || "Capocannoniere";
-    const player=a.player || a.value || "";
-    const teamCode=a.teamCode || "";
-    const teamFree=a.teamFree || "";
-    return `
-    <div class="card" style="margin-top:10px">
-      <div class="grid grid4">
-        <label>Premio
-          <select class="input" onchange="updateSeasonAward(${i},'award',this.value);renderSeasonAwardsEditor()">
-            ${INDIVIDUAL_AWARDS.map(x=>`<option value="${x}" ${x===award?"selected":""}>${x}</option>`).join("")}
-          </select>
-        </label>
-        <label>Nome calciatore/allenatore
-          <input class="input" value="${esc(player)}" onchange="updateSeasonAward(${i},'player',this.value)" placeholder="Nome">
-        </label>
-        <label>Squadra esistente
-          <select class="input" onchange="updateSeasonAward(${i},'teamCode',this.value);renderSeasonAwardsEditor()">
-            ${teamOptions(teamCode)}
-          </select>
-        </label>
-        <label>Squadra libera/storica
-          <input class="input" value="${esc(teamFree)}" onchange="updateSeasonAward(${i},'teamFree',this.value)" placeholder="Nome squadra">
-        </label>
-        <div class="row" style="grid-column:1/-1">
-          ${imgPreview("individual_"+award,46)}
-          <label class="muted">Immagine premio "${esc(award)}" valida ovunque
-            <input type="file" accept="image/*" onchange="uploadAwardImage(this,'individual_${esc(award)}')">
-          </label>
-          <button class="btn red" onclick="removeSeasonAward(${i})">Rimuovi</button>
-        </div>
-      </div>
-    </div>`;
-  }).join("") || `<div class="muted">Nessun premio inserito.</div>`;
-}
-
-function syncSeasonIndividualTitles(seasonItem, oldSeason=null){
-  if(oldSeason){
-    individualTitles=individualTitles.filter(x=>x.sourceSeason!==oldSeason);
-  }
-  individualTitles=individualTitles.filter(x=>x.sourceSeason!==seasonItem.season);
-
-  (seasonItem.awards||[]).forEach(a=>{
-    if(a.teamCode && team(a.teamCode)){
-      individualTitles.push({
-        team:a.teamCode,
-        award:a.award || a.label || "",
-        player:a.player || a.value || "",
-        season:seasonItem.season,
-        sourceSeason:seasonItem.season
-      });
-    }
-  });
-}
-
-function syncSeasonPositions(seasonItem,oldSeason=null){if(oldSeason)positionHistory=positionHistory.filter(p=>p.sourceSeason!==oldSeason);positionHistory=positionHistory.filter(p=>p.sourceSeason!==seasonItem.season);(seasonItem.standings||[]).forEach((r,idx)=>{if(r.teamCode&&team(r.teamCode)){positionHistory.push({team:r.teamCode,season:seasonItem.season,position:String(idx+1)+"°",series:r.series||seasonItem.title||"",sourceSeason:seasonItem.season});}});}
-function saveSeasonTable(){
-  const season=q("histSeason").value.trim();if(!season){alert("Inserisci la stagione.");return;}
-  const item={season,title:q("histTitle").value.trim()||"HM League",standings:tempSeasonRows.filter(r=>r.teamCode||r.team||r.points||r.gf||r.ga||r.fm).map(r=>({...r})),awards:tempSeasonAwards||[]};
-  let oldSeason=null;if(editingSeasonIndex===null)seasonHistory.unshift(item);else{oldSeason=seasonHistory[editingSeasonIndex]?.season;seasonHistory[editingSeasonIndex]=item;}
-  syncSeasonPositions(item,oldSeason);syncSeasonIndividualTitles(item,oldSeason);saveAll();closeTradeModal();renderHistory();
-}
-function openSeasonDetail(i){const s=seasonHistory[i];if(!s)return;const awardsHtml=(s.awards||[]).length?`<div class="card" style="margin-top:14px"><h3>Titoli individuali stagione</h3><div class="grid grid2">${(s.awards||[]).map(a=>`<div class="playerRow">${imgPreview("individual_"+(a.award||a.label||""),48)}<div><b>${esc(a.award||a.label||"")}</b><div class="muted">${esc(a.player||a.value||"")} · ${esc(a.teamCode?teamLabel(a.teamCode):(a.teamFree||""))}</div></div></div>`).join("")}</div></div>`:"";q("seasonDetail").innerHTML=`<div class="card"><div class="between"><div><h3>${esc(s.title)} · ${esc(s.season)}</h3></div><button class="btn" onclick="openSeasonTable(${i})">Modifica classifica</button></div><table class="table"><tr><th>Pos</th><th>Squadra</th><th>Serie</th><th>Punti</th><th>GF</th><th>GS</th><th>FM</th></tr>${(s.standings||[]).map((r,idx)=>`<tr><td><b>${idx+1}</b></td><td><b>${esc(r.teamCode?teamLabel(r.teamCode):r.team)}</b></td><td>${esc(r.series||"")}</td><td>${esc(r.points||"")}</td><td>${esc(r.gf||"")}</td><td>${esc(r.ga||"")}</td><td>${esc(r.fm||"")}</td></tr>`).join("")}</table></div>${awardsHtml}`;}
-function deleteSeason(i){if(!confirm("Eliminare stagione storica?"))return;const s=seasonHistory[i];if(s?.season)positionHistory=positionHistory.filter(p=>p.sourceSeason!==s.season);
-    individualTitles=individualTitles.filter(p=>p.sourceSeason!==s.season);seasonHistory.splice(i,1);saveAll();renderHistory();}
-
-/* Asta */
-function auctionPlayer(){return players.find(p=>p.id===auctionState.playerId)||null;}
-function highestBid(){return auctionState.bids&&auctionState.bids.length?auctionState.bids[auctionState.bids.length-1]:null;}
-function renderAuction(){
-  auctionState=auctionState||{playerId:"",bids:[],history:[]};
-  const p=auctionPlayer();const bid=highestBid();
-  q("view-auction").innerHTML=`<div class="between"><div><h2>Asta</h2><p class="muted">Cerca un calciatore, fai offerte e aggiudica col martello.</p></div></div>
-  <div class="grid grid2" style="margin-top:14px"><div class="card"><h3>Cerca calciatore</h3><input id="aucSearch" class="input" placeholder="Nome..." oninput="renderAuctionSearchResults()"><button class="btn primary" style="margin-top:10px" onclick="openManualAuctionPlayer()">Aggiungi manualmente</button><div id="auctionSearchResults" style="margin-top:12px"></div></div>
-  <div class="card"><h3>Asta in corso</h3>${p?`<div class="playerRow">${jersey(p.owner||"SVIN",54)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role||"")} · ${esc(p.current||"")}</div></div><button class="btn red" onclick="resetAuction()">Annulla asta</button></div><div class="stat" style="margin-top:12px"><div class="muted">Offerta più alta</div><div class="n">${bid?esc(bid.amount)+" crediti":"Nessuna"}</div><div>${bid?teamLabel(bid.team):"Base minima 1 credito"}</div></div><label>Squadra<select id="bidTeam" class="input">${teams.filter(t=>t.code!=="SVIN" && (isAdmin() || canEditTeam(t.code))).map(t=>`<option value="${t.code}">${teamLabel(t.code)} · crediti ${t.credits??0}</option>`).join("")}</select></label><label>Offerta<input id="bidAmount" class="input" type="number" value="${bid?Number(bid.amount)+1:1}"></label><div class="row"><button class="btn green" onclick="placeBid()">Fai offerta</button><button class="btn primary" style="font-size:24px" onclick="hammerAuction()">🔨</button></div>`:`<div class="muted">Nessun calciatore selezionato. Cerca un calciatore a sinistra oppure aggiungilo manualmente.</div>`}</div></div>
-  <div class="card" style="margin-top:14px"><h3>Storico aste</h3>${(auctionState.history||[]).length?auctionState.history.map((h,i)=>`<div class="playerRow">${jersey(h.team,42)}<div><b>${esc(h.playerName)}</b><div class="muted">Aggiudicato a ${teamLabel(h.team)} per ${esc(h.amount)} crediti</div></div><button class="btn red" onclick="undoAuctionOperation(${i})">Annulla</button></div>`).join(""):'<div class="muted">Nessuna operazione.</div>'}</div>`;
-  renderAuctionSearchResults();
-}
-function renderAuctionSearchResults(){const box=q("auctionSearchResults");if(!box)return;const s=(q("aucSearch")?.value||"").toLowerCase();const list=players.filter(p=>[p.name,p.role,p.current,p.owner].join(" ").toLowerCase().includes(s)).slice(0,50);box.innerHTML=list.map(p=>`<div class="playerRow">${jersey(p.owner||"SVIN",44)}<div><b>${esc(p.name)}</b><div class="muted">${esc(p.role)} · ${esc(p.current)} · ${esc(p.owner)}</div></div><button class="btn primary" onclick="startAuction('${p.id}')">Metti in asta</button></div>`).join("")||'<div class="muted">Nessun calciatore trovato.</div>';}
-function startAuction(id){auctionState.playerId=id;auctionState.bids=[];saveAll();renderAuction();}
-function openManualAuctionPlayer(){const name=prompt("Nome calciatore");if(!name)return;const p={id:"P"+Date.now(),name,role:prompt("Ruolo","")||"",current:"",owner:"SVIN",status:"ASTA",bonus:"",contract:"0",deadline:""};players.push(p);startAuction(p.id);}
-function placeBid(){const p=auctionPlayer();if(!p)return;const teamCode=q("bidTeam").value;const amount=Number(q("bidAmount").value||0);const min=highestBid()?Number(highestBid().amount)+1:1;if(amount<min){alert("Offerta minima "+min);return;}auctionState.bids.push({team:teamCode,amount,date:new Date().toLocaleString("it-IT")});saveAll();renderAuction();}
-function hammerAuction(){const p=auctionPlayer();const bid=highestBid();if(!p||!bid){alert("Serve almeno un'offerta.");return;}const oldOwner=p.owner, oldCurrent=p.current, oldCredits=team(bid.team)?.credits;p.owner=bid.team;p.current=bid.team;team(bid.team).credits=(Number(team(bid.team).credits)||0)-Number(bid.amount||0);auctionState.history.unshift({playerId:p.id,playerName:p.name,team:bid.team,amount:bid.amount,oldOwner,oldCurrent,oldCredits,date:new Date().toLocaleString("it-IT")});auctionState.playerId="";auctionState.bids=[];saveAll();renderAuction();}
-function undoAuctionOperation(i){const op=auctionState.history[i];if(!op)return;const p=players.find(x=>x.id===op.playerId);if(p){p.owner=op.oldOwner;p.current=op.oldCurrent;}const t=team(op.team);if(t)t.credits=op.oldCredits;auctionState.history.splice(i,1);saveAll();renderAuction();}
-function resetAuction(){auctionState.playerId="";auctionState.bids=[];saveAll();renderAuction();}
-
-/* Azioni Presidente */
-const PRESIDENT_ACTION_TYPES=[
-  {name:"Ritiro forzato",cost:7,suspended:false},{name:"Tutti allo stadio",cost:7,suspended:false},{name:"Caro biglietti",cost:-5,suspended:false},{name:"Patto con gli ultras",cost:7,suspended:false},{name:"Discorso alla squadra",cost:15,suspended:false},{name:"Ultimatum all’allenatore",cost:0,suspended:false},{name:"Promessa alla squadra",cost:25,suspended:true}
-];
-function actionType(name){return PRESIDENT_ACTION_TYPES.find(a=>a.name===name)||PRESIDENT_ACTION_TYPES[0];}
-function renderPresidentActions(){
-  q("view-actions").innerHTML=`<div class="between"><div><h2>Azioni Presidente</h2><p class="muted">Gestione crediti e registro azioni.</p></div><button class="btn primary" onclick="openPresidentActionModal()">Nuova azione</button></div><div class="card" style="margin-top:14px"><h3>Registro azioni</h3><table class="table"><tr><th>Data</th><th>Squadra</th><th>Azione</th><th>Contro</th><th>Competizione</th><th>Crediti</th><th>Stato</th><th></th></tr>${presidentActions.length?presidentActions.map((a,i)=>`<tr><td>${esc(a.date)}</td><td>${teamLabel(a.team)}</td><td><b>${esc(a.action)}</b></td><td>${a.against?teamFullName(a.against):"-"}</td><td>${esc(a.competition||"-")}</td><td>${a.suspended&&a.status!=="Pagata"?"Sospesi "+esc(a.cost):esc(a.creditDelta)}</td><td><span class="badge">${esc(a.status)}</span></td><td><button class="btn" onclick="openPresidentActionModal(${i})">Modifica</button><button class="btn red" onclick="deletePresidentAction(${i})">Elimina</button></td></tr>`).join(""):'<tr><td colspan="8" class="muted">Nessuna azione registrata. Premi “Nuova azione”.</td></tr>'}</table></div>`;
-}
-function openPresidentActionModal(index=null){
-  const row=index!==null?presidentActions[index]:{team:"IMP",action:"Ritiro forzato",against:"",competition:"Campionato",status:"Attiva"};
-  q("tradeModalBody").innerHTML=`<h3>${index!==null?"Modifica":"Nuova"} azione presidente</h3><div class="grid grid2"><label>Squadra<select class="input" id="paTeam">${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===row.team?"selected":""}>${teamLabel(t.code)}</option>`).join("")}</select></label><label>Azione<select class="input" id="paAction">${PRESIDENT_ACTION_TYPES.map(a=>`<option value="${a.name}" ${a.name===row.action?"selected":""}>${a.name}</option>`).join("")}</select></label><label>Contro<select class="input" id="paAgainst"><option value="">Nessuna</option>${teams.filter(t=>t.code!=="SVIN").map(t=>`<option value="${t.code}" ${t.code===row.against?"selected":""}>${teamLabel(t.code)}</option>`).join("")}</select></label><label>Competizione<select class="input" id="paCompetition"><option ${row.competition==="Campionato"?"selected":""}>Campionato</option><option ${row.competition==="Coppa"?"selected":""}>Coppa</option></select></label><label>Stato<select class="input" id="paStatus">${["Attiva","Conclusa","Annullata","Pagata"].map(s=>`<option ${s===row.status?"selected":""}>${s}</option>`).join("")}</select></label></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="savePresidentAction(${index===null?"null":index})">Salva</button></div>`;
-  q("tradeModal").style.display="flex";
-}
-function applyPresidentActionCredits(row,reverse=false){const t=team(row.team);if(!t)return;if(row.suspended&&row.status!=="Pagata")return;const d=Number(row.creditDelta||0);t.credits=(Number(t.credits)||0)+(reverse?-d:d);}
-function savePresidentAction(index=null){const a=actionType(q("paAction").value);const status=q("paStatus").value;const creditDelta=a.suspended?(status==="Pagata"?-Number(a.cost):0):-Number(a.cost);const row={team:q("paTeam").value,action:a.name,against:q("paAgainst").value,competition:q("paCompetition").value,status,suspended:!!a.suspended,cost:a.cost,creditDelta,date:index===null?new Date().toLocaleString("it-IT"):presidentActions[index].date,applied:false};if(index!==null){const old=presidentActions[index];if(old?.applied)applyPresidentActionCredits(old,true);presidentActions[index]=row;}else{presidentActions.unshift(row);index=0;}if(row.status!=="Annullata"){applyPresidentActionCredits(row,false);presidentActions[index].applied=true;}saveAll();closeTradeModal();renderPresidentActions();}
-function deletePresidentAction(i){const row=presidentActions[i];if(row?.applied)applyPresidentActionCredits(row,true);presidentActions.splice(i,1);saveAll();renderPresidentActions();}
-
-
-function renderRegulation(){
-  const canSave = isAdmin();
-  q("view-regulation").innerHTML = `
-    <div class="between">
-      <div>
-        <h2>Regolamento</h2>
-        <p class="muted">Qui puoi incollare e salvare il regolamento ufficiale della HM League. Gli ospiti e i presidenti possono leggerlo, solo Federico admin può modificarlo.</p>
-      </div>
-      <button class="btn green" onclick="saveRegulationText()">💾 Salva regolamento</button>
-    </div>
-    <div class="card" style="margin-top:12px">
-      <textarea id="hmRegulationText" class="input" style="width:100%;min-height:620px;line-height:1.45;white-space:pre-wrap" placeholder="Incolla qui il regolamento..." ${canSave?"":"disabled"}>${esc(regulationText)}</textarea>
-    </div>`;
-}
-
-function saveRegulationText(){
-  if(!requireAdmin()) return;
-  const el = q("hmRegulationText");
-  regulationText = el ? String(el.value || "") : regulationText;
-  saveAll();
-  alert("Regolamento salvato. Premi Salva online per sincronizzarlo sugli altri dispositivi.");
-  renderRegulation();
-}
-
-function renderStyle(){
-  q("view-style").innerHTML = `<h2>Editor estetica sito</h2><div class="card"><p class="muted">Nella versione online questo pannello salverà tema, menu, colori, loghi e sezioni nel database.</p><div class="grid grid3"><label>Colore principale<input class="input" type="color" value="#7c3aed"></label><label>Colore sfondo<input class="input" type="color" value="#07111f"></label><label>Stile card<select class="input"><option>Arrotondato</option><option>Squadrato</option><option>Premium</option></select></label></div></div>`;
-}
-
-installPermissionGuards();
-updateAuthBadge();
-showView("dashboard");
-
-// Avvio sincronizzazione online: il caricamento cloud è aperto a TUTTI (ospiti, presidenti, admin).
-function forceInitialCloudLoad(){
-  if(!HM_CLOUD_LOADING) loadCloudData();
-}
-setTimeout(forceInitialCloudLoad, 300);
-window.addEventListener("load", ()=>{ setTimeout(forceInitialCloudLoad, 1200); });
-window.addEventListener("focus", ()=>{ if(!HM_CLOUD_READY && !HM_CLOUD_LOADING) setTimeout(forceInitialCloudLoad, 300); });
-
-// Salvataggio di sicurezza: se ci sono modifiche non salvate, prova a salvarle ogni 30 secondi.
-const hmAutoCloudSaver = setInterval(()=>{
-  if(isLoggedIn() && HM_HAS_UNSAVED_CHANGES && !HM_CLOUD_SAVING && !HM_CLOUD_LOADING){
-    saveCloudNow(false);
-  }
-}, 30000);
-
-// Avvisa se si sta uscendo con modifiche non salvate.
-window.addEventListener("beforeunload", function(e){
-  if(HM_HAS_UNSAVED_CHANGES){
-    e.preventDefault();
-    e.returnValue = "";
-  }
-});
-
-
-/* =========================================================
-   MODALITÀ PORTALE SICURO / VETRINA
-   - Niente sincronizzazione cloud automatica
-   - Nessun dato viene sovrascritto al refresh
-   - Visitatori e presidenti possono consultare, filtrare e cercare
-   - Solo admin può modificare in locale
-   - Le interazioni dei presidenti vanno fatte tramite Google Form/link esterni
-   ========================================================= */
-(function(){
-  const HM_PORTAL_MODE = true;
-  const HM_FORM_LINKS = {
-    scambio: "",
-    asta: "",
-    azione: "",
-    modifica: ""
-  };
-
-  function portalBadge(){
-    const badge = document.getElementById('cloudStatusBadge');
-    if(badge){
-      badge.textContent = '🏛️ Portale sicuro';
-      badge.title = 'Modalità vetrina: niente cloud automatico, nessun dato viene sovrascritto al refresh.';
-    }
-    const saveBtn = document.getElementById('manualSaveOnlineBtn');
-    if(saveBtn){
-      saveBtn.textContent = '🔒 Cloud disattivato';
-      saveBtn.style.background = '#475569';
-      saveBtn.style.borderColor = '#64748b';
-      saveBtn.disabled = false;
-      saveBtn.style.opacity = '1';
+      loginBtn.textContent = "🔐 Login Google";
+      loginBtn.onclick = firebaseLogin;
     }
   }
 
-  function openFormOrWarn(type){
-    const url = HM_FORM_LINKS[type];
-    if(url){ window.open(url, '_blank'); return; }
-    alert('Portale sicuro attivo. Qui andrà collegato il Google Form per: ' + type + '. Per ora invia la richiesta a Federico/admin.');
+  if(saveBtn){
+    const canSave = !!(hmFirebaseUser && hmFirebaseUser.uid === HM_FIREBASE_ADMIN_UID);
+    saveBtn.disabled = !canSave;
+    saveBtn.style.opacity = canSave ? "1" : ".45";
+  }
+}
+
+function hmIsFirebaseAdmin(){
+  return !!(hmFirebaseUser && hmFirebaseUser.uid === HM_FIREBASE_ADMIN_UID);
+}
+
+// Sovrascrive il vecchio login locale: ora conta Firebase.
+isAdmin = function(){ return hmIsFirebaseAdmin(); };
+isLoggedIn = function(){ return hmIsFirebaseAdmin(); };
+
+firebaseLogin = async function(){
+  try{
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await hmAuth.signInWithPopup(provider);
+  }catch(e){
+    console.warn("Popup login non riuscito, provo redirect", e);
+    try{
+      const provider = new firebase.auth.GoogleAuthProvider();
+      await hmAuth.signInWithRedirect(provider);
+    }catch(err){
+      alert("Login Google non riuscito: " + (err.message || err));
+    }
+  }
+};
+
+firebaseLogout = async function(){
+  try{ await hmAuth.signOut(); }catch(e){}
+};
+
+function hmChunkString(str, size){
+  const out = [];
+  for(let i=0;i<str.length;i+=size) out.push(str.slice(i, i+size));
+  return out;
+}
+
+async function hmSavePayloadToFirestore(payload){
+  const json = JSON.stringify(payload);
+  const chunks = hmChunkString(json, HM_FIRESTORE_CHUNK_SIZE);
+  const mainRef = hmDb.collection("hmleague").doc("main");
+  const chunksRef = mainRef.collection("chunks");
+
+  const old = await chunksRef.get();
+  const delBatch = hmDb.batch();
+  old.forEach(doc => delBatch.delete(doc.ref));
+  await delBatch.commit();
+
+  for(let i=0;i<chunks.length;i++){
+    const id = String(i).padStart(4, "0");
+    await chunksRef.doc(id).set({ index:i, value:chunks[i] });
   }
 
-  window.openHmInteractionForm = openFormOrWarn;
+  await mainRef.set({
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    savedAtIso: new Date().toISOString(),
+    chunks: chunks.length,
+    size: json.length
+  }, { merge:true });
 
-  // Spegne definitivamente cloud load/save per evitare sovrascritture e perdita loghi/dati.
-  window.loadCloudData = async function(){
-    HM_CLOUD_LOADING = false;
-    HM_CLOUD_READY = false;
-    portalBadge();
-    return false;
-  };
+  return { chunks:chunks.length, size:json.length };
+}
 
-  window.saveCloudNow = async function(manual=true){
-    HM_CLOUD_SAVING = false;
-    HM_HAS_UNSAVED_CHANGES = false;
-    portalBadge();
-    if(manual){
-      alert('Salvataggio online disattivato in modalità portale sicuro. I dati non verranno più sovrascritti dal cloud. Usa Backup/Ripristina solo come copia locale admin.');
-    }
-    return false;
-  };
+async function hmLoadPayloadFromFirestore(){
+  const mainRef = hmDb.collection("hmleague").doc("main");
+  const snap = await mainRef.get();
+  if(!snap.exists) return null;
 
-  // Mantiene il salvataggio locale ma non lascia la web app in stato “non salvato online”.
-  const originalSaveAll = window.saveAll;
-  if(typeof originalSaveAll === 'function'){
-    window.saveAll = function(){
-      const result = originalSaveAll.apply(this, arguments);
+  const chunksSnap = await mainRef.collection("chunks").orderBy("index").get();
+  if(chunksSnap.empty) return null;
+
+  let json = "";
+  chunksSnap.forEach(doc => { json += String(doc.data().value || ""); });
+  if(!json) return null;
+  return JSON.parse(json);
+}
+
+loadCloudData = async function(){
+  if(!hmDb) return false;
+  if(HM_CLOUD_LOADING) return false;
+  HM_CLOUD_LOADING = true;
+  hmSetFirebaseStatus("☁️ Caricamento Firebase...");
+
+  try{
+    const data = await hmLoadPayloadFromFirestore();
+
+    if(data && hasUsefulCloudData(data)){
+      applyCloudPayload(data);
+      HM_CLOUD_READY = true;
       HM_HAS_UNSAVED_CHANGES = false;
-      portalBadge();
-      return result;
-    };
-  }
+      hmFirebaseLoadedOnce = true;
+      saveLocalOnly();
+      updateAll();
+      renderCurrentView();
+      hmSetFirebaseStatus("✅ Online sincronizzato", true);
+      return true;
+    }
 
-  function looksLikeViewerControl(el){
-    const txt = [el.id, el.name, el.placeholder, el.getAttribute('aria-label'), el.className].join(' ').toLowerCase();
-    return /search|cerca|filter|filtro|filtra|ruolo|squadra|team|stagione|season|stato|status|divisione/.test(txt);
-  }
+    // Primo avvio: se Firebase è vuoto, l'admin carica online i dati già presenti nell'index.
+    if(hmIsFirebaseAdmin()){
+      await saveCloudNow(false);
+      hmSetFirebaseStatus("✅ Database inizializzato", true);
+      return true;
+    }
 
-  function enableViewerFilters(){
-    document.querySelectorAll('input,select').forEach(el=>{
-      if(looksLikeViewerControl(el)){
-        el.disabled = false;
-        el.style.opacity = '1';
-      }
-    });
-  }
-
-  function protectGuestButtons(){
-    if(typeof isAdmin === 'function' && isAdmin()) return;
-    document.querySelectorAll('button').forEach(btn=>{
-      const text = (btn.textContent || '').toLowerCase();
-      const click = (btn.getAttribute('onclick') || '').toLowerCase();
-      const safe = btn.classList.contains('navbtn') ||
-        click.includes('showview') || click.includes('openteam') || click.includes('openseasondetail') ||
-        click.includes('openloginmodal') || click.includes('downloadfullbackup') ||
-        text.includes('cerca') || text.includes('filtra') || text.includes('chiudi') || text.includes('visualizza');
-      const dangerous = /salva|elimina|modifica|aggiungi|nuova|nuovo|ripristina|annulla asta|martello|offerta|asta|conferma|svuota|reset/.test(text + ' ' + click);
-      if(dangerous && !safe){
-        btn.disabled = true;
-        btn.style.opacity = '.45';
-        btn.title = 'Modifica disattivata nel portale pubblico.';
-      }
-    });
-  }
-
-  const originalApplyPermissions = window.applyPermissionsToVisibleView;
-  if(typeof originalApplyPermissions === 'function'){
-    window.applyPermissionsToVisibleView = function(){
-      originalApplyPermissions.apply(this, arguments);
-      enableViewerFilters();
-      protectGuestButtons();
-      portalBadge();
-    };
-  }
-
-  function addPortalInteractions(){
-    if(document.getElementById('hmPortalInteractionBox')) return;
-    const main = document.querySelector('main');
-    if(!main) return;
-    const box = document.createElement('div');
-    box.id = 'hmPortalInteractionBox';
-    box.className = 'panel';
-    box.style.marginTop = '14px';
-    box.innerHTML = `
-      <div class="between">
-        <div>
-          <h2>Interazioni presidenti</h2>
-          <p class="muted">Portale sicuro: tutti possono consultare, le richieste operative passano da modulo e vengono approvate dall'admin.</p>
-        </div>
-      </div>
-      <div class="grid grid4" style="margin-top:12px">
-        <button class="btn primary" onclick="openHmInteractionForm('scambio')">🔁 Proponi scambio</button>
-        <button class="btn primary" onclick="openHmInteractionForm('asta')">🔨 Richiesta asta/offerta</button>
-        <button class="btn primary" onclick="openHmInteractionForm('azione')">📣 Azione presidente</button>
-        <button class="btn primary" onclick="openHmInteractionForm('modifica')">📝 Segnala modifica</button>
-      </div>`;
-    main.appendChild(box);
-  }
-
-  function bootPortalMode(){
+    hmSetFirebaseStatus("⚠️ Database vuoto", false, true);
+    return false;
+  }catch(e){
+    console.error("Errore caricamento Firebase", e);
+    hmSetFirebaseStatus("⚠️ Cloud non caricato", false, true);
+    return false;
+  }finally{
     HM_CLOUD_LOADING = false;
-    HM_CLOUD_SAVING = false;
-    HM_CLOUD_READY = false;
-    HM_HAS_UNSAVED_CHANGES = false;
-    portalBadge();
-    enableViewerFilters();
-    protectGuestButtons();
-    addPortalInteractions();
+    hmUpdateFirebaseButtons();
   }
+};
 
-  document.addEventListener('DOMContentLoaded', bootPortalMode);
-  window.addEventListener('load', function(){ setTimeout(bootPortalMode, 300); setTimeout(bootPortalMode, 1200); });
-  setInterval(bootPortalMode, 4000);
-})();
+saveCloudNow = async function(showAlert=false){
+  if(!hmIsFirebaseAdmin()){
+    if(showAlert) alert("Solo Federico admin può salvare online.");
+    return false;
+  }
+  if(!hmDb){
+    if(showAlert) alert("Firebase non è ancora pronto.");
+    return false;
+  }
+  if(HM_CLOUD_SAVING) return false;
+
+  HM_CLOUD_SAVING = true;
+  hmSetFirebaseStatus("💾 Salvataggio online...");
+
+  try{
+    const payload = buildCloudPayload();
+    const info = await hmSavePayloadToFirestore(payload);
+    HM_CLOUD_READY = true;
+    HM_HAS_UNSAVED_CHANGES = false;
+    HM_CLOUD_LAST_SAVE = new Date().toISOString();
+    hmSetFirebaseStatus("✅ Online salvato", true);
+    if(showAlert) alert("Salvato online su Firebase. Dimensione: " + Math.round(info.size/1024) + " KB");
+    return true;
+  }catch(e){
+    console.error("Errore salvataggio Firebase", e);
+    hmSetFirebaseStatus("⚠️ Salvataggio fallito", false, true);
+    if(showAlert) alert("Salvataggio Firebase fallito: " + (e.message || e));
+    return false;
+  }finally{
+    HM_CLOUD_SAVING = false;
+    hmUpdateFirebaseButtons();
+  }
+};
+
+// Mantiene il salvataggio locale come copia di sicurezza, ma programma anche Firebase.
+saveAll = function(){
+  if(!hmIsFirebaseAdmin()){
+    alert("Solo Federico admin può modificare e salvare online in questa prima versione.");
+    return false;
+  }
+  saveLocalOnly();
+  markUnsavedChanges();
+  clearTimeout(hmFirebaseSaveTimer);
+  hmFirebaseSaveTimer = setTimeout(()=>saveCloudNow(false), 900);
+  return true;
+};
+
+function hmInitFirebase(){
+  try{
+    hmFirebaseApp = firebase.initializeApp(firebaseConfig);
+    hmAuth = firebase.auth();
+    hmDb = firebase.firestore();
+    hmSetFirebaseStatus("☁️ Firebase pronto");
+    hmUpdateFirebaseButtons();
+
+    hmAuth.onAuthStateChanged(async (user)=>{
+      hmFirebaseUser = user || null;
+
+      if(hmIsFirebaseAdmin()){
+        currentUser = { username:"Federico", role:"admin", teams:["*"] };
+        safeSetStorage("hm_current_user_v1", currentUser);
+        hmSetFirebaseStatus("🔓 Admin collegato");
+      }else{
+        currentUser = { username:"Ospite", role:"guest", teams:[] };
+        safeSetStorage("hm_current_user_v1", currentUser);
+        hmSetFirebaseStatus(user ? "👁️ Login Google lettura" : "👁️ Lettura pubblica");
+      }
+
+      hmUpdateFirebaseButtons();
+      updateAuthBadge();
+      await loadCloudData();
+      applyPermissionsToVisibleView();
+    });
+
+    // Anche senza login, tutti leggono i dati online.
+    setTimeout(()=>loadCloudData(), 500);
+  }catch(e){
+    console.error("Firebase init error", e);
+    hmSetFirebaseStatus("⚠️ Firebase errore", false, true);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", hmInitFirebase);
+window.addEventListener("load", function(){
+  setTimeout(function(){
+    hmUpdateFirebaseButtons();
+    applyPermissionsToVisibleView();
+  }, 1000);
+});
 </script>
+
 </body>
 </html>

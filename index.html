@@ -1818,40 +1818,110 @@ L'operazione entra immediatamente nel registro trasferimenti della HM League.`
 window.moveCredits = moveCredits;
 
 function confirmTradeFromModal(){
+  // REGISTRO SCAMBI DEFINITIVO:
+  // 1) registra lo scambio nello storico
+  // 2) sposta davvero i proprietari dei calciatori
+  // 3) aggiorna tipologia/bonus/riscatto sul calciatore
+  // 4) muove i crediti tra le due società
+  // 5) genera comunicato automatico
+  // 6) salva locale + online
   try{
-    if(!pendingTrade){
+    const t = pendingTrade ? JSON.parse(JSON.stringify(pendingTrade)) : JSON.parse(JSON.stringify(tradeState));
+
+    if(!t || (!Array.isArray(t.offer) && !Array.isArray(t.request))){
       alert("Nessuno scambio da confermare.");
       return;
     }
+    t.offer = Array.isArray(t.offer) ? t.offer : [];
+    t.request = Array.isArray(t.request) ? t.request : [];
 
-    const restore = [];
-    const budgetRestore = teams.map(t=>({code:t.code,credits:t.credits,hmcoin:t.hmcoin}));
+    if(!t.offer.length && !t.request.length){
+      alert("Seleziona almeno un calciatore prima di confermare lo scambio.");
+      return;
+    }
+    if(!t.from || !t.to || t.from === t.to){
+      alert("Seleziona due squadre diverse.");
+      return;
+    }
 
-    // Chi compra/paga scala crediti, chi vende riceve crediti.
-    pendingTrade.offer.forEach(it=>{
-      moveCredits(pendingTrade.to, pendingTrade.from, it.cost);
+    // Permessi: admin sempre. Presidenti solo se coinvolgono una loro squadra.
+    if(typeof isAdmin === "function" && !isAdmin()){
+      if(typeof canEditTeam === "function" && !(canEditTeam(t.from) || canEditTeam(t.to))){
+        alert("Puoi confermare solo scambi che coinvolgono una delle tue squadre.");
+        return;
+      }
+    }
+
+    const beforePlayers = players.map(p=>({
+      id:p.id,
+      owner:p.owner,
+      status:p.status,
+      bonus:p.bonus,
+      contract:p.contract,
+      deadline:p.deadline
+    }));
+    const beforeTeams = teams.map(tm=>({code:tm.code,credits:tm.credits,hmcoin:tm.hmcoin}));
+    const beforeTradesLen = trades.length;
+    const beforeNewsLen = news.length;
+
+    function normalizeCost(v){
+      const n = Number(String(v ?? "0").replace(",", "."));
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function snapshotItem(it, newOwner){
+      const p = players.find(x=>x.id===it.id);
+      return {
+        ...it,
+        playerName: p ? p.name : it.id,
+        oldOwner: p ? p.owner : "",
+        newOwner,
+        cost: String(it.cost ?? "0"),
+        type: it.type || "D",
+        ransom: it.ransom || "",
+        bonus: it.bonus || ""
+      };
+    }
+
+    const offerSnapshots = t.offer.map(it=>snapshotItem(it, t.to));
+    const requestSnapshots = t.request.map(it=>snapshotItem(it, t.from));
+
+    // La squadra che riceve il calciatore paga; chi cede incassa.
+    offerSnapshots.forEach(it=>{
+      moveCredits(t.to, t.from, normalizeCost(it.cost));
       const p = players.find(x=>x.id===it.id);
       if(p){
-        restore.push({id:p.id, owner:p.owner});
-        p.owner = pendingTrade.to;
+        p.owner = t.to;
+        p.status = it.type || p.status || "D";
+        if(it.bonus) p.bonus = it.bonus;
+        if((it.type === "PD" || it.type === "PO") && it.ransom){
+          p.deadline = `Riscatto ${it.ransom}`;
+        }
       }
     });
 
-    pendingTrade.request.forEach(it=>{
-      moveCredits(pendingTrade.from, pendingTrade.to, it.cost);
+    requestSnapshots.forEach(it=>{
+      moveCredits(t.from, t.to, normalizeCost(it.cost));
       const p = players.find(x=>x.id===it.id);
       if(p){
-        restore.push({id:p.id, owner:p.owner});
-        p.owner = pendingTrade.from;
+        p.owner = t.from;
+        p.status = it.type || p.status || "D";
+        if(it.bonus) p.bonus = it.bonus;
+        if((it.type === "PD" || it.type === "PO") && it.ransom){
+          p.deadline = `Riscatto ${it.ransom}`;
+        }
       }
     });
 
     const registeredTrade = {
-      ...pendingTrade,
+      from:t.from,
+      to:t.to,
+      offer:offerSnapshots,
+      request:requestSnapshots,
       date:new Date().toLocaleString("it-IT"),
       id:"T"+Date.now(),
-      restore,
-      budgetRestore,
+      restore: beforePlayers,
+      budgetRestore: beforeTeams,
       applied:true
     };
 
@@ -1861,12 +1931,38 @@ function confirmTradeFromModal(){
       createAutoTradeNews(registeredTrade);
     }
 
-    saveAll();
-    closeTradeModal();
-    resetTradeForm();
-    renderTrades();
+    let ok = true;
+    if(typeof saveAll === "function") ok = saveAll() !== false;
+    else if(typeof saveLocalOnly === "function") saveLocalOnly();
 
-    alert("Scambio registrato, crediti aggiornati e comunicato creato.");
+    if(!ok){
+      // rollback completo se il salvataggio viene bloccato dai permessi
+      beforePlayers.forEach(old=>{
+        const p=players.find(x=>x.id===old.id);
+        if(p){
+          p.owner=old.owner;
+          p.status=old.status;
+          p.bonus=old.bonus;
+          p.contract=old.contract;
+          p.deadline=old.deadline;
+        }
+      });
+      beforeTeams.forEach(old=>{
+        const tm=teams.find(x=>x.code===old.code);
+        if(tm){tm.credits=old.credits;tm.hmcoin=old.hmcoin;}
+      });
+      trades.splice(0, trades.length - beforeTradesLen);
+      news.splice(0, news.length - beforeNewsLen);
+      return;
+    }
+
+    pendingTrade = null;
+    tradeState.offer=[];
+    tradeState.request=[];
+
+    closeTradeModal();
+    renderTrades();
+    alert("Scambio registrato: proprietari aggiornati, crediti mossi e comunicato creato. Ora premi Salva online se non parte già il salvataggio automatico.");
   }catch(err){
     console.error(err);
     alert("Errore durante la registrazione dello scambio: " + (err.message || err));
@@ -1875,19 +1971,12 @@ function confirmTradeFromModal(){
 
 window.confirmTradeFromModal = confirmTradeFromModal;
 
-document.addEventListener("click", function(e){
-  const btn = e.target.closest && e.target.closest("#confirmTradeBtn");
-  if(btn){
-    e.preventDefault();
-    e.stopPropagation();
-    confirmTradeFromModal();
-  }
-}, true);
-
-
 function resetTradeForm(){
-  tradeState.offer=[]; tradeState.request=[]; pendingTrade=null; 
-  if(q("offerPlayers")) renderTradeLists();
+  tradeState.offer=[];
+  tradeState.request=[];
+  pendingTrade=null;
+  if(q("offerPlayers") && q("requestPlayers")) renderTradeLists();
+  if(q("draftTradeSummary")) renderDraftSummary();
 }
 
 

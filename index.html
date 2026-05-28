@@ -3122,6 +3122,7 @@ window.addEventListener("beforeunload", function(e){
 (function(){
   const firebaseConfig={apiKey:"AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",authDomain:"hm-league-manager.firebaseapp.com",projectId:"hm-league-manager",storageBucket:"hm-league-manager.firebasestorage.app",messagingSenderId:"685194156294",appId:"1:685194156294:web:516afa4e813a02b6fbe687"};
   let fbAuth=null, fbDb=null, fbUser=null, fbLoaded=false, fbSaving=false, fbSaveTimer=null;
+  const CHUNK_SIZE = 650000; // sotto limite documento Firestore 1 MiB
   const $=id=>document.getElementById(id);
   const setStatus=(t,m)=>{
     const e=$("firebaseStatusBadge") || $("cloudStatusBadge");
@@ -3170,10 +3171,12 @@ window.addEventListener("beforeunload", function(e){
     }catch(e){console.error(e)}
     updateUI();
   }
-  const ref=()=>fbDb.collection("hmleague").doc("main");
+  const mainRef=()=>fbDb.collection("hmleague").doc("main");
+  const chunkRef=(id)=>mainRef().collection("chunks").doc(String(id).padStart(4,"0"));
   function payload(){
     return {
-      version:5,
+      version:6,
+      mode:"chunked",
       updatedAt:new Date().toISOString(),
       teams,players,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,
       rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,
@@ -3182,6 +3185,7 @@ window.addEventListener("beforeunload", function(e){
   }
   function good(d){return d&&Array.isArray(d.players)&&d.players.length>50&&Array.isArray(d.teams)&&d.teams.length>=16}
   function apply(d){
+    if(typeof d==="string"){try{d=JSON.parse(d)}catch(e){return false}}
     if(!good(d)) return false;
     teams=Array.isArray(d.teams)?d.teams:teams;
     players=Array.isArray(d.players)?d.players:players;
@@ -3205,27 +3209,84 @@ window.addEventListener("beforeunload", function(e){
     try{saveLocalOnly()}catch(e){}
     return true;
   }
+  async function readChunked(meta){
+    if(!meta || !meta.chunkCount) return null;
+    const snaps = await Promise.all(Array.from({length:meta.chunkCount},(_,i)=>chunkRef(i).get()));
+    let txt="";
+    for(const s of snaps){
+      if(!s.exists) throw new Error("Chunk online mancante");
+      txt += String((s.data()||{}).data||"");
+    }
+    return JSON.parse(txt);
+  }
+  async function writeChunked(obj){
+    const txt=JSON.stringify(obj);
+    const chunks=[];
+    for(let i=0;i<txt.length;i+=CHUNK_SIZE) chunks.push(txt.slice(i,i+CHUNK_SIZE));
+    // Se il payload è piccolo salvo comunque a chunk per usare sempre lo stesso sistema stabile.
+    const oldMetaSnap = await mainRef().get().catch(()=>null);
+    const oldCount = oldMetaSnap && oldMetaSnap.exists ? Number((oldMetaSnap.data()||{}).chunkCount||0) : 0;
+    const max = Math.max(oldCount, chunks.length);
+    let batch = fbDb.batch();
+    let op=0;
+    function commitIfNeeded(force=false){
+      if(op>=380 || (force && op>0)){ const b=batch; batch=fbDb.batch(); op=0; return b.commit(); }
+      return Promise.resolve();
+    }
+    for(let i=0;i<chunks.length;i++){
+      batch.set(chunkRef(i),{index:i,data:chunks[i],updatedAt:firebase.firestore.FieldValue.serverTimestamp()}); op++;
+      await commitIfNeeded(false);
+    }
+    for(let i=chunks.length;i<max;i++){
+      batch.delete(chunkRef(i)); op++;
+      await commitIfNeeded(false);
+    }
+    batch.set(mainRef(),{
+      mode:"chunked",
+      version:6,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAtIso:obj.updatedAt,
+      chunkCount:chunks.length,
+      totalChars:txt.length,
+      savedBy:fbUser ? (fbUser.email||fbUser.displayName||"") : "",
+      preview:{teams:Array.isArray(teams)?teams.length:0,players:Array.isArray(players)?players.length:0,trades:Array.isArray(trades)?trades.length:0,news:Array.isArray(news)?news.length:0}
+    },{merge:false}); op++;
+    await commitIfNeeded(true);
+    return {chunkCount:chunks.length,totalChars:txt.length};
+  }
   async function fbLoad(){
     if(!fbDb) return false;
     setStatus("☁️ Carico dati online...","wait");
     try{
-      const s=await ref().get();
-      if(s.exists && good(s.data())){
-        apply(s.data());
-        fbLoaded=true;
-        HM_CLOUD_READY=true;
-        HM_HAS_UNSAVED_CHANGES=false;
-        setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok");
-      }else{
-        fbLoaded=true;
-        HM_CLOUD_READY=false;
-        setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait");
+      const s=await mainRef().get();
+      if(s.exists){
+        const meta=s.data()||{};
+        let data=null;
+        if(meta.mode==="chunked" && meta.chunkCount){
+          data=await readChunked(meta);
+        }else if(good(meta)){
+          data=meta; // vecchio salvataggio non chunked
+        }
+        if(good(data)){
+          apply(data);
+          fbLoaded=true;
+          HM_CLOUD_READY=true;
+          HM_HAS_UNSAVED_CHANGES=false;
+          setStatus(admin()?"🔓 Admin collegato · Online OK":"✅ Online sincronizzato","ok");
+          renderSafe();
+          return true;
+        }
       }
+      fbLoaded=true;
+      HM_CLOUD_READY=false;
+      setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait");
       renderSafe();
-      return true;
+      return false;
     }catch(e){
       console.error(e);
+      const msg=e.code||e.message||String(e);
       setStatus("⚠️ Errore lettura Firebase","bad");
+      if(String(msg).includes("permission")) console.warn("Controlla regole Firestore: serve lettura/scrittura per utenti autenticati.");
       renderSafe();
       return false;
     }
@@ -3238,18 +3299,22 @@ window.addEventListener("beforeunload", function(e){
     setStatus("💾 Salvataggio online...","wait");
     try{
       if(typeof rememberBackupSnapshot==="function") rememberBackupSnapshot(manual?"prima del salvataggio online Firebase":"autosave Firebase");
-      await ref().set(payload(),{merge:false});
+      const res=await writeChunked(payload());
       HM_CLOUD_READY=true;
       HM_HAS_UNSAVED_CHANGES=false;
       fbLoaded=true;
       try{saveLocalOnly()}catch(e){}
       setStatus("✅ Salvato online","ok");
-      if(manual) alert("Salvato online su Firebase.");
+      if(manual) alert("Salvato online su Firebase. Dati divisi in "+res.chunkCount+" blocchi per evitare il limite Firestore.");
       return true;
     }catch(e){
       console.error(e);
+      const msg=e.code||e.message||String(e);
       setStatus("⚠️ Errore salvataggio Firebase","bad");
-      if(manual) alert("Errore salvataggio Firebase: "+(e.code||e.message||e));
+      if(manual){
+        if(String(msg).includes("permission-denied")) alert("Errore salvataggio Firebase: permesso negato. In Firebase devi abilitare Firestore e permettere scrittura agli utenti autenticati.");
+        else alert("Errore salvataggio Firebase: "+msg);
+      }
       return false;
     }finally{
       fbSaving=false;

@@ -3342,14 +3342,23 @@ window.addEventListener("beforeunload", function(e){
     return true;
   };
 
+  let hmFirebaseStarted = false;
   function initFirebase(){
+    if(hmFirebaseStarted) return;
+    hmFirebaseStarted = true;
     try{
       if(!window.firebase){ setStatus("⚠️ SDK Firebase non caricato", "bad"); return; }
       fbApp = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
       fbAuth = firebase.auth();
+      fbAuth.languageCode = "it";
       fbDb = firebase.firestore();
       setStatus("☁️ Firebase pronto", "wait");
       updateButtons();
+      fbAuth.getRedirectResult().catch(function(e){
+        console.error("Redirect login error", e);
+        setStatus("⚠️ Login Firebase errore", "bad");
+        alert("Login Google non riuscito: " + (e && (e.code || e.message) ? (e.code || e.message) : "errore sconosciuto"));
+      });
       fbLoad();
 
       fbAuth.onAuthStateChanged(function(user){
@@ -3370,10 +3379,18 @@ window.addEventListener("beforeunload", function(e){
     const lb=loginBtn(), sb=saveBtn();
     if(lb){ lb.addEventListener("click", async function(){
       try{
+        if(!fbAuth){ alert("Firebase non è ancora pronto. Ricarica la pagina e riprova."); return; }
         if(fbUser){ await fbAuth.signOut(); return; }
         const provider = new firebase.auth.GoogleAuthProvider();
-        await fbAuth.signInWithPopup(provider);
-      }catch(e){ console.error("Login Google error", e); alert("Login Google non riuscito. Prova da Chrome/PC o controlla dominio autorizzato Firebase."); }
+        provider.setCustomParameters({ prompt: "select_account" });
+        setStatus("🔐 Apro login Google...", "wait");
+        // Metodo più stabile su GitHub Pages e smartphone: redirect, non popup.
+        await fbAuth.signInWithRedirect(provider);
+      }catch(e){
+        console.error("Login Google error", e);
+        setStatus("⚠️ Login Firebase errore", "bad");
+        alert("Login Google non riuscito: " + (e && (e.code || e.message) ? (e.code || e.message) : "errore sconosciuto"));
+      }
     }); }
     if(sb){ sb.addEventListener("click", ()=>fbSave(true)); }
     initFirebase();

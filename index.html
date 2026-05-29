@@ -4859,5 +4859,129 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+<script>
+/* =========================================================
+   FIX SOLO APPROVAZIONE SCAMBIO IN ATTESA
+   Problema: l'ultimo override chiamava applyTradeOfficial, ma quella
+   funzione era dentro un blocco locale e quindi non era visibile qui.
+   Risultato: approvando una proposta la toglieva dall'attesa, ma non
+   registrava lo scambio e non creava il comunicato.
+   Questo blocco sovrascrive SOLO approvePendingTrade.
+   ========================================================= */
+(function(){
+  const PENDING_KEY = "hm_pending_trades_v1";
+  const escMsg = (m)=>String(m||"");
+
+  function pendingList(){
+    try{
+      if(!Array.isArray(window.pendingTrades)) window.pendingTrades = JSON.parse(localStorage.getItem(PENDING_KEY)||"[]");
+    }catch(e){ window.pendingTrades = []; }
+    return window.pendingTrades;
+  }
+  function savePendingLocal(){
+    try{ localStorage.setItem(PENDING_KEY, JSON.stringify(pendingList())); }catch(e){}
+  }
+  function playerSnapshot(p){
+    return {id:p.id, owner:p.owner, current:p.current, status:p.status, bonus:p.bonus, contract:p.contract, deadline:p.deadline, ransom:p.ransom};
+  }
+  function applyPendingTradeAsOfficial(t){
+    const restore = [];
+    const budgetRestore = (Array.isArray(teams)?teams:[]).map(tm=>({code:tm.code, credits:tm.credits, hmcoin:tm.hmcoin}));
+
+    function transfer(item, newTeam){
+      const p = (Array.isArray(players)?players:[]).find(x=>x.id===item.id);
+      if(!p) return;
+      restore.push(playerSnapshot(p));
+      const typ = String(item.type || "D").trim() || "D";
+
+      // Definitivo: cartellino e rosa passano alla nuova squadra.
+      if(typ === "D"){
+        p.owner = newTeam;
+        p.current = newTeam;
+        p.status = "D";
+      }else{
+        // Prestito/obbligo/diritto: resta proprietario originale, cambia squadra attuale.
+        p.current = newTeam;
+        p.status = typ;
+      }
+
+      if(item.bonus !== undefined) p.bonus = String(item.bonus || "").trim();
+      if(item.ransom !== undefined && String(item.ransom || "").trim()){
+        p.ransom = String(item.ransom).trim();
+        if(typ === "PD" || typ === "PO") p.deadline = "Riscatto " + String(item.ransom).trim();
+      }
+    }
+
+    (t.offer || []).forEach(it=>{
+      if(typeof moveCredits === "function") moveCredits(t.to, t.from, it.cost);
+      transfer(it, t.to);
+    });
+    (t.request || []).forEach(it=>{
+      if(typeof moveCredits === "function") moveCredits(t.from, t.to, it.cost);
+      transfer(it, t.from);
+    });
+
+    const registered = Object.assign({}, JSON.parse(JSON.stringify(t)), {
+      id: t.id && String(t.id).startsWith("T") ? t.id : ("T" + Date.now()),
+      pendingId: t.id || "",
+      date: new Date().toLocaleString("it-IT"),
+      restore,
+      budgetRestore,
+      applied: true
+    });
+
+    if(!Array.isArray(trades)) trades = [];
+    trades.unshift(registered);
+
+    if(typeof createAutoTradeNews === "function"){
+      createAutoTradeNews(registered);
+    }else{
+      if(!Array.isArray(news)) news = [];
+      news.unshift({
+        title:`UFFICIALE: scambio registrato tra ${typeof teamFullName === "function" ? teamFullName(registered.from) : registered.from} e ${typeof teamFullName === "function" ? teamFullName(registered.to) : registered.to}`,
+        type:"Trasferimento",
+        body:`Scambio registrato tra ${registered.from} e ${registered.to}.`,
+        author:"Ufficio Comunicati HM League",
+        pinned:false,
+        date:new Date().toLocaleDateString("it-IT")
+      });
+    }
+    return registered;
+  }
+
+  window.approvePendingTrade = approvePendingTrade = async function(i){
+    if(typeof internalAdmin === "function" && !internalAdmin()){
+      return typeof denied === "function" ? denied("Solo Federico può approvare.") : alert("Solo Federico può approvare.");
+    }
+    const list = pendingList();
+    const t = list[i];
+    if(!t) return false;
+    if(!confirm("Approvare e rendere ufficiale questo scambio?")) return false;
+
+    try{
+      // 1) applica davvero lo scambio prima di togliere la proposta
+      applyPendingTradeAsOfficial(t);
+
+      // 2) rimuove la proposta dall'attesa locale/cloud
+      list.splice(i,1);
+      savePendingLocal();
+      if(typeof window.hmSavePendingTradesCloudNow === "function") await window.hmSavePendingTradesCloudNow();
+
+      // 3) salva tutto: trades, players, news/comunicato, crediti
+      if(typeof saveAll === "function") saveAll();
+      if(typeof renderTrades === "function") renderTrades();
+      if(typeof renderDashboard === "function") renderDashboard();
+      alert("Scambio approvato: registrato nello storico, rosa/crediti aggiornati e comunicato creato.");
+      return true;
+    }catch(e){
+      console.error(e);
+      alert("Errore approvazione scambio: " + escMsg(e.message || e));
+      return false;
+    }
+  };
+})();
+</script>
+
 </body>
 </html>

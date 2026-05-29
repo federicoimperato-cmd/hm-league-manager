@@ -4615,5 +4615,159 @@ window.addEventListener("beforeunload", function(e){
 })();
 
 </script>
+
+
+<script>
+/* =========================================================
+   FIX MIRATO SOLO REGISTRO SCAMBI ADMIN
+   Problema risolto: gli scambi eliminati ricomparivano perché
+   Firebase li salva anche come documenti separati in trades_v2.
+   Questo blocco elimina/ripristina anche il documento Firebase
+   e mantiene una blacklist locale anti-rilettura.
+   ========================================================= */
+(function(){
+  const DELETED_KEY = "hm_deleted_trade_ids_v1";
+  const $ = (id)=>document.getElementById(id);
+
+  function hmSafeId(v){
+    return String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,140) || ("id_"+Date.now());
+  }
+  function getDeletedIds(){
+    try{return JSON.parse(localStorage.getItem(DELETED_KEY)||"[]").filter(Boolean);}catch(e){return [];} 
+  }
+  function setDeletedIds(ids){
+    try{localStorage.setItem(DELETED_KEY, JSON.stringify([...new Set(ids.filter(Boolean))]));}catch(e){}
+  }
+  function rememberDeletedTradeId(id){
+    if(!id) return;
+    const ids = getDeletedIds();
+    if(!ids.includes(id)){ids.push(id); setDeletedIds(ids);} 
+  }
+  function isDeletedTrade(t){
+    if(!t) return false;
+    const ids = getDeletedIds();
+    const id = hmSafeId(t.id || "");
+    return !!id && ids.includes(id);
+  }
+  function filterDeletedTrades(){
+    if(!Array.isArray(window.trades) && typeof trades === "undefined") return false;
+    const arr = Array.isArray(window.trades) ? window.trades : trades;
+    const before = arr.length;
+    const filtered = arr.filter(t=>!isDeletedTrade(t));
+    if(filtered.length !== before){
+      if(Array.isArray(window.trades)) window.trades = filtered;
+      try{trades = filtered;}catch(e){}
+      try{localStorage.setItem("hm_trades_v1", JSON.stringify(filtered));}catch(e){}
+      return true;
+    }
+    return false;
+  }
+  function firestoreDb(){
+    try{
+      if(!window.firebase || !firebase.firestore) return null;
+      if(firebase.apps && !firebase.apps.length){
+        firebase.initializeApp({
+          apiKey:"AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",
+          authDomain:"hm-league-manager.firebaseapp.com",
+          projectId:"hm-league-manager",
+          storageBucket:"hm-league-manager.firebasestorage.app",
+          messagingSenderId:"685194156294",
+          appId:"1:685194156294:web:516afa4e813a02b6fbe687"
+        });
+      }
+      return firebase.firestore();
+    }catch(e){console.warn("Firestore non disponibile per delete trade", e); return null;}
+  }
+  async function deleteTradeFirebaseDoc(t){
+    const id = hmSafeId(t && t.id);
+    if(!id) return;
+    rememberDeletedTradeId(id);
+    const db = firestoreDb();
+    if(!db) return;
+    try{
+      await db.collection("hmleague").doc("main").collection("trades_v2").doc(id).delete();
+    }catch(e){
+      console.warn("Documento trade non eliminato subito da Firebase:", e);
+    }
+  }
+  function restoreTradePlayersAndBudgets(t){
+    try{ if(typeof restoreBudgets === "function") restoreBudgets(t); }catch(e){console.warn(e);}
+    if(t && t.applied && Array.isArray(t.restore)){
+      t.restore.forEach(r=>{
+        const p=(players||[]).find(x=>x.id===r.id);
+        if(!p) return;
+        Object.keys(r).forEach(k=>{ if(k!=="id") p[k]=r[k]; });
+      });
+    }
+  }
+  async function saveAfterTradeAdminChange(){
+    try{
+      if(typeof saveAll === "function") saveAll();
+      if(typeof saveCloudNow === "function") await saveCloudNow(false);
+    }catch(e){console.warn("Salvataggio dopo modifica registro scambi:", e);} 
+  }
+
+  const oldRenderTrades = typeof window.renderTrades === "function" ? window.renderTrades : null;
+  if(oldRenderTrades){
+    window.renderTrades = renderTrades = function(){
+      filterDeletedTrades();
+      return oldRenderTrades.apply(this, arguments);
+    };
+  }
+
+  window.deleteConfirmedTrade = deleteConfirmedTrade = async function(i){
+    if(typeof internalAdmin === "function" && !internalAdmin()){
+      return (typeof denied === "function") ? denied("Solo Federico può eliminare scambi confermati.") : alert("Solo Federico può eliminare scambi confermati.");
+    }
+    const t=(trades||[])[i];
+    if(!t) return false;
+    if(!confirm("Eliminare lo scambio e ripristinare proprietari/squadre/crediti precedenti?")) return false;
+
+    restoreTradePlayersAndBudgets(t);
+    const firebaseId = hmSafeId(t.id || ("trade_"+i));
+    rememberDeletedTradeId(firebaseId);
+    trades.splice(i,1);
+    try{localStorage.setItem("hm_trades_v1", JSON.stringify(trades));}catch(e){}
+
+    await deleteTradeFirebaseDoc({id:firebaseId});
+    await saveAfterTradeAdminChange();
+    try{ if(typeof renderTrades === "function") renderTrades(); }catch(e){}
+    return true;
+  };
+
+  const oldEditConfirmedTrade = typeof window.editConfirmedTrade === "function" ? window.editConfirmedTrade : null;
+  window.editConfirmedTrade = editConfirmedTrade = async function(i){
+    if(typeof internalAdmin === "function" && !internalAdmin()){
+      return (typeof denied === "function") ? denied("Solo Federico può riaprire scambi confermati.") : alert("Solo Federico può riaprire scambi confermati.");
+    }
+    const t=(trades||[])[i];
+    if(!t) return false;
+    if(!confirm("Riaprire questo scambio? Verrà tolto dal registro ufficiale e ripristinato, poi potrai ricrearlo/modificarlo dalla proposta.")) return false;
+
+    restoreTradePlayersAndBudgets(t);
+    const firebaseId = hmSafeId(t.id || ("trade_"+i));
+    rememberDeletedTradeId(firebaseId);
+    trades.splice(i,1);
+    try{localStorage.setItem("hm_trades_v1", JSON.stringify(trades));}catch(e){}
+    await deleteTradeFirebaseDoc({id:firebaseId});
+    await saveAfterTradeAdminChange();
+    try{ if(typeof renderTrades === "function") renderTrades(); }catch(e){}
+    alert("Scambio rimosso dal registro e ripristinato. Ora puoi reinserirlo correttamente se serve.");
+    return true;
+  };
+
+  // Se Firebase rilegge vecchi documenti orfani, li filtra subito e risalva l'indice pulito.
+  let lastCleanRun = 0;
+  setInterval(()=>{
+    if(Date.now()-lastCleanRun < 1500) return;
+    const changed = filterDeletedTrades();
+    if(changed){
+      lastCleanRun = Date.now();
+      saveAfterTradeAdminChange().then(()=>{try{if(typeof renderTrades==="function")renderTrades();}catch(e){}});
+    }
+  }, 2000);
+})();
+</script>
+
 </body>
 </html>

@@ -68,6 +68,9 @@ button{cursor:pointer}
 .slot{min-width:112px;min-height:78px;border:1px dashed rgba(255,255,255,.5);border-radius:18px;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;color:#d1fae5;font-weight:900}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{position:static}.grid2,.grid3,.grid4{grid-template-columns:1fr}.lineItem{grid-template-columns:1fr}.hero h1{font-size:30px}}
 </style>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 </head>
 <body>
 <div class="app">
@@ -78,18 +81,21 @@ button{cursor:pointer}
         <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
-      <div class="row" id="hmTopControls">
+      <div class="row">
         <span class="badge" id="totalPlayersBadge"></span>
         <span class="badge">Registro Scambi FIX</span>
-        <span class="badge" id="cloudStatusBadge">☁️ Solo locale</span>
-        <span class="badge" id="authStatusBadge">👁️ Ospite sola lettura</span>
-        <button class="btn primary" id="hmLoginBtn" type="button" onclick="hmGoogleLoginOrAccount()">🔐 Login Google</button>
-        <button class="btn green" id="manualSaveOnlineBtn" type="button" onclick="saveCloudNow(true)">💾 Salva online</button>
-        <button class="btn" type="button" onclick="downloadFullBackup()">⬇️ Backup</button>
-        <button class="btn yellow" type="button" onclick="triggerRestoreBackup()">↩️ Ripristina</button>
-        <input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
       </div>
     </div>
+<div id="cloudTopControls" class="row" style="margin-top:12px;align-items:center;gap:8px">
+  <span id="cloudStatusBadge" class="badge">☁️ Solo locale</span>
+  <span id="authStatusBadge" class="badge">👁️ Ospite sola lettura</span>
+  <button id="hmLoginBtn" onclick="openLoginModal()" class="btn">🔐 Login Google</button>
+  <button id="manualSaveOnlineBtn" onclick="saveCloudNow(true)" class="btn green">💾 Salva online</button>
+  <button onclick="downloadFullBackup()" class="btn primary">⬇️ Backup</button>
+  <button onclick="triggerRestoreBackup()" class="btn yellow">↩️ Ripristina</button>
+  <input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
+</div>
+
   </header>
 
   <div class="layout">
@@ -140,9 +146,6 @@ button{cursor:pointer}
   </div>
 </div>
 
-
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const HM_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbzmaw-1udciNZe1sBBEaSk8m8WknBnjLtfy_7J4X8JXysyTNdFGw5amkr57Rk97THmn/exec";
 let HM_CLOUD_READY = false;
@@ -186,68 +189,6 @@ let selectedTeam = "IMP";
 let selectedPlayerId = null;
 let pendingTrade = null;
 
-// =========================
-// LOGIN GOOGLE FIREBASE
-// =========================
-const HM_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",
-  authDomain: "hm-league-manager.firebaseapp.com",
-  projectId: "hm-league-manager",
-  storageBucket: "hm-league-manager.firebasestorage.app",
-  messagingSenderId: "685194156294",
-  appId: "1:685194156294:web:516afa4e813a02b6fbe687"
-};
-let HM_FIREBASE_AUTH_READY = false;
-
-function hmEnsureFirebaseAuth(){
-  try{
-    if(!window.firebase || !firebase.auth){ alert("Firebase non caricato. Controlla connessione e riprova."); return null; }
-    if(!firebase.apps.length) firebase.initializeApp(HM_FIREBASE_CONFIG);
-    HM_FIREBASE_AUTH_READY = true;
-    return firebase.auth();
-  }catch(e){
-    console.error("Errore init Firebase Auth", e);
-    alert("Errore login Google. Controlla configurazione Firebase.");
-    return null;
-  }
-}
-
-function hmSetGoogleAdmin(user){
-  if(!user) return;
-  currentUser = {
-    username: user.displayName || user.email || "Federico",
-    email: user.email || "",
-    role: "admin",
-    teams: ["*"],
-    loginProvider: "google"
-  };
-  safeSetStorage("hm_current_user_v1", currentUser);
-  updateAuthBadge();
-  applyPermissionsToVisibleView();
-}
-
-function hmGoogleLoginOrAccount(){
-  if(isLoggedIn()){ openLoginModal(); return; }
-  const auth = hmEnsureFirebaseAuth();
-  if(!auth) return;
-  const provider = new firebase.auth.GoogleAuthProvider();
-  auth.signInWithPopup(provider).then(res=>{
-    hmSetGoogleAdmin(res.user);
-    loadCloudData();
-  }).catch(err=>{
-    console.error("Login Google non riuscito", err);
-    alert("Login Google non riuscito: " + (err && err.code ? err.code : "errore sconosciuto"));
-  });
-}
-
-function hmInitGoogleAuthListener(){
-  const auth = hmEnsureFirebaseAuth();
-  if(!auth) return;
-  auth.onAuthStateChanged(user=>{
-    if(user){ hmSetGoogleAdmin(user); }
-  });
-}
-
 
 // =========================
 // LOGIN E PERMESSI SEMPLICI
@@ -263,6 +204,66 @@ const HM_AUTH_USERS = {
   "danilo": {name:"Danilo", password:"bvbred", role:"presidente", teams:["BVB","RED"]},
   "alessio": {name:"Alessio", password:"skubea", role:"presidente", teams:["SKU","BEA"]}
 };
+
+
+
+// =========================
+// LOGIN GOOGLE FIREBASE (solo autenticazione, il salvataggio resta AppScript originale)
+// =========================
+const HM_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",
+  authDomain: "hm-league-manager.firebaseapp.com",
+  projectId: "hm-league-manager",
+  storageBucket: "hm-league-manager.firebasestorage.app",
+  messagingSenderId: "685194156294",
+  appId: "1:685194156294:web:516afa4e813a02b6fbe687"
+};
+let HM_GOOGLE_AUTH = null;
+try{
+  if(window.firebase && !firebase.apps.length){ firebase.initializeApp(HM_FIREBASE_CONFIG); }
+  if(window.firebase){ HM_GOOGLE_AUTH = firebase.auth(); }
+}catch(e){ console.warn("Firebase Auth non inizializzato", e); }
+
+function loginGoogle(){
+  if(!HM_GOOGLE_AUTH){ alert("Login Google non disponibile. Controlla connessione o Firebase."); return; }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  HM_GOOGLE_AUTH.signInWithPopup(provider).then(res=>{
+    const u = res && res.user ? res.user : null;
+    currentUser = {
+      username: (u && (u.displayName || u.email)) || "Admin Google",
+      role: "admin",
+      teams: ["*"],
+      email: (u && u.email) || "",
+      googleUid: (u && u.uid) || ""
+    };
+    safeSetStorage("hm_current_user_v1", currentUser);
+    closeTradeModal();
+    updateAuthBadge();
+    renderCurrentView();
+    loadCloudData();
+  }).catch(err=>{
+    console.error(err);
+    alert("Login Google non riuscito: " + (err.code || err.message || err));
+  });
+}
+
+function installGoogleAuthObserver(){
+  if(!HM_GOOGLE_AUTH) return;
+  HM_GOOGLE_AUTH.onAuthStateChanged(u=>{
+    if(u){
+      currentUser = {
+        username: u.displayName || u.email || "Admin Google",
+        role: "admin",
+        teams: ["*"],
+        email: u.email || "",
+        googleUid: u.uid || ""
+      };
+      safeSetStorage("hm_current_user_v1", currentUser);
+      updateAuthBadge();
+      if(typeof applyPermissionsToVisibleView === "function") applyPermissionsToVisibleView();
+    }
+  });
+}
 
 function normalizeLoginName(v){return String(v||"").trim().toLowerCase();}
 function isAdmin(){return currentUser && currentUser.role === "admin";}
@@ -290,14 +291,15 @@ function openLoginModal(){
       <button class="btn red" onclick="logoutUser()">Esci</button>
     </div>` : `
     <h3>Login HM League</h3>
-    <p class="muted">Senza login puoi vedere tutto ma non puoi modificare.</p>
-    <div class="grid grid2">
+    <p class="muted">Usa Google per entrare come admin e salvare online.</p>
+    <div class="row" style="margin:12px 0"><button class="btn primary" onclick="loginGoogle()">🔐 Entra con Google</button></div>
+    <details><summary class="muted" style="cursor:pointer">Login vecchio con password</summary><div class="grid grid2" style="margin-top:10px">
       <label>Utente<input id="hmLoginUser" class="input" placeholder="Federico, Antonio..."></label>
       <label>Password<input id="hmLoginPass" class="input" type="password" placeholder="Password"></label>
     </div>
-    <div class="row" style="justify-content:flex-end;margin-top:14px">
+    </div></details><div class="row" style="justify-content:flex-end;margin-top:14px">
       <button class="btn" onclick="closeTradeModal()">Annulla</button>
-      <button class="btn green" onclick="loginUser()">Entra</button>
+      <button class="btn green" onclick="loginUser()">Entra con password</button>
     </div>`;
   q("tradeModal").style.display="flex";
 }
@@ -314,7 +316,7 @@ function loginUser(){
   loadCloudData();
 }
 function logoutUser(){
-  try{ if(window.firebase && firebase.auth) firebase.auth().signOut(); }catch(e){}
+  try{ if(HM_GOOGLE_AUTH) HM_GOOGLE_AUTH.signOut(); }catch(e){}
   currentUser={username:"Ospite",role:"guest",teams:[]};
   safeSetStorage("hm_current_user_v1", currentUser);
   closeTradeModal();
@@ -325,9 +327,9 @@ function updateAuthBadge(){
   const badge=q("authStatusBadge");
   const btn=q("hmLoginBtn");
   if(!badge || !btn) return;
-  if(isAdmin()){badge.textContent="🔓 Federico admin";btn.textContent="👤 Account";}
+  if(isAdmin()){badge.textContent="🔓 Admin Google";btn.textContent="👤 Account";}
   else if(isLoggedIn()){badge.textContent=`🔐 ${currentUser.username} · ${userTeams().join("/")}`;btn.textContent="👤 Account";}
-  else{badge.textContent="👁️ Ospite sola lettura";btn.textContent="🔐 Login Google";}
+  else{badge.textContent="👁️ Ospite sola lettura";btn.textContent="🔐 Login";}
   const saveBtn=q("manualSaveOnlineBtn");
   if(saveBtn){saveBtn.disabled=!isLoggedIn();saveBtn.style.opacity=isLoggedIn()?"1":".45";}
 }
@@ -759,10 +761,12 @@ async function postCloudPayloadRaw(text){
     form.target = frameName;
     form.style.display = "none";
 
-    const textarea = document.createElement("textarea");
-    textarea.name = "payload";
-    textarea.value = text;
-    form.appendChild(textarea);
+    ["payload","data","json"].forEach(name=>{
+      const textarea = document.createElement("textarea");
+      textarea.name = name;
+      textarea.value = text;
+      form.appendChild(textarea);
+    });
 
     let done = false;
     function cleanup(){
@@ -821,6 +825,11 @@ async function saveCloudNow(showAlert=false){
     // Apps Script spesso salva correttamente ma non permette una conferma POST affidabile via browser.
     // Qui inviamo il pacchetto completo e poi proviamo a verificare: se la verifica fallisce, NON blocchiamo più l'utente
     // con il falso errore, perché il controllo reale resta il link /exec e il caricamento cloud successivo.
+    try{
+      const body = new URLSearchParams();
+      body.set("payload", text); body.set("data", text); body.set("json", text);
+      await fetch(HM_CLOUD_API_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"}, body});
+    }catch(e){ console.warn("POST fetch no-cors non riuscito", e); }
     await postCloudPayloadRaw(text);
     await sleepHm(2500);
     let verified = await verifyCloudSaved(expectedStamp);
@@ -856,16 +865,18 @@ async function saveCloudNow(showAlert=false){
 
 function scheduleCloudSave(){
   markUnsavedChanges();
-  clearTimeout(HM_SAVE_TIMER);
-  if(isLoggedIn()){
-    HM_SAVE_TIMER = setTimeout(()=>saveCloudNow(false), 2500);
-  }
+  if(HM_SAVE_TIMER) clearTimeout(HM_SAVE_TIMER);
+  HM_SAVE_TIMER = setTimeout(()=>{
+    if(isLoggedIn() && HM_HAS_UNSAVED_CHANGES && !HM_CLOUD_SAVING && !HM_CLOUD_LOADING){
+      saveCloudNow(false);
+    }
+  }, 2500);
 }
 
 function saveAll(){
   if(!isLoggedIn()){ alert("Devi fare login per modificare."); return false; }
   saveLocalOnly();
-  markUnsavedChanges();
+  scheduleCloudSave();
   return true;
 }
 
@@ -3154,8 +3165,8 @@ function renderStyle(){
   q("view-style").innerHTML = `<h2>Editor estetica sito</h2><div class="card"><p class="muted">Nella versione online questo pannello salverà tema, menu, colori, loghi e sezioni nel database.</p><div class="grid grid3"><label>Colore principale<input class="input" type="color" value="#7c3aed"></label><label>Colore sfondo<input class="input" type="color" value="#07111f"></label><label>Stile card<select class="input"><option>Arrotondato</option><option>Squadrato</option><option>Premium</option></select></label></div></div>`;
 }
 
-hmInitGoogleAuthListener();
 installPermissionGuards();
+installGoogleAuthObserver();
 updateAuthBadge();
 showView("dashboard");
 

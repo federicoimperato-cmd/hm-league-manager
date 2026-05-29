@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante Asta live · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -4419,6 +4419,122 @@ window.addEventListener("beforeunload", function(e){
   window.showView=function(name){ const r=oldShow.apply(this,arguments); setTimeout(applyPermissionsToVisibleView,30); return r; };
   const oldTeamSub=window.teamSub;
   if(typeof oldTeamSub==='function') window.teamSub=function(){ const r=oldTeamSub.apply(this,arguments); setTimeout(applyPermissionsToVisibleView,30); return r; };
+})();
+</script>
+
+
+
+<script>
+/* ==========================================================
+   FIX ACCESSI V2 - permessi mirati, non blocco globale
+   - Presidenti: solo formazione proprie squadre, offerta/passo asta, proposta scambio
+   - Admin: tutto
+   - Ospite: sola lettura
+   ========================================================== */
+(function(){
+  function $(id){ return document.getElementById(id); }
+  function norm(v){ return String(v||'').trim().toUpperCase(); }
+  function me(){ return window.currentUser || currentUser || {role:'guest',teams:[]}; }
+  function admin(){ const u=me(); return !!(u && u.role==='admin'); }
+  function logged(){ const u=me(); return !!(u && u.role && u.role!=='guest'); }
+  function myTeams(){ const u=me(); return Array.isArray(u.teams) ? u.teams.map(norm) : []; }
+  function owns(c){ return admin() || myTeams().includes(norm(c)); }
+  function visibleView(){
+    const v=[...document.querySelectorAll('.view')].find(x=>!x.classList.contains('hidden'));
+    return v ? v.id.replace('view-','') : '';
+  }
+  function clickOf(el){ return String(el && el.getAttribute && el.getAttribute('onclick') || ''); }
+  function inFormation(el){ const f=$('teamSub-formazione'); return !!(f && !f.classList.contains('hidden') && f.contains(el)); }
+  function isNavigation(el){
+    const oc=clickOf(el), id=el.id||'';
+    return el.classList.contains('navbtn') ||
+      id==='hmFirebaseLoginBtn' ||
+      oc.includes('showView(') || oc.includes('openTeam(') || oc.includes('teamSub(') ||
+      oc.includes('closeTradeModal') || oc.includes('openLoginModal') || oc.includes('loginUser') || oc.includes('logoutUser');
+  }
+  function isLoginControl(el){
+    const id=el.id||'', oc=clickOf(el);
+    return ['hmLoginUser','hmLoginPass','hmFirebaseLoginBtn'].includes(id) || oc.includes('loginUser') || oc.includes('logoutUser') || oc.includes('openLoginModal') || oc.includes('closeTradeModal');
+  }
+  function isTradeBuildControl(el){
+    const id=el.id||'', oc=clickOf(el);
+    if(['tradeFrom','tradeTo'].includes(id)) return true;
+    if(el.closest && el.closest('.tradePlayer')) return true;
+    if(oc.includes('changeTradeTeam') || oc.includes('createLineItem') || oc.includes('createLineItemById') || oc.includes('removeLineItem') || oc.includes('updateLineItem')) return true;
+    if(oc.includes('openTradeReview') || oc.includes('resetTradeForm') || oc.includes('confirmTradeFromModal')) return true;
+    if(['confirmTradeBtn'].includes(id)) return true;
+    return false;
+  }
+  function isAuctionPresidentControl(el){
+    const id=el.id||'', oc=clickOf(el);
+    // I presidenti possono solo offrire/passare; non avviare, martellare, modificare riepilogo o azzerare storico.
+    return ['bidTeam','bidAmount'].includes(id) || oc.includes('placeBid') || oc.includes('passAuction');
+  }
+  function allowControl(el){
+    if(!el) return false;
+    if(isLoginControl(el) || isNavigation(el)) return true;
+    if(admin()) return true;
+    if(!logged()) return false;
+    const view=visibleView();
+    if(view==='teamDetail'){
+      // Tutte le tab della società restano navigabili; editabile solo la formazione delle proprie squadre.
+      if(inFormation(el) && owns(window.selectedTeam || selectedTeam)) return true;
+      return false;
+    }
+    if(view==='trades'){
+      // Presidenti: costruiscono e inviano proposta. Storico/approvazione/modifica restano admin.
+      if(el.closest && (el.closest('#confirmedTrades') || (el.closest('.card') && clickOf(el).match(/adminEditTrade|deleteConfirmedTrade|editConfirmedTrade|clearTradeSeasonLog|approveTradeProposal|rejectTradeProposal|editTradeProposal/)))) return false;
+      return isTradeBuildControl(el);
+    }
+    if(view==='auction') return isAuctionPresidentControl(el);
+    return false;
+  }
+  function applyAccessV2(){
+    try{ if(typeof applyAuthGlobals==='function') applyAuthGlobals(); }catch(e){}
+    try{ if(typeof updateAuthBadge==='function') updateAuthBadge(); }catch(e){}
+    document.querySelectorAll('button,input,select,textarea').forEach(el=>{
+      const allow=allowControl(el);
+      el.disabled=!allow;
+      el.style.opacity=allow?'1':'.45';
+      if(!allow) el.title='Solo Federico admin può modificare questa funzione';
+      else if(el.title==='Solo Federico admin può modificare questa funzione') el.removeAttribute('title');
+    });
+    const save=$('hmFirebaseSaveBtn');
+    if(save){ save.disabled=!admin(); save.style.opacity=admin()?'1':'.45'; }
+    const login=$('hmFirebaseLoginBtn');
+    if(login){ login.disabled=false; login.style.opacity='1'; }
+  }
+  window.applyPermissionsToVisibleView = applyAccessV2;
+
+  // Non permettere che un click negato blocchi tutto: dopo ogni click/change riapplica permessi corretti.
+  document.addEventListener('click',()=>setTimeout(applyAccessV2,60),true);
+  document.addEventListener('change',()=>setTimeout(applyAccessV2,60),true);
+
+  // Se il presidente cambia squadra nello scambio, non bloccare: il controllo avviene alla proposta.
+  const oldConfirm = window.confirmTradeFromModal;
+  if(typeof oldConfirm==='function'){
+    window.confirmTradeFromModal = function(){
+      if(!admin() && logged()){
+        try{ if(!window.pendingTrade && typeof tradeState!=='undefined') window.pendingTrade=JSON.parse(JSON.stringify(tradeState||{})); }catch(e){}
+        const t=(window.pendingTrade || pendingTrade || tradeState || {});
+        if(!(owns(t.from) || owns(t.to))){ alert('Puoi proporre scambi solo se coinvolgono una delle tue squadre.'); return false; }
+      }
+      return oldConfirm.apply(this,arguments);
+    };
+  }
+
+  // Hook sicuri dopo cambio vista/tab/render.
+  const prevShow=window.showView;
+  if(typeof prevShow==='function') window.showView=function(){ const r=prevShow.apply(this,arguments); setTimeout(applyAccessV2,80); return r; };
+  const prevTeamSub=window.teamSub;
+  if(typeof prevTeamSub==='function') window.teamSub=function(){ const r=prevTeamSub.apply(this,arguments); setTimeout(applyAccessV2,80); return r; };
+  const prevRenderTrades=window.renderTrades;
+  if(typeof prevRenderTrades==='function') window.renderTrades=function(){ const r=prevRenderTrades.apply(this,arguments); setTimeout(applyAccessV2,80); return r; };
+  const prevRenderTeam=window.renderTeamDetail;
+  if(typeof prevRenderTeam==='function') window.renderTeamDetail=function(){ const r=prevRenderTeam.apply(this,arguments); setTimeout(applyAccessV2,80); return r; };
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(applyAccessV2,1500));
+  else setTimeout(applyAccessV2,1500);
 })();
 </script>
 

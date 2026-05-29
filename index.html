@@ -75,14 +75,14 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante ASTA · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
         <span class="badge" id="totalPlayersBadge"></span>
         <span class="badge">Registro Scambi FIX</span>
         <span class="badge" id="firebaseStatusBadge">☁️ Firebase in attesa</span>
-        <button class="btn" id="hmFirebaseLoginBtn" type="button">🔐 Login</button>
+        <button class="btn" id="hmFirebaseLoginBtn" type="button">🔐 Login Google</button>
         <button class="btn green" id="hmFirebaseSaveBtn" type="button" disabled>💾 Salva online</button>
         <button class="btn yellow" id="hmDownloadBackupBtn" type="button" onclick="downloadFullBackup()">📦 Backup</button>
         <button class="btn" id="hmRestoreBackupBtn" type="button" onclick="triggerRestoreBackup()">♻️ Ripristina</button>
@@ -3323,200 +3323,241 @@ window.addEventListener("beforeunload", function(e){
 <script>
 (function(){
   const firebaseConfig={apiKey:"AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",authDomain:"hm-league-manager.firebaseapp.com",projectId:"hm-league-manager",storageBucket:"hm-league-manager.firebasestorage.app",messagingSenderId:"685194156294",appId:"1:685194156294:web:516afa4e813a02b6fbe687"};
-  let fbDb=null, fbLoaded=false, fbSaving=false, fbSaveTimer=null;
+  let fbAuth=null, fbDb=null, fbUser=null, fbLoaded=false, fbSaving=false, fbSaveTimer=null;
   const $=id=>document.getElementById(id);
-  const norm=v=>String(v||"").trim().toUpperCase();
-  const escLocal=v=>{try{return typeof esc==="function"?esc(v):String(v??"").replace(/[&<>\"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m]));}catch(e){return String(v??"");}};
-  const clone=v=>JSON.parse(JSON.stringify(v ?? null));
-  const safeId=v=>String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,140) || ("id_"+Date.now());
-  const now=()=>new Date().toLocaleString("it-IT");
+  const setStatus=(t,m)=>{const e=$("firebaseStatusBadge"); if(!e)return; e.textContent=t; e.style.borderColor=m==="ok"?"#22c55e":m==="bad"?"#ef4444":"#334155"; e.style.color=m==="bad"?"#fecaca":"#dbeafe";};
+  const admin=()=>!!fbUser || (currentUser&&currentUser.role==="admin");
 
-  const HM_USERS={
-    federico:{name:"Federico",password:"adminhm",role:"admin",teams:["*"]},
-    antonio:{name:"Antonio",password:"totleg",role:"presidente",teams:["TOT","LEG"]},
-    fabrizio:{name:"Fabrizio",password:"diakra",role:"presidente",teams:["DIA","KRA"]},
-    giuseppe:{name:"Giuseppe",password:"jospal",role:"presidente",teams:["JOS","PAL"]},
-    antonino:{name:"Antonino",password:"iartdt",role:"presidente",teams:["IAR","TDT"]},
-    salvatore:{name:"Salvatore",password:"floyou",role:"presidente",teams:["FLO","YOU"]},
-    danilo:{name:"Danilo",password:"bvbred",role:"presidente",teams:["BVB","RED"]},
-    alessio:{name:"Alessio",password:"skubea",role:"presidente",teams:["SKU","BEA"]}
-  };
-
-  function admin(){return !!(currentUser && currentUser.role==="admin");}
-  function logged(){return !!(currentUser && currentUser.role && currentUser.role!=="guest");}
-  function myTeams(){return Array.isArray(currentUser?.teams)?currentUser.teams.map(norm):[];}
-  function owns(c){return admin() || myTeams().includes(norm(c));}
-  function teamLabel(c){const t=(teams||[]).find(x=>norm(x.code)===norm(c)); return t?`${t.code} · ${t.name}`:norm(c);}
-  function setStatus(t,m){const e=$("firebaseStatusBadge"); if(!e)return; e.textContent=t; e.style.borderColor=m==="ok"?"#22c55e":m==="bad"?"#ef4444":"#334155"; e.style.color=m==="bad"?"#fecaca":"#dbeafe";}
-  function saveUser(){try{localStorage.setItem("hm_current_user_v1",JSON.stringify(currentUser));}catch(e){}}
-
-  function applyAuthGlobals(){
-    window.isAdmin=isAdmin=function(){return admin();};
-    window.isLoggedIn=isLoggedIn=function(){return logged();};
-    window.userTeams=userTeams=function(){return myTeams();};
-    window.canEditTeam=canEditTeam=function(c){return owns(c);};
-    window.canEditPlayerObj=canEditPlayerObj=function(){return admin();};
-    window.requireLogin=requireLogin=function(){return logged() || deny("Devi fare login per modificare.");};
-    window.requireAdmin=requireAdmin=function(){return admin() || deny("Solo Federico admin può modificare questa funzione.");};
-    window.requireTeam=requireTeam=function(c){return owns(c) || deny("Puoi modificare solo le tue squadre.");};
+  function makeAdmin(u){fbUser=u||fbUser||{displayName:"Federico",email:"admin"}; currentUser={username:fbUser.displayName||fbUser.email||"Federico",role:"admin",teams:["*"]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
+  function makeGuest(){fbUser=null; currentUser={username:"Ospite",role:"guest",teams:[]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
+  function patchPerms(){
+    isAdmin=function(){return admin()}; isLoggedIn=function(){return admin()}; userTeams=function(){return admin()?["*"]:[]}; canEditTeam=function(){return admin()}; canEditPlayerObj=function(){return admin()}; requireAdmin=function(){return admin()||deny("Solo Federico admin può modificare.")}; requireLogin=function(){return admin()||deny("Devi entrare con Google per modificare.")}; requireTeam=function(){return admin()||deny("Solo Federico admin può modificare.")};
+    Object.assign(window,{isAdmin,isLoggedIn,canEditTeam,canEditPlayerObj,requireAdmin,requireLogin,requireTeam});
   }
-
-  window.openLoginModal=function(){
-    const body=$("tradeModalBody"), modal=$("tradeModal"); if(!body||!modal)return;
-    if(logged()){
-      body.innerHTML=`<h3>Account attivo</h3><p class="muted">Sei collegato come <b>${escLocal(currentUser.username)}</b> · ruolo: <b>${escLocal(currentUser.role)}</b>${currentUser.teams?.length?` · squadre: <b>${escLocal(currentUser.teams.join(" / "))}</b>`:""}</p><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" onclick="closeTradeModal()">Chiudi</button><button class="btn red" type="button" onclick="logoutUser()">Esci</button></div>`;
-    }else{
-      body.innerHTML=`<h3>Login HM League</h3><p class="muted">Inserisci nome utente e password.</p><div class="grid grid2"><label>Utente<input id="hmLoginUser" class="input" placeholder="federico, antonio..."></label><label>Password<input id="hmLoginPass" class="input" type="password" placeholder="password"></label></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" onclick="closeTradeModal()">Annulla</button><button class="btn green" type="button" onclick="loginUser()">Entra</button></div>`;
-    }
-    modal.style.display="flex";
-  };
-  window.loginUser=function(){
-    const u=String($("hmLoginUser")?.value||"").trim().toLowerCase();
-    const p=String($("hmLoginPass")?.value||"");
-    const rec=HM_USERS[u];
-    if(!rec || rec.password!==p){alert("Utente o password errati.");return;}
-    currentUser={username:rec.name,role:rec.role,teams:[...rec.teams]}; saveUser();
-    try{closeTradeModal();}catch(e){}
-    applyAuthGlobals(); updateAuthBadge(); setStatus(admin()?"✅ Online sincronizzato · Admin":"✅ Online sincronizzato · "+currentUser.username,"ok");
-    try{renderCurrentView();}catch(e){try{showView("dashboard");}catch(_){}}
-  };
-  window.logoutUser=function(){
-    currentUser={username:"Ospite",role:"guest",teams:[]}; saveUser();
-    try{closeTradeModal();}catch(e){}
-    applyAuthGlobals(); updateAuthBadge(); try{renderCurrentView();}catch(e){}
-  };
-  window.updateAuthBadge=function(){
-    applyAuthGlobals();
-    const lb=$("hmFirebaseLoginBtn"); if(lb){lb.textContent=admin()?"👤 Federico admin":logged()?`👤 ${currentUser.username}`:"🔐 Login"; lb.disabled=false; lb.style.opacity="1";}
-    const sb=$("hmFirebaseSaveBtn"); if(sb){sb.disabled=!admin()||fbSaving; sb.style.opacity=admin()&&!fbSaving?"1":".45"; sb.title=admin()?"Salva tutto online":"Solo Federico admin può salvare manualmente tutto online";}
-  };
+  function updateUI(){patchPerms(); const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb)lb.textContent=admin()?"👤 Admin Google":"🔐 Login Google"; if(sb){sb.disabled=!admin()||fbSaving; sb.style.opacity=sb.disabled?".45":"1";} try{updateAuthBadge()}catch(e){} try{applyPermissionsToVisibleView()}catch(e){}}
+  function renderSafe(){
+    updateUI();
+    if(typeof hmIsFilePickerCoolingDown==="function" && hmIsFilePickerCoolingDown()) return;
+    try{ if(typeof renderCurrentView==="function") renderCurrentView(); else if(typeof showView==="function") showView("dashboard"); }catch(e){console.error(e)}
+    updateUI();
+  }
 
   const metaRef=()=>fbDb.collection("hmleague").doc("main");
   const partsCol=()=>metaRef().collection("parts");
-  const partRef=id=>partsCol().doc(id);
+  const partRef=(id)=>partsCol().doc(id);
   const assetsCol=()=>metaRef().collection("assets");
   const tradesCol=()=>metaRef().collection("trades_v2");
   const newsCol=()=>metaRef().collection("news_v2");
 
+  function clonePlain(v){try{return JSON.parse(JSON.stringify(v ?? null));}catch(e){return v;}}
+  function cleanForFirestore(v){return clonePlain(v);}
+  function safeId(v){return String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,140) || ("id_"+Date.now());}
+  function ensureIds(arr,prefix){
+    if(!Array.isArray(arr)) return [];
+    arr.forEach((x,i)=>{ if(x && typeof x==="object" && !x.id) x.id = prefix + "_" + Date.now() + "_" + i + "_" + Math.floor(Math.random()*100000); });
+    return arr;
+  }
   function stripTeamLogos(arr){return (Array.isArray(arr)?arr:[]).map(t=>{const x={...t}; delete x.logo; return x;});}
-  function teamLogoRows(){return (teams||[]).filter(t=>String(t?.logo||"").trim()).map(t=>({id:"teamLogo_"+safeId(t.code),code:t.code,value:t.logo,updatedAt:new Date().toISOString()}));}
-  function splitOrg(){const base=clone(orgData)||{}, assets=[]; Object.keys(base).forEach(code=>{const o=base[code]||{}; ["presidentImg","stadiumImg"].forEach(f=>{if(o[f]){assets.push({id:"org_"+safeId(code+"_"+f),code,field:f,value:o[f],updatedAt:new Date().toISOString()}); delete o[f];}}); base[code]=o;}); return {base,assets};}
-  function awardRows(){return Object.entries(awardImages||{}).filter(([,v])=>String(v||"").trim()).map(([k,v])=>({id:"award_"+safeId(k),key:k,value:v,updatedAt:new Date().toISOString()}));}
-  function ensureIds(arr,prefix){if(!Array.isArray(arr))return []; arr.forEach((x,i)=>{if(x&&typeof x==="object"&&!x.id)x.id=prefix+"_"+Date.now()+"_"+i+"_"+Math.floor(Math.random()*100000);}); return arr;}
-  function good(d){return d&&Array.isArray(d.players)&&d.players.length>50&&Array.isArray(d.teams)&&d.teams.length>=16;}
-
-  function saveLocal(){try{ if(typeof saveLocalOnly==="function") saveLocalOnly(); else if(typeof safeSetStorage==="function"){safeSetStorage("hm_players_v1",players);safeSetStorage("hm_teams_v1",teams);safeSetStorage("hm_trades_v1",trades);safeSetStorage("hm_news_v1",news);safeSetStorage("hm_formations_v1",savedFormations);}}catch(e){console.warn(e);}}
-  function applyCloud(d){
+  function teamLogoRows(){return (Array.isArray(teams)?teams:[]).filter(t=>String(t?.logo||"").trim()).map(t=>({id:"teamLogo_"+safeId(t.code), code:t.code, value:t.logo}));}
+  function splitOrgData(){
+    const base=clonePlain(orgData)||{};
+    const assets=[];
+    Object.keys(base).forEach(code=>{
+      const o=base[code]||{};
+      if(o.presidentImg){assets.push({id:"org_"+safeId(code)+"_presidentImg", code, field:"presidentImg", value:o.presidentImg}); delete o.presidentImg;}
+      if(o.stadiumImg){assets.push({id:"org_"+safeId(code)+"_stadiumImg", code, field:"stadiumImg", value:o.stadiumImg}); delete o.stadiumImg;}
+      base[code]=o;
+    });
+    return {base,assets};
+  }
+  function awardAssetRows(){return Object.entries(awardImages||{}).filter(([k,v])=>String(v||"").trim()).map(([k,v])=>({id:"award_"+safeId(k), key:k, value:v}));}
+  function good(d){return d&&Array.isArray(d.players)&&d.players.length>50&&Array.isArray(d.teams)&&d.teams.length>=16}
+  function apply(d){
     if(!good(d))return false;
     teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news;
-    honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory;
-    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; savedFormations=d.savedFormations||savedFormations;
-    if(d.auctionState && Array.isArray(d.auctionState.history)) auctionState=Object.assign({},auctionState||{},{history:d.auctionState.history});
-    presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
-    ensureIds(trades,"trade"); ensureIds(news,"news"); saveLocal(); return true;
-  }
-  function buildSplit(){
+    honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages;
+    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations;
+    // Asta live: NON sovrascrivere mai l'asta in corso caricando il gestionale generale.
+    // Il documento realtime/auction è la fonte vera per playerId, bids, activeTeams e passedTeams.
+    // Dal salvataggio generale recuperiamo solo lo storico aggiudicazioni.
+    if(d.auctionState && Array.isArray(d.auctionState.history)){
+      auctionState = Object.assign({}, auctionState || {}, {history:d.auctionState.history});
+    }
+    presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
     ensureIds(trades,"trade"); ensureIds(news,"news");
-    const org=splitOrg();
-    const tradeIndex=(trades||[]).map((t,i)=>({id:safeId(t.id||("trade_"+i)),sort:i,date:t.date||"",from:t.from||"",to:t.to||""}));
-    const newsIndex=(news||[]).map((n,i)=>({id:safeId(n.id||("news_"+i)),sort:i,date:n.date||"",title:n.title||""}));
+    try{saveLocalOnly()}catch(e){}
+    return true;
+  }
+
+  function buildSplitDocs(){
+    ensureIds(trades,"trade");
+    ensureIds(news,"news");
+    const org=splitOrgData();
+    const tradeIndex=(Array.isArray(trades)?trades:[]).map((t,i)=>({id:safeId(t.id || ("trade_"+i)), sort:i, date:t.date||"", from:t.from||"", to:t.to||""}));
+    const newsIndex=(Array.isArray(news)?news:[]).map((n,i)=>({id:safeId(n.id || ("news_"+i)), sort:i, date:n.date||"", title:n.title||""}));
     const docs={
-      core:{version:8,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState:{history:Array.isArray(auctionState?.history)?auctionState.history:[]},presidentActions,regulationText},
-      teams:{teams:stripTeamLogos(teams)}, players:{players},
-      tradesIndex:{items:tradeIndex,count:tradeIndex.length,split:true}, newsIndex:{items:newsIndex,count:newsIndex.length,split:true},
-      trades:{split:true,count:tradeIndex.length,updatedAt:new Date().toISOString()}, news:{split:true,count:newsIndex.length,updatedAt:new Date().toISOString()},
-      honors:{honors,individualTitles,positionHistory,seasonHistory}, managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base}
+      // Asta live: nel core salvo solo lo storico, non l'asta in corso.
+      // L'asta in corso resta nel documento realtime/auction per non essere cancellata dai salvataggi generali.
+      core:{version:6,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState:{history:Array.isArray(auctionState?.history)?auctionState.history:[]},presidentActions,regulationText},
+      teams:{teams:stripTeamLogos(teams)},
+      players:{players},
+      tradesIndex:{items:tradeIndex,count:tradeIndex.length,split:true},
+      newsIndex:{items:newsIndex,count:newsIndex.length,split:true},
+      // Questi due documenti restano volutamente piccoli: sostituiscono eventuali vecchi documenti enormi.
+      trades:{split:true,count:tradeIndex.length,updatedAt:new Date().toISOString()},
+      news:{split:true,count:newsIndex.length,updatedAt:new Date().toISOString()},
+      honors:{honors,individualTitles,positionHistory,seasonHistory},
+      managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base}
     };
-    return {docs,assets:[...teamLogoRows(),...org.assets,...awardRows()],tradeIndex,newsIndex};
+    const assets=[...teamLogoRows(),...org.assets,...awardAssetRows()];
+    return {docs,assets,tradeIndex,newsIndex};
   }
-  async function commitWrites(writes){let batch=fbDb.batch(),count=0; async function flush(){if(count){await batch.commit(); batch=fbDb.batch(); count=0;}} for(const w of writes){ if(w.type==="delete") batch.delete(w.ref); else batch.set(w.ref,clone(w.data),w.options||{merge:false}); if(++count>=430) await flush(); } await flush();}
-  async function saveFirebase(manual=false){
-    if(!logged()){if(manual)alert("Devi fare login."); return false;}
-    if(!fbDb){if(manual)alert("Firebase non è pronto. Ricarica la pagina."); return false;}
-    fbSaving=true; updateAuthBadge(); setStatus("💾 Salvataggio online...","wait");
-    try{
-      const {docs,assets,tradeIndex,newsIndex}=buildSplit();
-      const tradeIds=new Set(tradeIndex.map(x=>x.id));
-      const newsIds=new Set(newsIndex.map(x=>x.id));
-      const writes=[{ref:metaRef(),data:{version:8,updatedAt:new Date().toISOString(),mode:"split_v4_accessi_interni"},options:{merge:true}}];
-      Object.entries(docs).forEach(([id,data])=>writes.push({ref:partRef(id),data,options:{merge:false}}));
-      assets.forEach(a=>writes.push({ref:assetsCol().doc(a.id),data:a,options:{merge:false}}));
-      (trades||[]).forEach((t,i)=>writes.push({ref:tradesCol().doc(safeId(t.id||("trade_"+i))),data:{...t,_sort:i},options:{merge:false}}));
-      (news||[]).forEach((n,i)=>writes.push({ref:newsCol().doc(safeId(n.id||("news_"+i))),data:{...n,_sort:i},options:{merge:false}}));
-      const [oldTrades,oldNews]=await Promise.all([tradesCol().get(),newsCol().get()]);
-      oldTrades.forEach(doc=>{if(!tradeIds.has(doc.id)) writes.push({type:"delete",ref:doc.ref});});
-      oldNews.forEach(doc=>{if(!newsIds.has(doc.id)) writes.push({type:"delete",ref:doc.ref});});
-      await commitWrites(writes); saveLocal(); HM_HAS_UNSAVED_CHANGES=false; setStatus(admin()?"✅ Online sincronizzato · Admin":logged()?"✅ Online sincronizzato · "+currentUser.username:"✅ Online sincronizzato","ok"); if(manual)alert("Salvato online su Firebase."); return true;
-    }catch(e){console.error(e); setStatus("⚠️ Errore salvataggio Firebase","bad"); if(manual)alert("Errore salvataggio Firebase: "+(e.code||e.message||e)); return false;}
-    finally{fbSaving=false; updateAuthBadge();}
+
+  async function commitInChunks(writes){
+    let batch=fbDb.batch(), count=0;
+    async function flush(){ if(count>0){ await batch.commit(); batch=fbDb.batch(); count=0; } }
+    for(const w of writes){
+      if(w.type==="set") batch.set(w.ref, cleanForFirestore(w.data), w.options||{merge:false});
+      else if(w.type==="delete") batch.delete(w.ref);
+      count++;
+      if(count>=430) await flush();
+    }
+    await flush();
   }
-  async function docsFromIndex(col,index){const snap=await col.get(),by={}; snap.forEach(d=>by[d.id]=d.data()||{}); if(Array.isArray(index)&&index.length)return index.map((it,i)=>({...(by[it.id]||{}),id:(by[it.id]?.id||it.id),_sort:it.sort??i})).filter(x=>Object.keys(x).length>1).sort((a,b)=>(a._sort??0)-(b._sort??0)); return Object.entries(by).map(([id,x])=>({...x,id:x.id||id})).sort((a,b)=>(a._sort??0)-(b._sort??0));}
-  async function loadFirebase(){
-    if(!fbDb)return false; setStatus("☁️ Carico dati online...","wait");
+
+  async function fbSaveSplit(){
+    const {docs,assets}=buildSplitDocs();
+    const writes=[];
+    writes.push({type:"set",ref:metaRef(),data:{version:6,updatedAt:new Date().toISOString(),mode:"split_v2"},options:{merge:true}});
+    Object.entries(docs).forEach(([id,data])=>writes.push({type:"set",ref:partRef(id),data,options:{merge:false}}));
+    assets.forEach(a=>writes.push({type:"set",ref:assetsCol().doc(a.id),data:a,options:{merge:false}}));
+    (Array.isArray(trades)?trades:[]).forEach((t,i)=>writes.push({type:"set",ref:tradesCol().doc(safeId(t.id || ("trade_"+i))),data:{...t,_sort:i},options:{merge:false}}));
+    (Array.isArray(news)?news:[]).forEach((n,i)=>writes.push({type:"set",ref:newsCol().doc(safeId(n.id || ("news_"+i))),data:{...n,_sort:i},options:{merge:false}}));
+    await commitInChunks(writes);
+  }
+
+  async function docsFromIndex(col,indexItems){
+    const snap=await col.get();
+    const byId={};
+    snap.forEach(doc=>{byId[doc.id]=doc.data()||{};});
+    if(Array.isArray(indexItems) && indexItems.length){
+      return indexItems.map((it,i)=>({...(byId[it.id]||{}), id:(byId[it.id]?.id||it.id), _sort:it.sort??i})).filter(x=>Object.keys(x).length>1).sort((a,b)=>(a._sort??0)-(b._sort??0));
+    }
+    return Object.entries(byId).map(([id,x])=>({...x,id:x.id||id})).sort((a,b)=>(a._sort??0)-(b._sort??0));
+  }
+
+  async function fbLoadSplit(){
+    const snap=await partsCol().get();
+    if(snap.empty) return null;
+    const d={};
+    snap.forEach(x=>{d[x.id]=x.data()||{};});
+    const aSnap=await assetsCol().get();
+    const splitTrades = await docsFromIndex(tradesCol(), d.tradesIndex?.items || []);
+    const splitNews = await docsFromIndex(newsCol(), d.newsIndex?.items || []);
+    const full={
+      version:d.core?.version||6,
+      updatedAt:d.core?.updatedAt||"",
+      teams:d.teams?.teams||[],
+      players:d.players?.players||[],
+      trades: splitTrades.length ? splitTrades : (d.trades?.trades||[]),
+      news: splitNews.length ? splitNews : (d.core?.news || d.news?.news || []),
+      honors:d.honors?.honors||[],
+      individualTitles:d.honors?.individualTitles||[],
+      positionHistory:d.honors?.positionHistory||[],
+      seasonHistory:d.honors?.seasonHistory||[],
+      rankingData:d.core?.rankingData||[],
+      rankingHidden:d.core?.rankingHidden||[],
+      // Non caricare qui playerId/bids dell'asta: arrivano dal listener realtime.
+      auctionState:Object.assign({}, auctionState||{}, {history:Array.isArray(d.core?.auctionState?.history)?d.core.auctionState.history:[]}),
+      presidentActions:d.core?.presidentActions||[],
+      regulationText:d.core?.regulationText||"",
+      savedFormations:d.managers?.savedFormations||{},
+      competitionsManager:d.managers?.competitionsManager??null,
+      coachesManager:d.managers?.coachesManager??null,
+      orgData:d.managers?.orgData||{},
+      awardImages:{}
+    };
+    const teamMap=Object.fromEntries(full.teams.map(t=>[t.code,t]));
+    aSnap.forEach(doc=>{
+      const x=doc.data()||{};
+      if(doc.id.startsWith("teamLogo_") && x.code && teamMap[x.code]) teamMap[x.code].logo=x.value||"";
+      else if(doc.id.startsWith("org_") && x.code && x.field){ full.orgData[x.code]=full.orgData[x.code]||{}; full.orgData[x.code][x.field]=x.value||""; }
+      else if(doc.id.startsWith("award_") && x.key){ full.awardImages[x.key]=x.value||""; }
+    });
+    return full;
+  }
+
+  async function fbLoad(){
+    if(!fbDb)return false;
+    setStatus("☁️ Carico dati online...","wait");
     try{
-      const snap=await partsCol().get(); if(snap.empty){setStatus("ℹ️ Firebase vuoto","wait"); return false;}
-      const d={}; snap.forEach(x=>d[x.id]=x.data()||{});
-      const [aSnap,splitTrades,splitNews]=await Promise.all([assetsCol().get(),docsFromIndex(tradesCol(),d.tradesIndex?.items||[]),docsFromIndex(newsCol(),d.newsIndex?.items||[])]);
-      const full={version:d.core?.version||8,teams:d.teams?.teams||[],players:d.players?.players||[],trades:splitTrades.length?splitTrades:(d.trades?.trades||[]),news:splitNews.length?splitNews:(d.news?.news||[]),honors:d.honors?.honors||[],individualTitles:d.honors?.individualTitles||[],positionHistory:d.honors?.positionHistory||[],seasonHistory:d.honors?.seasonHistory||[],rankingData:d.core?.rankingData||[],rankingHidden:d.core?.rankingHidden||[],auctionState:Object.assign({},auctionState||{},{history:Array.isArray(d.core?.auctionState?.history)?d.core.auctionState.history:[]}),presidentActions:d.core?.presidentActions||[],regulationText:d.core?.regulationText||"",savedFormations:d.managers?.savedFormations||{},competitionsManager:d.managers?.competitionsManager??null,coachesManager:d.managers?.coachesManager??null,orgData:d.managers?.orgData||{},awardImages:{}};
-      const tm=Object.fromEntries((full.teams||[]).map(t=>[t.code,t]));
-      aSnap.forEach(doc=>{const x=doc.data()||{}; if(doc.id.startsWith("teamLogo_")&&x.code&&tm[x.code])tm[x.code].logo=x.value||""; else if(doc.id.startsWith("org_")&&x.code&&x.field){full.orgData[x.code]=full.orgData[x.code]||{}; full.orgData[x.code][x.field]=x.value||"";} else if(doc.id.startsWith("award_")&&x.key)full.awardImages[x.key]=x.value||"";});
-      if(applyCloud(full)){fbLoaded=true; setStatus(admin()?"✅ Online sincronizzato · Admin":logged()?"✅ Online sincronizzato · "+currentUser.username:"✅ Online sincronizzato","ok");}
-      try{renderCurrentView();}catch(e){try{showView("dashboard");}catch(_){}}
+      let data=await fbLoadSplit();
+      if(!good(data)){
+        const old=await metaRef().get();
+        if(old.exists && good(old.data())) data=old.data();
+      }
+      if(good(data)){apply(data); fbLoaded=true; setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok")}
+      else setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait");
+      renderSafe(); return true;
+    }catch(e){console.error(e); setStatus("⚠️ Errore lettura Firebase","bad"); renderSafe(); return false;}
+  }
+
+  async function fbSave(manual=true){
+    patchPerms();
+    if(!admin()){if(manual)alert("Devi fare login Google prima di salvare."); return false;}
+    fbSaving=true; updateUI(); setStatus("💾 Salvataggio online...","wait");
+    try{
+      await fbSaveSplit();
+      try{saveLocalOnly()}catch(e){}
+      HM_HAS_UNSAVED_CHANGES=false; fbLoaded=true;
+      setStatus("✅ Online sincronizzato","ok");
+      if(manual)alert("Salvato online su Firebase.");
       return true;
-    }catch(e){console.error(e); setStatus("⚠️ Errore lettura Firebase","bad"); return false;}
+    }catch(e){console.error(e); setStatus("⚠️ Errore salvataggio Firebase","bad"); if(manual)alert("Errore salvataggio Firebase: "+(e.code||e.message||e)); return false;}
+    finally{fbSaving=false; updateUI();}
   }
 
-  window.saveCloudNow=saveFirebase; window.loadCloudData=loadFirebase;
-  window.saveAll=function(){if(!logged()){alert("Devi fare login per modificare."); return false;} saveLocal(); HM_HAS_UNSAVED_CHANGES=true; clearTimeout(fbSaveTimer); fbSaveTimer=setTimeout(()=>saveFirebase(false),900); updateAuthBadge(); return true;};
+  function patchSave(){
+    loadCloudData=fbLoad; saveCloudNow=fbSave; window.loadCloudData=fbLoad; window.saveCloudNow=fbSave;
+    saveAll=function(){
+      patchPerms();
+      if(!admin()){alert("Devi fare login Google per modificare."); return false;}
+      try{saveLocalOnly()}catch(e){}
+      HM_HAS_UNSAVED_CHANGES=true;
+      clearTimeout(fbSaveTimer);
+      fbSaveTimer=setTimeout(()=>fbSave(false),900);
+      updateUI();
+      return true;
+    };
+    window.saveAll=saveAll;
+  }
 
-  function pendingList(){presidentActions=Array.isArray(presidentActions)?presidentActions:[]; return presidentActions.filter(x=>x&&x.kind==="tradeProposal"&&x.status==="pending");}
-  function proposalText(t){return `${teamLabel(t.from)} ⇄ ${teamLabel(t.to)}`;}
-  function involvesMine(t){return owns(t?.from)||owns(t?.to);}
-  const realConfirm=window.confirmTradeFromModal;
-  window.confirmTradeFromModal=function(){
-    if(!pendingTrade) pendingTrade=clone(tradeState||{});
-    if(!pendingTrade||!pendingTrade.from||!pendingTrade.to){alert("Nessuno scambio da confermare."); return false;}
-    pendingTrade.offer=Array.isArray(pendingTrade.offer)?pendingTrade.offer:[]; pendingTrade.request=Array.isArray(pendingTrade.request)?pendingTrade.request:[];
-    if(!pendingTrade.offer.length&&!pendingTrade.request.length){alert("Seleziona almeno un calciatore."); return false;}
-    if(admin()) return realConfirm.apply(this,arguments);
-    if(!logged()){alert("Devi fare login."); return false;}
-    if(!involvesMine(pendingTrade)){alert("Puoi proporre scambi solo se coinvolgono una delle tue squadre."); return false;}
-    presidentActions.unshift({kind:"tradeProposal",id:"TP"+Date.now(),status:"pending",trade:clone(pendingTrade),createdAt:now(),createdBy:currentUser.username,teams:[pendingTrade.from,pendingTrade.to]});
-    saveAll(); try{closeTradeModal();}catch(e){} try{resetTradeForm();}catch(e){} try{renderTrades();}catch(e){} alert("Proposta scambio inviata. Verrà applicata solo dopo approvazione admin."); return true;
-  };
-  window.approveTradeProposal=function(id){if(!admin()){alert("Solo admin può approvare."); return;} const p=presidentActions.find(x=>x.id===id&&x.kind==="tradeProposal"); if(!p)return; if(!confirm("Approvare e applicare lo scambio?\n"+proposalText(p.trade)))return; presidentActions=presidentActions.filter(x=>x.id!==id); pendingTrade=clone(p.trade); realConfirm();};
-  window.rejectTradeProposal=function(id){if(!admin()){alert("Solo admin può rifiutare."); return;} const p=presidentActions.find(x=>x.id===id&&x.kind==="tradeProposal"); if(!p)return; if(!confirm("Eliminare/rifiutare questa proposta?"))return; presidentActions=presidentActions.filter(x=>x.id!==id); saveAll(); renderTrades();};
-  window.editTradeProposal=function(id){if(!admin()){alert("Solo admin può modificare."); return;} const p=presidentActions.find(x=>x.id===id&&x.kind==="tradeProposal"); if(!p)return; tradeState=clone(p.trade); pendingTrade=clone(p.trade); presidentActions=presidentActions.filter(x=>x.id!==id); saveAll(); renderTrades(); alert("Proposta caricata nel modulo. Modificala e poi conferma/approva.");};
-
-  const oldRenderTrades=window.renderTrades;
-  window.renderTrades=function(){oldRenderTrades.apply(this,arguments); const box=$("view-trades"); if(!box)return; const list=pendingList().filter(p=>admin()||involvesMine(p.trade)); const html=`<div class="card" style="margin-top:14px"><div class="between"><h3>Scambi in attesa</h3><span class="badge">${list.length}</span></div>${list.length?list.map(p=>`<div class="playerRow" style="grid-template-columns:60px 1fr auto"><div class="badge">⏳</div><div><b>${escLocal(proposalText(p.trade))}</b><div class="muted">Proposta da ${escLocal(p.createdBy||"")} · ${escLocal(p.createdAt||"")}</div><div class="muted">${escLocal((p.trade.offer||[]).length)} calciatori da ${escLocal(p.trade.from)} · ${escLocal((p.trade.request||[]).length)} calciatori da ${escLocal(p.trade.to)}</div></div><div class="row" style="justify-content:flex-end">${admin()?`<button class="btn green" type="button" onclick="approveTradeProposal('${p.id}')">Approva</button><button class="btn yellow" type="button" onclick="editTradeProposal('${p.id}')">Modifica</button><button class="btn red" type="button" onclick="rejectTradeProposal('${p.id}')">Rifiuta/Elimina</button>`:`<span class="badge">In attesa admin</span>`}</div></div>`).join(""):"<div class='muted'>Nessuna proposta in attesa.</div>"}</div>`; box.insertAdjacentHTML("beforeend",html); setTimeout(applyAccess,50);};
-
-  function clickOf(el){return String(el&&el.getAttribute&&el.getAttribute("onclick")||"");}
-  function visibleView(){const v=[...document.querySelectorAll(".view")].find(x=>!x.classList.contains("hidden")); return v?v.id.replace("view-",""):"";}
-  function inFormation(el){const f=$("teamSub-formazione"); return !!(f&&!f.classList.contains("hidden")&&f.contains(el));}
-  function navAllowed(el){const oc=clickOf(el), id=el.id||""; return el.classList.contains("navbtn")||id==="hmFirebaseLoginBtn"||oc.includes("showView(")||oc.includes("openTeam(")||oc.includes("teamSub(")||oc.includes("openLoginModal")||oc.includes("loginUser")||oc.includes("logoutUser")||oc.includes("closeTradeModal");}
-  function loginAllowed(el){const id=el.id||"", oc=clickOf(el); return ["hmLoginUser","hmLoginPass","hmFirebaseLoginBtn"].includes(id)||oc.includes("loginUser")||oc.includes("logoutUser")||oc.includes("openLoginModal")||oc.includes("closeTradeModal");}
-  function tradeAllowed(el){const id=el.id||"", oc=clickOf(el); if(["tradeFrom","tradeTo","confirmTradeBtn"].includes(id))return true; if(el.closest&&el.closest(".tradePlayer"))return true; if(oc.match(/changeTradeTeam|createLineItem|createLineItemById|removeLineItem|updateLineItem|openTradeReview|resetTradeForm|confirmTradeFromModal/))return true; return false;}
-  function auctionAllowed(el){const id=el.id||"", oc=clickOf(el); return ["bidTeam","bidAmount"].includes(id)||oc.includes("placeBid")||oc.includes("passAuction");}
-  function allowEl(el){if(!el)return false; if(loginAllowed(el)||navAllowed(el))return true; if(admin())return true; if(!logged())return false; const view=visibleView(); if(view==="teamDetail")return inFormation(el)&&owns(selectedTeam); if(view==="trades"){if(el.closest&&(el.closest("#confirmedTrades")||clickOf(el).match(/adminEditTrade|deleteConfirmedTrade|editConfirmedTrade|clearTradeSeasonLog|approveTradeProposal|rejectTradeProposal|editTradeProposal/)))return false; return tradeAllowed(el);} if(view==="auction")return auctionAllowed(el); return false;}
-  function applyAccess(){applyAuthGlobals(); updateAuthBadge(); document.querySelectorAll("button,input,select,textarea").forEach(el=>{const allow=allowEl(el); el.disabled=!allow; el.style.opacity=allow?"1":".45"; if(!allow)el.title="Solo Federico admin può modificare questa funzione"; else if(el.title==="Solo Federico admin può modificare questa funzione")el.removeAttribute("title");}); const login=$("hmFirebaseLoginBtn"); if(login){login.disabled=false; login.style.opacity="1";} const save=$("hmFirebaseSaveBtn"); if(save){save.disabled=!admin()||fbSaving; save.style.opacity=admin()&&!fbSaving?"1":".45";}}
-  window.applyPermissionsToVisibleView=applyAccess;
-
-  const oldShow=window.showView; if(typeof oldShow==="function")window.showView=function(){const r=oldShow.apply(this,arguments); setTimeout(applyAccess,80); return r;};
-  const oldSub=window.teamSub; if(typeof oldSub==="function")window.teamSub=function(){const r=oldSub.apply(this,arguments); setTimeout(applyAccess,80); return r;};
-  const oldTeam=window.renderTeamDetail; if(typeof oldTeam==="function")window.renderTeamDetail=function(){const r=oldTeam.apply(this,arguments); setTimeout(applyAccess,80); return r;};
-  const oldAuction=window.renderAuction; if(typeof oldAuction==="function")window.renderAuction=function(){const r=oldAuction.apply(this,arguments); setTimeout(applyAccess,80); return r;};
-  document.addEventListener("click",()=>setTimeout(applyAccess,80),true); document.addEventListener("change",()=>setTimeout(applyAccess,80),true);
-
+  async function login(){
+    try{
+      if(!fbAuth){alert("Firebase non è pronto. Ricarica la pagina.");return}
+      if(admin()){await fbAuth.signOut(); makeGuest(); setStatus("☁️ Uscito da Google","wait"); renderSafe(); return}
+      const provider=new firebase.auth.GoogleAuthProvider(); provider.setCustomParameters({prompt:"select_account"});
+      setStatus("🔐 Login Google in corso...","wait");
+      const r=await fbAuth.signInWithPopup(provider);
+      makeAdmin(r.user); setStatus("🔓 Admin collegato","ok"); await fbLoad(); renderSafe();
+    }catch(e){console.error(e); setStatus("⚠️ Login Google errore","bad"); alert("Login Google non riuscito: "+(e.code||e.message||e));}
+  }
   function init(){
-    try{ if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return;} firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig); fbDb=firebase.firestore();
-      const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb&&!lb.dataset.internalLogin){lb.dataset.internalLogin="1"; lb.textContent="🔐 Login"; lb.addEventListener("click",e=>{e.preventDefault(); openLoginModal();});} if(sb&&!sb.dataset.internalSave){sb.dataset.internalSave="1"; sb.addEventListener("click",e=>{e.preventDefault(); saveFirebase(true);});}
-      applyAuthGlobals(); updateAuthBadge(); loadFirebase().then(()=>setTimeout(applyAccess,200));
+    try{
+      if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return}
+      firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig);
+      fbAuth=firebase.auth(); fbDb=firebase.firestore(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn);
+      patchPerms(); patchSave();
+      const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn");
+      if(lb&&!lb.dataset.fix){lb.dataset.fix="1"; lb.addEventListener("click",login)}
+      if(sb&&!sb.dataset.fix){sb.dataset.fix="1"; sb.addEventListener("click",()=>fbSave(true))}
+      updateUI(); setStatus("☁️ Firebase pronto","wait");
+      fbAuth.onAuthStateChanged(async u=>{if(u){makeAdmin(u); setStatus("🔓 Admin collegato","ok"); if(!fbLoaded)await fbLoad()}else{makeGuest(); if(!fbLoaded)await fbLoad()} renderSafe();});
+      fbLoad();
     }catch(e){console.error(e); setStatus("⚠️ Firebase errore","bad");}
   }
   document.addEventListener("DOMContentLoaded",init); if(document.readyState!=="loading")setTimeout(init,50);
 })();
-</script>
 
 
 /* =========================================================
@@ -4124,6 +4165,432 @@ window.addEventListener("beforeunload", function(e){
 
   document.addEventListener("DOMContentLoaded",()=>setTimeout(hmStartLiveListener,800));
   if(document.readyState !== "loading") setTimeout(hmStartLiveListener,800);
+})();
+</script>
+
+
+
+<script>
+/* =========================================================
+   ACCESSI INTERNI PULITI - patch finale non invasiva
+   Base: versione funzionante con Firebase/Asta live/Riepilogo.
+   Obiettivo: login interno, permessi mirati, scambi in attesa.
+   ========================================================= */
+(function(){
+  const HM_USERS = {
+    federico:{username:"Federico", role:"admin", teams:["*"], password:"adminhm"},
+    antonio:{username:"Antonio", role:"presidente", teams:["TOT","LEG"], password:"totleg"},
+    fabrizio:{username:"Fabrizio", role:"presidente", teams:["DIA","KRA"], password:"diakra"},
+    giuseppe:{username:"Giuseppe", role:"presidente", teams:["JOS","PAL"], password:"jospal"},
+    antonino:{username:"Antonino", role:"presidente", teams:["IAR","TDT"], password:"iartdt"},
+    salvatore:{username:"Salvatore", role:"presidente", teams:["FLO","YOU"], password:"floyou"},
+    danilo:{username:"Danilo", role:"presidente", teams:["BVB","RED"], password:"bvbred"},
+    alessio:{username:"Alessio", role:"presidente", teams:["SKU","BEA"], password:"skubea"}
+  };
+  const INTERNAL_KEY = "hm_internal_user_v1";
+  let hmSaveTimer = null;
+  let hmApplyingPerms = false;
+
+  function $(id){ return document.getElementById(id); }
+  function esc2(v){
+    try{ return typeof esc==="function" ? esc(v) : String(v??"").replace(/[&<>\"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m])); }
+    catch(e){ return String(v??""); }
+  }
+  function clone(v){ try{return JSON.parse(JSON.stringify(v));}catch(e){return v;} }
+  function norm(v){ return String(v||"").trim().toLowerCase(); }
+  function codesOf(u){ return Array.isArray(u?.teams) ? u.teams.map(x=>String(x).toUpperCase()) : []; }
+  function hmCurrent(){ return currentUser && currentUser.role ? currentUser : {username:"Ospite",role:"guest",teams:[]}; }
+  function hmSetUser(u){
+    currentUser = u || {username:"Ospite",role:"guest",teams:[]};
+    try{ localStorage.setItem(INTERNAL_KEY, JSON.stringify(currentUser)); }catch(e){}
+    try{ localStorage.setItem("hm_current_user_v1", JSON.stringify(currentUser)); }catch(e){}
+    hmPatchAuthFunctions();
+    hmUpdateLoginUI();
+  }
+  function hmRestoreUser(){
+    try{
+      const raw = localStorage.getItem(INTERNAL_KEY);
+      if(raw){
+        const u = JSON.parse(raw);
+        if(u && u.role && u.role !== "guest") currentUser = u;
+      }
+    }catch(e){}
+    hmPatchAuthFunctions();
+    return hmCurrent();
+  }
+  function hmLogout(){
+    try{ localStorage.removeItem(INTERNAL_KEY); }catch(e){}
+    hmSetUser({username:"Ospite",role:"guest",teams:[]});
+    try{ renderCurrentView(); }catch(e){}
+    hmApplyPermissions();
+  }
+  function hmIsAdminUser(){ hmRestoreUser(); return hmCurrent().role === "admin"; }
+  function hmIsLoggedUser(){ hmRestoreUser(); return hmCurrent().role && hmCurrent().role !== "guest"; }
+  function hmCanTeam(code){
+    hmRestoreUser();
+    const u=hmCurrent();
+    if(u.role === "admin") return true;
+    return codesOf(u).includes(String(code||"").toUpperCase());
+  }
+  function hmCanPlayer(p){
+    if(hmIsAdminUser()) return true;
+    if(!p) return false;
+    return hmCanTeam(p.owner) || hmCanTeam(p.current);
+  }
+  function hmDeny(msg){ alert(msg || "Non hai i permessi per questa azione."); return false; }
+  function hmPatchAuthFunctions(){
+    window.isAdmin = isAdmin = hmIsAdminUser;
+    window.isLoggedIn = isLoggedIn = hmIsLoggedUser;
+    window.userTeams = userTeams = function(){ hmRestoreUser(); return codesOf(hmCurrent()); };
+    window.canEditTeam = canEditTeam = hmCanTeam;
+    window.canEditPlayerObj = canEditPlayerObj = hmCanPlayer;
+    window.requireAdmin = requireAdmin = function(){ return hmIsAdminUser() || hmDeny("Solo Federico admin può modificare questa sezione."); };
+    window.requireLogin = requireLogin = function(){ return hmIsLoggedUser() || hmDeny("Devi fare login interno per modificare."); };
+    window.requireTeam = requireTeam = function(code){ return hmCanTeam(code) || hmDeny("Puoi modificare solo le funzioni abilitate delle tue squadre."); };
+  }
+
+  async function hmCleanupDeletedFirebaseDocs(){
+    try{
+      if(!window.firebase || !firebase.apps || !firebase.apps.length) return;
+      const db = firebase.firestore();
+      const root = db.collection("hmleague").doc("main");
+      const safeId = v => String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,140) || ("id_"+Date.now());
+      const tradeIds = new Set((Array.isArray(trades)?trades:[]).map((t,i)=>safeId(t.id || ("trade_"+i))));
+      const newsIds = new Set((Array.isArray(news)?news:[]).map((n,i)=>safeId(n.id || ("news_"+i))));
+      async function clean(colName, keep){
+        const snap = await root.collection(colName).get();
+        let batch = db.batch(), count=0;
+        for(const doc of snap.docs){
+          if(!keep.has(doc.id)){ batch.delete(doc.ref); count++; }
+          if(count>=400){ await batch.commit(); batch=db.batch(); count=0; }
+        }
+        if(count>0) await batch.commit();
+      }
+      await clean("trades_v2", tradeIds);
+      await clean("news_v2", newsIds);
+    }catch(e){ console.warn("Pulizia documenti Firebase saltata", e); }
+  }
+
+  async function hmSaveOnline(manual){
+    hmRestoreUser();
+    if(!hmIsLoggedUser()){ if(manual) alert("Devi fare login per salvare."); return false; }
+    try{ if(typeof saveLocalOnly === "function") saveLocalOnly(); }catch(e){}
+    const realUser = clone(hmCurrent());
+    try{
+      // Il vecchio salvataggio Firebase accetta solo ruolo admin: lo usiamo come canale tecnico,
+      // ma ripristiniamo subito l'utente interno. I permessi restano gestiti da questa patch.
+      currentUser = {username:"Federico", role:"admin", teams:["*"]};
+      const ok = typeof saveCloudNow === "function" ? await saveCloudNow(false) : true;
+      currentUser = realUser;
+      try{ localStorage.setItem("hm_current_user_v1", JSON.stringify(realUser)); }catch(e){}
+      try{ localStorage.setItem(INTERNAL_KEY, JSON.stringify(realUser)); }catch(e){}
+      await hmCleanupDeletedFirebaseDocs();
+      hmPatchAuthFunctions();
+      hmUpdateLoginUI();
+      hmApplyPermissions();
+      if(manual) alert(ok===false ? "Salvataggio non completato." : "Salvato online su Firebase.");
+      return ok !== false;
+    }catch(e){
+      currentUser = realUser;
+      try{ localStorage.setItem("hm_current_user_v1", JSON.stringify(realUser)); localStorage.setItem(INTERNAL_KEY, JSON.stringify(realUser)); }catch(x){}
+      hmPatchAuthFunctions(); hmUpdateLoginUI(); hmApplyPermissions();
+      console.error(e);
+      if(manual) alert("Errore salvataggio Firebase: "+(e.code||e.message||e));
+      return false;
+    }
+  }
+
+  window.saveAll = saveAll = function(){
+    hmRestoreUser();
+    if(!hmIsLoggedUser()) return hmDeny("Devi fare login interno per modificare.");
+    try{ if(typeof saveLocalOnly === "function") saveLocalOnly(); }catch(e){}
+    try{ HM_HAS_UNSAVED_CHANGES = true; }catch(e){}
+    clearTimeout(hmSaveTimer);
+    hmSaveTimer = setTimeout(()=>hmSaveOnline(false), 800);
+    hmUpdateLoginUI();
+    return true;
+  };
+
+  function hmOpenLogin(){
+    hmRestoreUser();
+    const logged = hmIsLoggedUser();
+    const body = $("tradeModalBody");
+    const modal = $("tradeModal");
+    if(!body || !modal) return;
+    if(logged){
+      const u=hmCurrent();
+      body.innerHTML = `<h3>Account attivo</h3>
+        <p class="muted">Sei collegato come <b>${esc2(u.username)}</b> · ruolo: <b>${esc2(u.role)}</b>${u.teams?.length?` · squadre: <b>${esc2(u.teams.join(" / "))}</b>`:""}</p>
+        <div class="row" style="justify-content:flex-end;margin-top:14px">
+          <button class="btn" type="button" onclick="closeTradeModal()">Chiudi</button>
+          <button class="btn red" type="button" onclick="hmInternalLogout()">Esci</button>
+        </div>`;
+    }else{
+      body.innerHTML = `<h3>Login HM League</h3>
+        <p class="muted">Inserisci nome utente e password interna.</p>
+        <div class="grid grid2">
+          <label>Utente<input id="hmInternalUser" class="input" autocomplete="username" placeholder="federico, antonio..."></label>
+          <label>Password<input id="hmInternalPass" class="input" type="password" autocomplete="current-password"></label>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px">
+          <button class="btn" type="button" onclick="closeTradeModal()">Annulla</button>
+          <button class="btn green" type="button" onclick="hmInternalLoginNow()">Entra</button>
+        </div>`;
+    }
+    modal.style.display="flex";
+  }
+  window.hmInternalLoginNow = function(){
+    const u = norm($("hmInternalUser")?.value);
+    const p = String($("hmInternalPass")?.value||"");
+    const rec = HM_USERS[u];
+    if(!rec || rec.password !== p){ alert("Utente o password errati."); return; }
+    hmSetUser({username:rec.username, role:rec.role, teams:[...rec.teams], login:u});
+    try{ closeTradeModal(); }catch(e){}
+    try{ renderCurrentView(); }catch(e){}
+    hmApplyPermissions();
+  };
+  window.hmInternalLogout = function(){ try{ closeTradeModal(); }catch(e){} hmLogout(); };
+
+  function hmInstallButtons(){
+    const lb = $("hmFirebaseLoginBtn");
+    if(lb && !lb.dataset.internalLogin){
+      const c = lb.cloneNode(true);
+      c.dataset.internalLogin="1";
+      c.type="button";
+      c.onclick = hmOpenLogin;
+      lb.replaceWith(c);
+    }
+    const sb = $("hmFirebaseSaveBtn");
+    if(sb && !sb.dataset.internalSave){
+      const c = sb.cloneNode(true);
+      c.dataset.internalSave="1";
+      c.type="button";
+      c.onclick = ()=>hmSaveOnline(true);
+      sb.replaceWith(c);
+    }
+  }
+  function hmUpdateLoginUI(){
+    hmRestoreUser();
+    hmInstallButtons();
+    const u=hmCurrent();
+    const badge=$("firebaseStatusBadge");
+    if(badge){
+      if(u.role==="admin") badge.textContent="👑 Federico admin";
+      else if(u.role==="presidente") badge.textContent=`🔐 ${u.username} · ${codesOf(u).join("/")}`;
+      else badge.textContent="👁️ Ospite sola lettura";
+      badge.style.borderColor = u.role==="guest" ? "#334155" : "#22c55e";
+      badge.style.color = "#dbeafe";
+    }
+    const lb=$("hmFirebaseLoginBtn");
+    if(lb) lb.textContent = u.role==="guest" ? "🔐 Login" : "👤 Account";
+    const sb=$("hmFirebaseSaveBtn");
+    if(sb){
+      sb.disabled = !hmIsLoggedUser() || !hmIsAdminUser();
+      sb.style.opacity = sb.disabled ? ".45" : "1";
+      sb.title = hmIsAdminUser() ? "Salva online" : "Solo admin può salvare manualmente. Le azioni consentite vengono autosalvate.";
+    }
+    const backup=$("hmDownloadBackupBtn"), restore=$("hmRestoreBackupBtn");
+    if(backup){backup.disabled=!hmIsAdminUser(); backup.style.opacity=hmIsAdminUser()?"1":".45";}
+    if(restore){restore.disabled=!hmIsAdminUser(); restore.style.opacity=hmIsAdminUser()?"1":".45";}
+  }
+
+  function hmEnable(el,on){
+    if(!el) return;
+    el.disabled = !on;
+    if(el.tagName==="BUTTON"||el.tagName==="INPUT"||el.tagName==="SELECT"||el.tagName==="TEXTAREA") el.style.opacity = on ? "1" : ".45";
+  }
+  function hmIsNavLike(el){
+    if(!el) return false;
+    const oc = String(el.getAttribute("onclick")||"");
+    return el.classList.contains("navbtn") || el.classList.contains("tab") || oc.includes("showView(") || oc.includes("openTeam(") || oc.includes("teamSub(") || oc.includes("closeTradeModal(") || oc.includes("openSeasonDetail(");
+  }
+  function hmVisible(){ return [...document.querySelectorAll(".view")].find(v=>!v.classList.contains("hidden")); }
+  function hmEnableTree(root,on){ if(root) root.querySelectorAll("button,input,select,textarea").forEach(el=>hmEnable(el,on)); }
+  function hmIsFormationVisible(){ const f=$("teamSub-formazione"); return f && !f.classList.contains("hidden"); }
+  function hmApplyPermissions(){
+    if(hmApplyingPerms) return;
+    hmApplyingPerms = true;
+    try{
+      hmRestoreUser(); hmUpdateLoginUI();
+      const u=hmCurrent();
+      const visible = hmVisible();
+      document.querySelectorAll(".navbtn").forEach(b=>hmEnable(b,true));
+      document.querySelectorAll("button,input,select,textarea").forEach(el=>{
+        if(el.id==="hmRestoreBackupInput") return;
+        if(el.id==="hmFirebaseLoginBtn") return hmEnable(el,true);
+        if(hmIsNavLike(el)) return hmEnable(el,true);
+      });
+      if(u.role==="admin"){
+        document.querySelectorAll("button,input,select,textarea").forEach(el=>{ if(el.id!=="hmRestoreBackupInput") hmEnable(el,true); });
+        return;
+      }
+      if(visible){
+        visible.querySelectorAll("button,input,select,textarea").forEach(el=>{ if(!hmIsNavLike(el)) hmEnable(el,false); });
+      }
+      // ospite: solo navigazione/lettura.
+      if(!hmIsLoggedUser()) return;
+
+      const view = typeof currentVisibleViewName === "function" ? currentVisibleViewName() : "";
+      // Formazione: presidente solo per le sue squadre.
+      if(view==="teamDetail" && hmCanTeam(selectedTeam) && hmIsFormationVisible()){
+        hmEnableTree($("teamSub-formazione"), true);
+      }
+      // Registro scambi: presidente può costruire proposta, non gestire storico/admin.
+      if(view==="trades"){
+        const root=$("view-trades");
+        if(root){
+          root.querySelectorAll("select,input,textarea").forEach(el=>hmEnable(el,true));
+          root.querySelectorAll("button").forEach(btn=>{
+            const oc=String(btn.getAttribute("onclick")||"");
+            const label=(btn.textContent||"").toLowerCase();
+            const adminOnly = oc.includes("clearTradeSeasonLog") || oc.includes("adminEditTrade") || oc.includes("editConfirmedTrade") || oc.includes("deleteConfirmedTrade") || oc.includes("approvePendingTrade") || oc.includes("deletePendingTrade") || oc.includes("editPendingTrade") || label.includes("azzera stagione") || label.includes("modifica admin") || label.includes("elimina") || label.includes("approva") || label.includes("rifiuta");
+            hmEnable(btn, !adminOnly || hmIsAdminUser());
+          });
+        }
+      }
+      // Asta: presidente può offrire/passare solo con proprie squadre; non avvia/martella/storico.
+      if(view==="auction"){
+        const root=$("view-auction");
+        if(root){
+          root.querySelectorAll("select#bidTeam,input#bidAmount").forEach(el=>hmEnable(el,true));
+          root.querySelectorAll("button").forEach(btn=>{
+            const oc=String(btn.getAttribute("onclick")||"");
+            const allow = oc.includes("placeBid(") || oc.includes("passAuction(");
+            hmEnable(btn, allow);
+          });
+        }
+      }
+    }finally{ hmApplyingPerms=false; }
+  }
+  window.applyPermissionsToVisibleView = applyPermissionsToVisibleView = hmApplyPermissions;
+
+  function hmWrapAdmin(name){
+    const old = window[name];
+    if(typeof old !== "function" || old.__hmWrapped) return;
+    const fn = function(...args){ if(!hmIsAdminUser()) return hmDeny("Solo Federico admin può usare questa funzione."); return old.apply(this,args); };
+    fn.__hmWrapped = true;
+    window[name]=fn;
+    try{ eval(name+"=window['"+name+"']"); }catch(e){}
+  }
+  function hmWrapTeamFormation(){
+    const oldSave = window.saveFormationSlot;
+    if(typeof oldSave==="function" && !oldSave.__hmWrapped){
+      window.saveFormationSlot = function(code,key,value){ if(!hmCanTeam(code)) return hmDeny("Puoi modificare solo la formazione delle tue squadre."); return oldSave(code,key,value); };
+      window.saveFormationSlot.__hmWrapped = true; try{ saveFormationSlot=window.saveFormationSlot; }catch(e){}
+    }
+    const oldClear = window.clearFormation;
+    if(typeof oldClear==="function" && !oldClear.__hmWrapped){
+      window.clearFormation = function(code){ if(!hmCanTeam(code)) return hmDeny("Puoi svuotare solo la formazione delle tue squadre."); return oldClear(code); };
+      window.clearFormation.__hmWrapped = true; try{ clearFormation=window.clearFormation; }catch(e){}
+    }
+  }
+  function hmInstallFunctionGuards(){
+    ["editBudget","saveTeamEditor","saveOrg","addHonor","editHonor","deleteHonor","addIndividualTitle","editIndividualTitle","deleteIndividualTitle","addPosition","editPosition","deletePosition","renewSelected","openPlayerEditor","openNewPlayerEditor","savePlayerEditor","deletePlayerEditor","duplicatePlayerEditor","saveRegulationText","addGeneralHonor","editGeneralHonor","deleteGeneralHonor","ensureRanking","updateRanking","removeRanking","addRankingRow","addTeam","editTeam","saveRankTeam","openSeasonTable","saveSeasonTable","deleteSeason","openCoachEditor","saveCoach","freeCoach","addCompetition","editCompetitionSettings","deleteCompetition","addParticipant","removeParticipant","updateStandingFieldComp","addManualMatch","updateManualMatch","deleteManualMatch","initBracket","updateBracket","advanceBracket","cFinal","clearTradeSeasonLog","adminEditTrade","saveAdminTrade","deleteConfirmedTrade","editConfirmedTrade","hammerAuction","resetAuction","openManualAuctionPlayer","startAuction","undoAuctionOperation","editAuctionHistoryItem","deleteAuctionHistoryItem","clearAuctionHistory","saveAuctionHistoryEdit","downloadFullBackup","triggerRestoreBackup"].forEach(hmWrapAdmin);
+    hmWrapTeamFormation();
+  }
+
+  function hmTradeInvolvesUser(t){ return hmIsAdminUser() || hmCanTeam(t?.from) || hmCanTeam(t?.to); }
+  const hmOriginalConfirmTrade = window.confirmTradeFromModal;
+  function hmRegisterPendingTrade(){
+    if(!pendingTrade) pendingTrade = clone(tradeState||{});
+    const t = clone(pendingTrade||{});
+    if(!t.from || !t.to) return hmDeny("Seleziona le squadre dello scambio.");
+    t.offer = Array.isArray(t.offer) ? t.offer : [];
+    t.request = Array.isArray(t.request) ? t.request : [];
+    if(!t.offer.length && !t.request.length){ alert("Seleziona almeno un calciatore."); return false; }
+    if(!hmTradeInvolvesUser(t)){ alert("Puoi proporre solo scambi che coinvolgono una delle tue squadre."); return false; }
+    t.id = "P"+Date.now();
+    t.status = "pending";
+    t.applied = false;
+    t.proposedBy = hmCurrent().username || "Presidente";
+    t.date = new Date().toLocaleString("it-IT");
+    trades.unshift(t);
+    saveAll();
+    try{ closeTradeModal(); }catch(e){}
+    resetTradeForm();
+    renderTrades();
+    alert("Proposta scambio inviata. Federico potrà approvarla, modificarla o rifiutarla.");
+    return true;
+  }
+  window.confirmTradeFromModal = confirmTradeFromModal = function(){
+    hmRestoreUser();
+    if(hmIsAdminUser()) return hmOriginalConfirmTrade.apply(this, arguments);
+    if(!hmIsLoggedUser()) return hmDeny("Devi fare login interno per proporre uno scambio.");
+    return hmRegisterPendingTrade();
+  };
+
+  function hmRenderPendingTrades(){
+    const pending = (Array.isArray(trades)?trades:[]).map((t,i)=>({t,i})).filter(x=>x.t.status==="pending");
+    if(!pending.length) return `<div class="muted">Nessuna proposta in attesa.</div>`;
+    return pending.map(({t,i})=>`<div class="tradePlayer">
+      <div class="between"><div><b>${esc2(t.from)} ⇄ ${esc2(t.to)}</b><div class="muted">Proposta da ${esc2(t.proposedBy||"")} · ${esc2(t.date||"")}</div></div>
+        <div class="row">
+          <button class="btn green" type="button" onclick="approvePendingTrade(${i})" ${hmIsAdminUser()?"":"disabled"}>Approva</button>
+          <button class="btn yellow" type="button" onclick="editPendingTrade(${i})" ${hmIsAdminUser()?"":"disabled"}>Modifica</button>
+          <button class="btn red" type="button" onclick="deletePendingTrade(${i})" ${hmIsAdminUser()?"":"disabled"}>Rifiuta</button>
+        </div></div>
+      <div class="grid grid2"><div><h4>${esc2(t.from)} propone</h4><ul>${(t.offer||[]).map(itemSummary).join("")||"<li>Nessuno</li>"}</ul></div><div><h4>${esc2(t.to)} propone</h4><ul>${(t.request||[]).map(itemSummary).join("")||"<li>Nessuno</li>"}</ul></div></div>
+    </div>`).join("");
+  }
+  window.approvePendingTrade = function(i){
+    if(!hmIsAdminUser()) return hmDeny("Solo Federico admin può approvare scambi.");
+    const t=trades[i]; if(!t || t.status!=="pending") return;
+    if(!confirm("Approvare questa proposta? Verranno trasferiti calciatori, crediti e creato comunicato.")) return;
+    trades.splice(i,1);
+    pendingTrade = clone(t);
+    delete pendingTrade.status; delete pendingTrade.proposedBy;
+    return hmOriginalConfirmTrade();
+  };
+  window.deletePendingTrade = function(i){
+    if(!hmIsAdminUser()) return hmDeny("Solo Federico admin può rifiutare proposte.");
+    const t=trades[i]; if(!t || t.status!=="pending") return;
+    if(!confirm("Rifiutare/eliminare questa proposta?")) return;
+    trades.splice(i,1); saveAll(); renderTrades();
+  };
+  window.editPendingTrade = function(i){
+    if(!hmIsAdminUser()) return hmDeny("Solo Federico admin può modificare proposte.");
+    const t=trades[i]; if(!t || t.status!=="pending") return;
+    tradeState = {from:t.from,to:t.to,offer:clone(t.offer||[]),request:clone(t.request||[])};
+    trades.splice(i,1); saveAll(); renderTrades(); window.scrollTo({top:0,behavior:"smooth"});
+  };
+
+  const hmOldRenderConfirmed = window.renderConfirmedTrades;
+  window.renderConfirmedTrades = renderConfirmedTrades = function(){
+    const box=$("confirmedTrades");
+    if(!box) return;
+    const pendingHtml = `<div class="card" style="margin-bottom:14px"><div class="between"><h3>Scambi in attesa</h3><span class="badge">Admin approva</span></div>${hmRenderPendingTrades()}</div>`;
+    const confirmed = (Array.isArray(trades)?trades:[]).map((t,i)=>({t,i})).filter(x=>x.t.status!=="pending");
+    const confirmedHtml = confirmed.length ? confirmed.map(({t,i})=>`<div class="tradePlayer">
+      <div class="between"><div><b>${esc2(t.from)} ⇄ ${esc2(t.to)}</b><div class="muted">${esc2(t.date)}</div></div><div><button class="btn" onclick="adminEditTrade(${i})" ${hmIsAdminUser()?"":"disabled"}>Modifica admin</button><button class="btn yellow" onclick="editConfirmedTrade(${i})" ${hmIsAdminUser()?"":"disabled"}>Riapri proposta</button><button class="btn red" onclick="deleteConfirmedTrade(${i})" ${hmIsAdminUser()?"":"disabled"}>Elimina e ripristina</button></div></div>
+      <div class="grid grid2"><div><h4>${esc2(t.from)} ha ceduto</h4><ul>${(t.offer||[]).map(itemSummary).join("")}</ul></div><div><h4>${esc2(t.to)} ha ceduto</h4><ul>${(t.request||[]).map(itemSummary).join("")}</ul></div></div>
+    </div>`).join("") : `<div class="muted">Nessuno scambio confermato.</div>`;
+    box.innerHTML = pendingHtml + confirmedHtml;
+  };
+
+  const hmOldRenderTrades = window.renderTrades;
+  if(typeof hmOldRenderTrades === "function"){
+    window.renderTrades = renderTrades = function(){
+      hmOldRenderTrades();
+      try{ renderConfirmedTrades(); }catch(e){}
+      try{ hmApplyPermissions(); }catch(e){}
+    };
+  }
+
+  function hmInitAccess(){
+    hmRestoreUser();
+    hmPatchAuthFunctions();
+    hmInstallButtons();
+    hmInstallFunctionGuards();
+    hmUpdateLoginUI();
+    hmApplyPermissions();
+    setTimeout(()=>{ hmRestoreUser(); hmUpdateLoginUI(); hmApplyPermissions(); }, 800);
+    setTimeout(()=>{ hmRestoreUser(); hmUpdateLoginUI(); hmApplyPermissions(); }, 1800);
+  }
+  document.addEventListener("DOMContentLoaded", hmInitAccess);
+  if(document.readyState !== "loading") setTimeout(hmInitAccess, 50);
+  document.addEventListener("click", ()=>setTimeout(()=>{hmRestoreUser();hmApplyPermissions();},60), true);
+  document.addEventListener("change", ()=>setTimeout(()=>{hmRestoreUser();hmApplyPermissions();},80), true);
+  setInterval(()=>{ hmRestoreUser(); hmPatchAuthFunctions(); hmInstallButtons(); hmUpdateLoginUI(); hmApplyPermissions(); }, 1200);
 })();
 </script>
 

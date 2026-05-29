@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante 1 · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -84,6 +84,8 @@ button{cursor:pointer}
         <span class="badge" id="firebaseStatusBadge">☁️ Firebase in attesa</span>
         <button class="btn" id="hmFirebaseLoginBtn" type="button">🔐 Login Google</button>
         <button class="btn green" id="hmFirebaseSaveBtn" type="button" disabled>💾 Salva online</button>
+        <button class="btn yellow" id="hmDownloadBackupBtn" type="button" onclick="downloadFullBackup()">📦 Backup</button>
+        <button class="btn" id="hmRestoreBackupBtn" type="button" onclick="triggerRestoreBackup()">♻️ Ripristina</button>
       </div>
     </div>
   </header>
@@ -137,6 +139,7 @@ button{cursor:pointer}
     <div id="tradeModalBody"></div>
   </div>
 </div>
+<input id="hmRestoreBackupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackupFromFile(event)">
 
 <script>
 const HM_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbzmaw-1udciNZe1sBBEaSk8m8WknBnjLtfy_7J4X8JXysyTNdFGw5amkr57Rk97THmn/exec";
@@ -3715,6 +3718,333 @@ window.addEventListener("beforeunload", function(e){
 </script>
 
 
+
+
+
+<script>
+/* =========================================================
+   ASTA LIVE FIREBASE - solo tab Asta
+   Non modifica salvataggio generale, loghi, scambi, calciatori.
+   ========================================================= */
+(function(){
+  let hmAuctionLiveStarted = false;
+  let hmAuctionUnsub = null;
+  let hmAuctionRemoteApplying = false;
+  let hmAuctionBusy = false;
+
+  function hmEsc(v){
+    try { return typeof esc === "function" ? esc(v) : String(v??"").replace(/[&<>\"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m])); }
+    catch(e){ return String(v??""); }
+  }
+  function hmNow(){ return new Date().toLocaleString("it-IT"); }
+  function hmIsAdmin(){
+    try { return !!(currentUser && currentUser.role === "admin"); } catch(e){ return false; }
+  }
+  function hmCanEditTeam(code){
+    try { return typeof canEditTeam === "function" ? canEditTeam(code) : hmIsAdmin(); }
+    catch(e){ return hmIsAdmin(); }
+  }
+  function hmTeam(code){
+    try { return typeof team === "function" ? team(code) : (teams||[]).find(t=>t.code===code); }
+    catch(e){ return null; }
+  }
+  function hmTeamLabel(code){
+    try { return typeof teamLabel === "function" ? teamLabel(code) : code; }
+    catch(e){ return code; }
+  }
+  function hmJersey(code,size){
+    try { return typeof jersey === "function" ? jersey(code,size) : ""; }
+    catch(e){ return ""; }
+  }
+  function hmSaveLocal(){
+    try { if(typeof saveLocalOnly === "function") saveLocalOnly(); }
+    catch(e){ console.warn("Asta live: saveLocalOnly non disponibile", e); }
+  }
+  function hmSetStatus(text, cls){
+    try {
+      const b = document.getElementById("firebaseStatusBadge");
+      if(b) b.textContent = text;
+    } catch(e){}
+  }
+  function hmFirebaseDb(){
+    try{
+      if(!window.firebase) return null;
+      if(!firebase.apps || !firebase.apps.length){
+        if(typeof firebaseConfig !== "undefined") firebase.initializeApp(firebaseConfig);
+        else return null;
+      }
+      return firebase.firestore();
+    }catch(e){ console.error("Asta live Firebase init", e); return null; }
+  }
+  function hmAuctionRef(){
+    const db = hmFirebaseDb();
+    if(!db) return null;
+    return db.collection("hmleague").doc("main").collection("realtime").doc("auction");
+  }
+  function hmAuctionPlayer(){
+    try { return typeof auctionPlayer === "function" ? auctionPlayer() : (players||[]).find(p=>p.id===auctionState.playerId); }
+    catch(e){ return null; }
+  }
+  function hmHighestBidFrom(state){
+    const bids = Array.isArray(state?.bids) ? state.bids : [];
+    return bids.length ? bids[bids.length-1] : null;
+  }
+  function hmHighestBid(){ return hmHighestBidFrom(auctionState); }
+  function hmVisibleView(){
+    try { return typeof currentVisibleViewName === "function" ? currentVisibleViewName() : ""; }
+    catch(e){ return ""; }
+  }
+  function hmNormalizeAuctionDoc(d){
+    d = d && typeof d === "object" ? d : {};
+    return {
+      playerId: d.playerId || "",
+      manualPlayer: d.manualPlayer || null,
+      bids: Array.isArray(d.bids) ? d.bids : [],
+      activeTeams: Array.isArray(d.activeTeams) ? d.activeTeams : [],
+      passedTeams: Array.isArray(d.passedTeams) ? d.passedTeams : [],
+      winner: d.winner || null,
+      history: Array.isArray(auctionState?.history) ? auctionState.history : [],
+      liveUpdatedAt: d.updatedAt || "",
+      liveUpdatedBy: d.updatedBy || ""
+    };
+  }
+  function hmCurrentAuctionDoc(extra){
+    return Object.assign({
+      playerId: auctionState?.playerId || "",
+      manualPlayer: auctionState?.manualPlayer || null,
+      bids: Array.isArray(auctionState?.bids) ? auctionState.bids : [],
+      activeTeams: Array.isArray(auctionState?.activeTeams) ? auctionState.activeTeams : [],
+      passedTeams: Array.isArray(auctionState?.passedTeams) ? auctionState.passedTeams : [],
+      winner: auctionState?.winner || null,
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser?.username || currentUser?.email || "utente"
+    }, extra || {});
+  }
+  async function hmPushAuctionState(extra){
+    const ref = hmAuctionRef();
+    if(!ref) throw new Error("Firebase non pronto per asta live");
+    await ref.set(hmCurrentAuctionDoc(extra), {merge:false});
+  }
+  function hmStartLiveListener(){
+    if(hmAuctionLiveStarted) return;
+    const ref = hmAuctionRef();
+    if(!ref) return;
+    hmAuctionLiveStarted = true;
+    try{
+      hmAuctionUnsub = ref.onSnapshot(function(doc){
+        if(!doc.exists) return;
+        const incoming = hmNormalizeAuctionDoc(doc.data() || {});
+        // Mantiene lo storico locale dell'asta, ma sincronizza l'asta in corso in tempo reale.
+        auctionState = Object.assign({}, auctionState || {}, incoming, {history: Array.isArray(auctionState?.history) ? auctionState.history : []});
+        hmSaveLocal();
+        if(hmVisibleView() === "auction"){
+          hmAuctionRemoteApplying = true;
+          try { renderAuction(); } finally { hmAuctionRemoteApplying = false; }
+        }
+      }, function(err){
+        console.error("Asta live listener", err);
+        hmSetStatus("⚠️ Errore live asta Firebase", "bad");
+      });
+    }catch(e){ console.error("Asta live listener start", e); }
+  }
+
+  function hmAllowedBidTeams(){
+    return (Array.isArray(teams)?teams:[]).filter(t=>t.code!=="SVIN" && (hmIsAdmin() || hmCanEditTeam(t.code)));
+  }
+  function hmRenderBidHistory(){
+    const bids = Array.isArray(auctionState?.bids) ? auctionState.bids : [];
+    if(!bids.length) return '<div class="muted">Ancora nessuna offerta.</div>';
+    return bids.slice().reverse().map((b,i)=>`<div class="playerRow">${hmJersey(b.team,42)}<div><b>${hmEsc(hmTeamLabel(b.team))}</b><div class="muted">Offerta ${hmEsc(b.amount)} crediti · ${hmEsc(b.date||"")}</div></div>${i===0?'<span class="badge">Migliore</span>':''}</div>`).join("");
+  }
+  function hmRenderPassedTeams(){
+    const passed = Array.isArray(auctionState?.passedTeams) ? auctionState.passedTeams : [];
+    if(!passed.length) return '<span class="muted">Nessuna squadra ha passato.</span>';
+    return passed.map(code=>`<span class="badge">${hmEsc(hmTeamLabel(code))}</span>`).join(" ");
+  }
+
+  window.renderAuction = function(){
+    hmStartLiveListener();
+    auctionState = auctionState || {playerId:"",manualPlayer:null,bids:[],activeTeams:[],passedTeams:[],winner:null,history:[]};
+    const p = hmAuctionPlayer();
+    const bid = hmHighestBid();
+    const teamsAllowed = hmAllowedBidTeams();
+    const nextMin = bid ? Number(bid.amount||0)+1 : 1;
+    const liveBadge = '<span class="badge">🟢 Asta live Firebase</span>';
+    const noTeamsMsg = teamsAllowed.length ? "" : '<div class="muted" style="margin-top:8px">Login richiesto o nessuna squadra abilitata alle offerte.</div>';
+
+    const auctionHtml = p ? `
+      <div class="playerRow">
+        ${hmJersey(p.owner||"SVIN",54)}
+        <div><b>${hmEsc(p.name)}</b><div class="muted">${hmEsc(p.role||"")} · ${hmEsc(p.current||"")} · proprietario ${hmEsc(p.owner||"SVIN")}</div></div>
+        <button class="btn red" type="button" onclick="resetAuction()">Annulla asta</button>
+      </div>
+      <div class="stat" style="margin-top:12px">
+        <div class="muted">Offerta più alta</div>
+        <div class="n">${bid?hmEsc(bid.amount)+" crediti":"Nessuna"}</div>
+        <div>${bid?hmTeamLabel(bid.team):"Base minima 1 credito"}</div>
+      </div>
+      <div class="grid grid2" style="margin-top:12px">
+        <label>Squadra
+          <select id="bidTeam" class="input">${teamsAllowed.map(t=>`<option value="${hmEsc(t.code)}">${hmEsc(hmTeamLabel(t.code))} · crediti ${hmEsc(t.credits??0)}</option>`).join("")}</select>
+        </label>
+        <label>Offerta
+          <input id="bidAmount" class="input" type="number" min="${nextMin}" value="${nextMin}">
+        </label>
+      </div>
+      ${noTeamsMsg}
+      <div class="row" style="margin-top:12px">
+        <button class="btn green" type="button" onclick="placeBid()" ${teamsAllowed.length?'':'disabled'}>Fai offerta live</button>
+        <button class="btn yellow" type="button" onclick="passAuction()" ${teamsAllowed.length?'':'disabled'}>Passo</button>
+        <button class="btn primary" type="button" style="font-size:24px" onclick="hammerAuction()" ${hmIsAdmin()?'':'disabled'}>🔨</button>
+      </div>
+      <div class="card" style="margin-top:14px"><h3>Offerte live</h3>${hmRenderBidHistory()}</div>
+      <div class="card" style="margin-top:14px"><h3>Squadre che hanno passato</h3>${hmRenderPassedTeams()}</div>
+    ` : `<div class="muted">Nessun calciatore selezionato. Cerca un calciatore a sinistra oppure aggiungilo manualmente.</div>`;
+
+    const root = document.getElementById("view-auction");
+    if(!root) return;
+    root.innerHTML = `
+      <div class="between"><h2>🔨 Asta</h2><div class="row">${liveBadge}<span class="badge">Aggiornamento automatico</span></div></div>
+      <div class="grid grid2" style="margin-top:14px">
+        <div class="card">
+          <h3>Cerca calciatore</h3>
+          <input id="aucSearch" class="input" placeholder="Nome..." oninput="renderAuctionSearchResults()">
+          <button class="btn primary" type="button" style="margin-top:10px" onclick="openManualAuctionPlayer()">Aggiungi manualmente</button>
+          <div id="auctionSearchResults" style="margin-top:12px"></div>
+        </div>
+        <div class="card"><h3>Asta in corso</h3>${auctionHtml}</div>
+      </div>
+      <div class="card" style="margin-top:14px"><h3>Storico aste</h3>${(auctionState.history||[]).length?auctionState.history.map((h,i)=>`<div class="playerRow">${hmJersey(h.team,42)}<div><b>${hmEsc(h.playerName)}</b><div class="muted">Aggiudicato a ${hmTeamLabel(h.team)} per ${hmEsc(h.amount)} crediti</div></div><button class="btn red" type="button" onclick="undoAuctionOperation(${i})" ${hmIsAdmin()?'':'disabled'}>Annulla</button></div>`).join(""):'<div class="muted">Nessuna operazione.</div>'}</div>`;
+    try{ renderAuctionSearchResults(); }catch(e){}
+    try{ if(typeof applyPermissionsToVisibleView === "function") applyPermissionsToVisibleView(); }catch(e){}
+  };
+
+  window.renderAuctionSearchResults = function(){
+    const box = document.getElementById("auctionSearchResults");
+    if(!box) return;
+    const s = (document.getElementById("aucSearch")?.value || "").toLowerCase();
+    const list = (Array.isArray(players)?players:[]).filter(p=>[p.name,p.role,p.current,p.owner].join(" ").toLowerCase().includes(s)).slice(0,50);
+    box.innerHTML = list.map(p=>`<div class="playerRow">${hmJersey(p.owner||"SVIN",44)}<div><b>${hmEsc(p.name)}</b><div class="muted">${hmEsc(p.role)} · ${hmEsc(p.current)} · ${hmEsc(p.owner)}</div></div><button class="btn primary" type="button" onclick="startAuction('${hmEsc(p.id)}')">Metti in asta</button></div>`).join("") || '<div class="muted">Nessun calciatore trovato.</div>';
+  };
+
+  window.startAuction = async function(id){
+    if(!id) return;
+    if(!hmIsAdmin() && !currentUser?.role){ alert("Devi fare login per avviare un'asta."); return; }
+    const p = (players||[]).find(x=>String(x.id)===String(id));
+    if(!p){ alert("Calciatore non trovato."); return; }
+    auctionState = Object.assign({}, auctionState||{}, {playerId:id, manualPlayer:null, bids:[], activeTeams:[], passedTeams:[], winner:null});
+    hmSaveLocal();
+    try { await hmPushAuctionState({createdAt:new Date().toISOString()}); hmSetStatus("🟢 Asta live aggiornata", "ok"); }
+    catch(e){ console.error(e); alert("Errore avvio asta Firebase: "+(e.code||e.message||e)); }
+    renderAuction();
+  };
+
+  window.openManualAuctionPlayer = async function(){
+    const name = prompt("Nome calciatore");
+    if(!name) return;
+    const p = {id:"P"+Date.now(),name,role:prompt("Ruolo","")||"",current:"",owner:"SVIN",status:"ASTA",bonus:"",contract:"0",deadline:""};
+    players.push(p);
+    hmSaveLocal();
+    await window.startAuction(p.id);
+  };
+
+  window.placeBid = async function(){
+    if(hmAuctionBusy) return;
+    const p = hmAuctionPlayer();
+    if(!p){ alert("Nessun calciatore in asta."); return; }
+    const teamCode = document.getElementById("bidTeam")?.value;
+    const amount = Number(document.getElementById("bidAmount")?.value || 0);
+    if(!teamCode){ alert("Seleziona la squadra."); return; }
+    if(!hmIsAdmin() && !hmCanEditTeam(teamCode)){ alert("Puoi offrire solo con le tue squadre."); return; }
+    const t = hmTeam(teamCode);
+    if(t && Number(t.credits||0) < amount){ alert("Crediti insufficienti per questa offerta."); return; }
+    const ref = hmAuctionRef();
+    if(!ref){ alert("Firebase non pronto."); return; }
+    hmAuctionBusy = true;
+    try{
+      const db = hmFirebaseDb();
+      await db.runTransaction(async tx=>{
+        const snap = await tx.get(ref);
+        const live = snap.exists ? hmNormalizeAuctionDoc(snap.data()) : hmNormalizeAuctionDoc(auctionState);
+        if(String(live.playerId||"") !== String(auctionState.playerId||"")) throw new Error("Asta cambiata: aggiorna e riprova.");
+        const liveBid = hmHighestBidFrom(live);
+        const min = liveBid ? Number(liveBid.amount||0)+1 : 1;
+        if(amount < min) throw new Error("Offerta minima "+min);
+        const passed = (live.passedTeams||[]).filter(c=>c!==teamCode);
+        const bids = [...(live.bids||[]), {team:teamCode, amount, date:hmNow(), user:currentUser?.username||"utente"}];
+        tx.set(ref, Object.assign({}, live, {bids, passedTeams:passed, winner:null, updatedAt:new Date().toISOString(), updatedBy:currentUser?.username||"utente"}), {merge:false});
+      });
+      hmSetStatus("🟢 Offerta live salvata", "ok");
+    }catch(e){ console.error(e); alert("Offerta non registrata: "+(e.message||e)); }
+    finally{ hmAuctionBusy = false; }
+  };
+
+  window.passAuction = async function(){
+    const teamCode = document.getElementById("bidTeam")?.value;
+    if(!teamCode){ alert("Seleziona la squadra."); return; }
+    if(!hmIsAdmin() && !hmCanEditTeam(teamCode)){ alert("Puoi passare solo con le tue squadre."); return; }
+    const ref = hmAuctionRef();
+    if(!ref){ alert("Firebase non pronto."); return; }
+    try{
+      const db = hmFirebaseDb();
+      await db.runTransaction(async tx=>{
+        const snap = await tx.get(ref);
+        const live = snap.exists ? hmNormalizeAuctionDoc(snap.data()) : hmNormalizeAuctionDoc(auctionState);
+        const passed = Array.from(new Set([...(live.passedTeams||[]), teamCode]));
+        tx.set(ref, Object.assign({}, live, {passedTeams:passed, updatedAt:new Date().toISOString(), updatedBy:currentUser?.username||"utente"}), {merge:false});
+      });
+    }catch(e){ console.error(e); alert("Errore Passo: "+(e.message||e)); }
+  };
+
+  window.hammerAuction = async function(){
+    if(!hmIsAdmin()){ alert("Solo admin può aggiudicare l'asta."); return; }
+    const ref = hmAuctionRef();
+    const p = hmAuctionPlayer();
+    const bid = hmHighestBid();
+    if(!p || !bid){ alert("Serve almeno un'offerta."); return; }
+    const t = hmTeam(bid.team);
+    if(t && Number(t.credits||0) < Number(bid.amount||0)){
+      if(!confirm("La squadra sembra non avere crediti sufficienti. Vuoi aggiudicare comunque?")) return;
+    }
+    const oldOwner = p.owner, oldCurrent = p.current, oldCredits = t?.credits;
+    p.owner = bid.team;
+    p.current = bid.team;
+    if(t) t.credits = (Number(t.credits)||0) - Number(bid.amount||0);
+    auctionState.history = Array.isArray(auctionState.history) ? auctionState.history : [];
+    auctionState.history.unshift({playerId:p.id,playerName:p.name,team:bid.team,amount:bid.amount,oldOwner,oldCurrent,oldCredits,date:hmNow()});
+    auctionState.playerId = "";
+    auctionState.manualPlayer = null;
+    auctionState.bids = [];
+    auctionState.activeTeams = [];
+    auctionState.passedTeams = [];
+    auctionState.winner = {playerId:p.id, playerName:p.name, team:bid.team, amount:bid.amount, date:hmNow()};
+    try{
+      if(ref) await ref.set(hmCurrentAuctionDoc({playerId:"",manualPlayer:null,bids:[],activeTeams:[],passedTeams:[],winner:auctionState.winner}), {merge:false});
+      if(typeof saveAll === "function") saveAll(); else hmSaveLocal();
+      renderAuction();
+    }catch(e){ console.error(e); alert("Errore aggiudicazione asta: "+(e.code||e.message||e)); }
+  };
+
+  window.resetAuction = async function(){
+    if(!hmIsAdmin()){ alert("Solo admin può annullare l'asta."); return; }
+    auctionState.playerId=""; auctionState.manualPlayer=null; auctionState.bids=[]; auctionState.activeTeams=[]; auctionState.passedTeams=[]; auctionState.winner=null;
+    hmSaveLocal();
+    try{ await hmPushAuctionState({playerId:"",manualPlayer:null,bids:[],activeTeams:[],passedTeams:[],winner:null}); }
+    catch(e){ console.error(e); alert("Errore reset asta Firebase: "+(e.code||e.message||e)); }
+    renderAuction();
+  };
+
+  // Lo storico resta nel salvataggio generale; undo solo admin.
+  const oldUndo = window.undoAuctionOperation;
+  window.undoAuctionOperation = function(i){
+    if(!hmIsAdmin()){ alert("Solo admin può annullare un'operazione d'asta."); return; }
+    if(typeof oldUndo === "function") return oldUndo(i);
+  };
+
+  document.addEventListener("DOMContentLoaded",()=>setTimeout(hmStartLiveListener,800));
+  if(document.readyState !== "loading") setTimeout(hmStartLiveListener,800);
+})();
+</script>
 
 </body>
 </html>

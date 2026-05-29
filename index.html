@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante 2.0 · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -4594,6 +4594,62 @@ window.addEventListener("beforeunload", function(e){
   };
 
   setTimeout(()=>{ try{ window.applyPermissionsToVisibleView(); }catch(e){} }, 300);
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   FIX MIRATO: login interno cliccabile
+   Problema: i permessi pagina disabilitavano anche i campi/pulsanti
+   del modal login quando l'utente era ancora ospite.
+   Non modifica Firebase, salvataggi, asta, scambi, formazione o budget.
+   ========================================================= */
+(function(){
+  function enableLoginModalControls(){
+    try{
+      const modal = document.getElementById('tradeModal');
+      const body = document.getElementById('tradeModalBody');
+      if(!modal || !body) return;
+      if(!body.querySelector('#hmLoginUser') && !body.querySelector('#hmLoginPass')) return;
+      body.querySelectorAll('input,button').forEach(el=>{
+        el.disabled = false;
+        el.style.opacity = '1';
+        el.removeAttribute('aria-disabled');
+      });
+    }catch(e){console.warn('enableLoginModalControls', e);}
+  }
+
+  const previousApplyPermissionsLoginFix = window.applyPermissionsToVisibleView;
+  window.applyPermissionsToVisibleView = function(){
+    const r = previousApplyPermissionsLoginFix ? previousApplyPermissionsLoginFix.apply(this, arguments) : undefined;
+    enableLoginModalControls();
+    return r;
+  };
+
+  const previousOpenLoginModalLoginFix = window.openLoginModal;
+  if(typeof previousOpenLoginModalLoginFix === 'function'){
+    window.openLoginModal = function(){
+      const r = previousOpenLoginModalLoginFix.apply(this, arguments);
+      setTimeout(enableLoginModalControls, 0);
+      setTimeout(enableLoginModalControls, 150);
+      return r;
+    };
+  }
+
+  document.addEventListener('input', function(ev){
+    if(ev.target && (ev.target.id === 'hmLoginUser' || ev.target.id === 'hmLoginPass')){
+      enableLoginModalControls();
+    }
+  }, true);
+
+  document.addEventListener('focusin', function(ev){
+    if(ev.target && (ev.target.id === 'hmLoginUser' || ev.target.id === 'hmLoginPass')){
+      enableLoginModalControls();
+    }
+  }, true);
+
+  setTimeout(enableLoginModalControls, 300);
 })();
 </script>
 

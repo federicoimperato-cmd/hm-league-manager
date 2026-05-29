@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante 2.0 · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -4451,6 +4451,149 @@ window.addEventListener("beforeunload", function(e){
   }
 
   setTimeout(()=>{try{window.applyPermissionsToVisibleView();}catch(e){}},300);
+})();
+</script>
+
+
+
+<script>
+/* =========================================================
+   FIX MIRATO PRESIDENTI: salvataggio online permesso + budget bloccato
+   - Admin: usa il salvataggio Firebase completo già esistente.
+   - Presidente: salva online SOLO le cose permesse: formazioni e proposte scambio.
+   - Budget: pulsante e funzione bloccati per non-admin.
+   ========================================================= */
+(function(){
+  const $id = id => document.getElementById(id);
+  const originalSaveCloudNow = window.saveCloudNow;
+  const originalSaveAll = window.saveAll;
+  const originalApplyPermissions = window.applyPermissionsToVisibleView;
+  const originalEditBudget = window.editBudget;
+  const originalSaveBudget = window.saveBudget;
+
+  function hmLogged(){
+    try { return !!(currentUser && currentUser.role && currentUser.role !== "guest"); }
+    catch(e){ return false; }
+  }
+  function hmAdmin(){
+    try { return !!(currentUser && currentUser.role === "admin"); }
+    catch(e){ return false; }
+  }
+  function hmSetBadge(text, mode){
+    const b = $id("firebaseStatusBadge");
+    if(!b) return;
+    b.textContent = text;
+    b.style.borderColor = mode === "bad" ? "#ef4444" : mode === "ok" ? "#22c55e" : "#334155";
+    b.style.color = mode === "bad" ? "#fecaca" : "#dbeafe";
+  }
+  function hmDeny(msg){ alert(msg || "Non hai i permessi."); return false; }
+  function hmDb(){
+    if(!window.firebase || !firebase.apps || !firebase.apps.length) return null;
+    return firebase.firestore();
+  }
+  async function hmEnsureAuth(){
+    try{
+      if(typeof window.hmFirebaseEnsureAuth === "function") return await window.hmFirebaseEnsureAuth();
+      if(window.firebase && firebase.auth){
+        const auth = firebase.auth();
+        if(auth.currentUser) return true;
+        await auth.signInAnonymously();
+        return true;
+      }
+    }catch(e){
+      console.error("Auth Firebase presidente non riuscita", e);
+      hmSetBadge("⚠️ Errore auth Firebase", "bad");
+      alert("Errore auth Firebase: " + (e.code || e.message || e));
+      return false;
+    }
+    return false;
+  }
+  async function hmPresidentSaveSmall(manual){
+    if(!hmLogged()) return hmDeny("Devi fare login per modificare.");
+    if(hmAdmin()){
+      if(typeof originalSaveCloudNow === "function") return await originalSaveCloudNow(!!manual);
+      return true;
+    }
+    try{
+      hmSetBadge("💾 Salvataggio online...", "wait");
+      try{ if(typeof saveLocalOnly === "function") saveLocalOnly(); }catch(e){ console.warn(e); }
+      const okAuth = await hmEnsureAuth();
+      if(!okAuth) return false;
+      const db = hmDb();
+      if(!db) throw new Error("Firebase non pronto");
+      const main = db.collection("hmleague").doc("main");
+      const parts = main.collection("parts");
+      const batch = db.batch();
+      batch.set(main, {updatedAt:new Date().toISOString(), mode:"split_v2", lastPresidentSaveBy:(currentUser && currentUser.username) || "presidente"}, {merge:true});
+      // Salva solo le aree autorizzate ai presidenti: formazioni e proposte scambio.
+      batch.set(parts.doc("managers"), {savedFormations: JSON.parse(JSON.stringify(savedFormations || {}))}, {merge:true});
+      batch.set(parts.doc("core"), {pendingTrades: JSON.parse(JSON.stringify(pendingTrades || [])), updatedAt:new Date().toISOString()}, {merge:true});
+      await batch.commit();
+      try{ HM_HAS_UNSAVED_CHANGES = false; }catch(e){}
+      hmSetBadge("✅ Online sincronizzato", "ok");
+      if(manual) alert("Salvato online.");
+      return true;
+    }catch(e){
+      console.error("Errore salvataggio Firebase presidente", e);
+      hmSetBadge("⚠️ Errore salvataggio Firebase", "bad");
+      if(manual) alert("Errore salvataggio Firebase: " + (e.code || e.message || e));
+      return false;
+    }
+  }
+  function hmRoleAwareSaveAll(){
+    if(!hmLogged()) return hmDeny("Devi fare login per modificare.");
+    try{ if(typeof saveLocalOnly === "function") saveLocalOnly(); }catch(e){ console.warn(e); }
+    try{ HM_HAS_UNSAVED_CHANGES = true; }catch(e){}
+    clearTimeout(window.__hmPresidentSafeSaveTimer);
+    window.__hmPresidentSafeSaveTimer = setTimeout(()=>{ hmPresidentSaveSmall(false); }, 600);
+    hmSetBadge("☁️ Modifiche da sincronizzare", "wait");
+    return true;
+  }
+
+  // Espone il salvataggio corretto anche alle funzioni che chiamano saveAll/saveCloudNow senza window.
+  window.saveCloudNow = hmPresidentSaveSmall;
+  window.saveAll = hmRoleAwareSaveAll;
+  try{ saveCloudNow = hmPresidentSaveSmall; }catch(e){}
+  try{ saveAll = hmRoleAwareSaveAll; }catch(e){}
+
+  // Intercetta il pulsante Salva online prima dei vecchi listener, così i presidenti non richiamano il salvataggio completo.
+  document.addEventListener("click", function(ev){
+    const btn = ev.target && ev.target.closest ? ev.target.closest("#hmFirebaseSaveBtn") : null;
+    if(!btn) return;
+    if(!hmAdmin()){
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      hmPresidentSaveSmall(true);
+    }
+  }, true);
+
+  // Budget: non deve essere cliccabile per i presidenti.
+  window.editBudget = function(code){
+    if(!hmAdmin()) return hmDeny("Solo Federico admin può modificare il budget.");
+    return typeof originalEditBudget === "function" ? originalEditBudget.apply(this, arguments) : false;
+  };
+  window.saveBudget = function(code){
+    if(!hmAdmin()) return hmDeny("Solo Federico admin può salvare il budget.");
+    return typeof originalSaveBudget === "function" ? originalSaveBudget.apply(this, arguments) : false;
+  };
+  try{ editBudget = window.editBudget; saveBudget = window.saveBudget; }catch(e){}
+
+  window.applyPermissionsToVisibleView = function(){
+    try{ if(typeof originalApplyPermissions === "function") originalApplyPermissions.apply(this, arguments); }catch(e){ console.warn(e); }
+    try{
+      if(!hmAdmin()){
+        document.querySelectorAll('button[onclick*="editBudget"],button[onclick*="saveBudget"]').forEach(btn=>{
+          btn.disabled = true;
+          btn.style.opacity = ".45";
+          btn.title = "Solo Federico admin può modificare il budget";
+        });
+      }
+      const saveBtn = $id("hmFirebaseSaveBtn");
+      if(saveBtn){ saveBtn.disabled = !hmLogged(); saveBtn.style.opacity = hmLogged() ? "1" : ".45"; }
+    }catch(e){ console.warn(e); }
+  };
+
+  setTimeout(()=>{ try{ window.applyPermissionsToVisibleView(); }catch(e){} }, 300);
 })();
 </script>
 

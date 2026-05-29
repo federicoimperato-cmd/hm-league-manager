@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante 2 · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -1969,12 +1969,31 @@ function confirmTradeFromModal(){
       });
     }
 
-    if(saveAll() === false) return false;
+    // FIX MIRATO SCAMBI:
+    // Non usare saveAll() qui, perché in fondo al file viene riscritto dal blocco Firebase
+    // e fa partire un autosave automatico che può dare errore subito dopo lo scambio.
+    // Salviamo prima localmente, poi richiamiamo il salvataggio online già funzionante.
+    try{
+      if(typeof saveLocalOnly === "function") saveLocalOnly();
+      HM_HAS_UNSAVED_CHANGES = true;
+      if(typeof updateCloudBadge === "function") updateCloudBadge();
+    }catch(e){
+      console.warn("Salvataggio locale post-scambio non riuscito", e);
+    }
+
     closeTradeModal();
     resetTradeForm();
     renderTrades();
 
-    alert("Scambio registrato: calciatori trasferiti, crediti aggiornati e comunicato creato.");
+    setTimeout(()=>{
+      try{
+        if(typeof saveCloudNow === "function") saveCloudNow(false);
+      }catch(e){
+        console.warn("Salvataggio online post-scambio non riuscito", e);
+      }
+    }, 600);
+
+    alert("Scambio registrato: calciatori trasferiti, crediti aggiornati, comunicato creato e salvataggio online avviato.");
     return true;
   }catch(err){
     console.error(err);

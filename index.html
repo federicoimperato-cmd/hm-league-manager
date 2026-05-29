@@ -1437,6 +1437,9 @@ function clearFormation(code){
 }
 
 
+// LOGHI SOCIETÀ: area temporanea. Il logo viene solo preparato/mostrato in anteprima e salvato quando premi "Salva società".
+let hmPendingTeamLogos = {};
+
 function teamEditorHtml(t){
   return `<div class="card"><h3>Editor società</h3>
   <div class="grid grid3">
@@ -1449,6 +1452,7 @@ function teamEditorHtml(t){
     </select></label>
     <label>Logo da file
       <input class="input" type="file" id="edTeamLogo" accept="image/*" onchange="handleTeamLogoUpload(event,'${t.code}')">
+      <div id="edTeamLogoMsg" class="muted" style="font-size:12px;margin-top:6px">Scegli un file, poi premi Salva società.</div>
     </label>
     <div>
       <div class="muted" style="margin-bottom:6px">Anteprima logo</div>
@@ -1501,15 +1505,15 @@ function handleTeamLogoUpload(ev, code){
     if(!file) return false;
     const t = team(code);
     if(!t) return false;
+
+    // Non salvo e non ridisegno la pagina qui: preparo solo l'anteprima.
+    // Questo evita il cambio pagina quando scegli il file.
     resizeTeamLogoFile(file, function(dataUrl){
-      t.logo = dataUrl;
+      hmPendingTeamLogos[code] = dataUrl;
       const preview = q("edTeamLogoPreview");
       if(preview) preview.innerHTML = `<img src="${dataUrl}" alt="logo">`;
-      const ok = saveAll();
-      if(ok !== false){
-        try{ renderTeams(); }catch(e){}
-        try{ renderTeamDetail(); }catch(e){}
-      }
+      const msg = q("edTeamLogoMsg");
+      if(msg) msg.textContent = "Logo pronto. Premi Salva società per confermare.";
     });
     return false;
   }catch(err){
@@ -1523,22 +1527,20 @@ function saveTeamEditor(code){
   if(!requireTeam(code)) return false;
   const t=team(code);
   if(!t) return false;
+
   t.name=q("edTeamName")?.value || t.name;
   t.primary=q("edTeamPrimary")?.value || t.primary;
   t.secondary=q("edTeamSecondary")?.value || t.secondary;
   t.text=q("edTeamText")?.value || t.text;
   t.jerseyStyle=q("edTeamJerseyStyle")?.value || t.jerseyStyle || "diagonal";
-  const file=q("edTeamLogo")?.files?.[0];
-  if(file){
-    resizeTeamLogoFile(file, function(dataUrl){
-      t.logo=dataUrl;
-      if(saveAll() === false) return;
-      renderTeamDetail();
-    });
-  } else {
-    if(saveAll() === false) return false;
-    renderTeamDetail();
+
+  if(hmPendingTeamLogos && hmPendingTeamLogos[code]){
+    t.logo = hmPendingTeamLogos[code];
+    delete hmPendingTeamLogos[code];
   }
+
+  if(saveAll() === false) return false;
+  renderTeamDetail();
   return true;
 }
 

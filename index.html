@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante Asta · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -4297,6 +4297,160 @@ window.addEventListener("beforeunload", function(e){
   const oldPlaceBid=window.placeBid; if(typeof oldPlaceBid==="function") window.placeBid=function(...args){const code=q("bidTeam")?.value; if(!hmCanTeam(code))return hmDenied("Puoi fare offerte solo con le tue squadre."); return oldPlaceBid.apply(this,args);};
   const oldPassAuction=window.passAuction; if(typeof oldPassAuction==="function") window.passAuction=function(...args){const code=q("bidTeam")?.value; if(!hmCanTeam(code))return hmDenied("Puoi passare solo con le tue squadre."); return oldPassAuction.apply(this,args);};
   setTimeout(()=>{try{updateAuthBadge();applyPermissionsToVisibleView();}catch(e){}},500);
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   FIX MIRATO: login interno + salvataggio Firebase per presidenti
+   + formazione abilitatata alle proprie squadre.
+   Non modifica loghi, asta, backup, calciatori, scambi già esistenti.
+   ========================================================= */
+(function(){
+  function $id(id){return document.getElementById(id);}
+  function loggedInternal(){return !!(window.currentUser || currentUser) && !!(currentUser && currentUser.role && currentUser.role !== "guest");}
+  function adminInternal(){return !!(currentUser && currentUser.role === "admin");}
+  function teamsInternal(){return Array.isArray(currentUser && currentUser.teams) ? currentUser.teams : [];}
+  function canTeamInternal(code){return adminInternal() || teamsInternal().includes(String(code||"").toUpperCase());}
+  function denyInternal(msg){alert(msg || "Non hai i permessi."); return false;}
+
+  async function ensureFirebaseForInternalLogin(){
+    try{
+      if(typeof window.hmFirebaseEnsureAuth === "function"){
+        return await window.hmFirebaseEnsureAuth();
+      }
+      if(window.firebase && firebase.auth){
+        const auth=firebase.auth();
+        if(auth.currentUser) return true;
+        await auth.signInAnonymously();
+        return true;
+      }
+    }catch(e){
+      console.error("Firebase auth interno non riuscito", e);
+      const b=$id("firebaseStatusBadge");
+      if(b){b.textContent="⚠️ Errore auth Firebase"; b.style.borderColor="#ef4444"; b.style.color="#fecaca";}
+      return false;
+    }
+    return true;
+  }
+
+  async function saveOnlineForInternalUser(){
+    if(!loggedInternal()) return denyInternal("Devi fare login per modificare.");
+    try{ if(typeof saveLocalOnly === "function") saveLocalOnly(); }catch(e){console.warn(e);}
+    try{ window.HM_HAS_UNSAVED_CHANGES = true; }catch(e){}
+    const okAuth = await ensureFirebaseForInternalLogin();
+    if(!okAuth) return false;
+    if(typeof saveCloudNow === "function"){
+      try{
+        const r = await saveCloudNow(false);
+        return r !== false;
+      }catch(e){
+        console.error("Errore salvataggio Firebase", e);
+        const b=$id("firebaseStatusBadge");
+        if(b){b.textContent="⚠️ Errore salvataggio Firebase"; b.style.borderColor="#ef4444"; b.style.color="#fecaca";}
+        return false;
+      }
+    }
+    return true;
+  }
+  window.hmSaveAndSyncInternal = saveOnlineForInternalUser;
+
+  // Sostituisce SOLO il ponte di salvataggio: ora username/password interno vale anche per Firebase.
+  window.saveAll = function(){
+    if(!loggedInternal()) return denyInternal("Devi fare login per modificare.");
+    try{ if(typeof saveLocalOnly === "function") saveLocalOnly(); }catch(e){console.warn(e);}
+    try{ window.HM_HAS_UNSAVED_CHANGES = true; }catch(e){}
+    const b=$id("firebaseStatusBadge");
+    if(b && !String(b.textContent||"").includes("Errore")) b.textContent="☁️ Modifiche da sincronizzare";
+    clearTimeout(window.__hmInternalSaveTimer);
+    window.__hmInternalSaveTimer = setTimeout(()=>{ saveOnlineForInternalUser(); }, 700);
+    return true;
+  };
+
+  // Mantiene le funzioni base coerenti col login interno.
+  window.isLoggedIn = function(){return loggedInternal();};
+  window.isAdmin = function(){return adminInternal();};
+  window.userTeams = function(){return teamsInternal();};
+  window.canEditTeam = function(code){return canTeamInternal(code);};
+  window.requireLogin = function(){return loggedInternal() || denyInternal("Devi fare login per modificare.");};
+  window.requireAdmin = function(){return adminInternal() || denyInternal("Solo Federico admin può modificare questa sezione.");};
+  window.requireTeam = function(code){return canTeamInternal(code) || denyInternal("Puoi modificare solo le tue squadre.");};
+
+  const previousApply = window.applyPermissionsToVisibleView;
+  window.applyPermissionsToVisibleView = function(){
+    try{ if(typeof previousApply === "function") previousApply(); }catch(e){console.warn(e);}
+    try{
+      // Le tab interne sono navigazione/visualizzazione: non vanno mai congelate.
+      document.querySelectorAll("button.tab").forEach(el=>{el.disabled=false; el.style.opacity="1";});
+
+      // Presidente: formazione modificabile solo sulle proprie squadre.
+      const code = String(window.selectedTeam || selectedTeam || "").toUpperCase();
+      const formationBox = $id("teamSub-formazione");
+      if(loggedInternal() && !adminInternal() && canTeamInternal(code) && formationBox){
+        // Il bottone Formazione deve restare cliccabile.
+        document.querySelectorAll("button[onclick*=\"teamSub('formazione'\"]").forEach(el=>{el.disabled=false; el.style.opacity="1";});
+        if(!formationBox.classList.contains("hidden")){
+          formationBox.querySelectorAll("select,button").forEach(el=>{
+            el.disabled=false;
+            el.style.opacity="1";
+          });
+        }
+      }
+
+      // Registro scambi: i presidenti devono poter usare select e pulsanti di proposta.
+      const tradesView=$id("view-trades");
+      if(loggedInternal() && !adminInternal() && tradesView && !tradesView.classList.contains("hidden")){
+        tradesView.querySelectorAll("select,input").forEach(el=>{el.disabled=false; el.style.opacity="1";});
+        tradesView.querySelectorAll("button").forEach(el=>{
+          const oc=String(el.getAttribute("onclick")||"");
+          const ok = oc.includes("changeTradeTeam") || oc.includes("createLineItemById") || oc.includes("removeLineItem") || oc.includes("updateLineItem") || oc.includes("resetTradeForm") || oc.includes("openTradeReview") || oc.includes("confirmTradeFromModal");
+          if(ok){el.disabled=false; el.style.opacity="1";}
+        });
+      }
+    }catch(e){console.warn(e);}
+  };
+
+  const previousTeamSub = window.teamSub;
+  if(typeof previousTeamSub === "function"){
+    window.teamSub = function(name,btn){
+      const r = previousTeamSub.apply(this, arguments);
+      setTimeout(()=>{try{window.applyPermissionsToVisibleView();}catch(e){}},0);
+      return r;
+    };
+  }
+
+  // Il pulsante "Salva formazione" deve funzionare anche per presidenti sulle proprie squadre.
+  window.hmSaveFormationAllowed = function(){
+    const code = String(window.selectedTeam || selectedTeam || "").toUpperCase();
+    if(!canTeamInternal(code)) return denyInternal("Puoi modificare solo la formazione delle tue squadre.");
+    if(window.saveAll() === false) return false;
+    alert("Formazione salvata");
+    return true;
+  };
+
+  // Corregge il bottone creato da renderPitch senza toccare la logica della formazione.
+  const previousRenderPitch = window.renderPitch;
+  if(typeof previousRenderPitch === "function"){
+    window.renderPitch = function(code){
+      const r = previousRenderPitch.apply(this, arguments);
+      try{
+        const box=$id("pitchBox");
+        if(box){
+          box.querySelectorAll("button").forEach(btn=>{
+            const oc=String(btn.getAttribute("onclick")||"");
+            if(oc.includes("Formazione salvata") || oc.includes("saveAll();alert")){
+              btn.setAttribute("onclick","hmSaveFormationAllowed()");
+            }
+          });
+        }
+        window.applyPermissionsToVisibleView();
+      }catch(e){console.warn(e);}
+      return r;
+    };
+  }
+
+  setTimeout(()=>{try{window.applyPermissionsToVisibleView();}catch(e){}},300);
 })();
 </script>
 

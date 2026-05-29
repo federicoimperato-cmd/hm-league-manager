@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>HM League Manager 2 - Versione Completa Funzionante</title>
+<title>HM League Manager - Versione Completa Funzionante</title>
 <style>
 :root {
   --bg:#07111f; --panel:#0d1b2f; --panel2:#12233b; --line:#28405f; --text:#f8fafc; --muted:#a8b3c7;
@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante 2 · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -986,14 +986,13 @@ function clearFilters(prefix, scopeTeam=""){
 
 
 function updateCloudBadge(){
-  const els=[document.getElementById("cloudStatusBadge"), document.getElementById("firebaseStatusBadge")].filter(Boolean);
-  if(!els.length) return;
-  let text="☁️ Solo locale";
-  if(HM_CLOUD_LOADING) text="☁️ Caricamento dati...";
-  else if(HM_CLOUD_SAVING) text="☁️ Salvataggio...";
-  else if(HM_HAS_UNSAVED_CHANGES) text="⚠️ Modifiche non salvate online";
-  else if(HM_CLOUD_READY) text="☁️ Online sincronizzato";
-  els.forEach(el=>{ el.textContent=text; });
+  const el=document.getElementById("cloudStatusBadge");
+  if(!el) return;
+  if(HM_CLOUD_LOADING) el.textContent="☁️ Caricamento dati...";
+  else if(HM_CLOUD_SAVING) el.textContent="☁️ Salvataggio...";
+  else if(HM_HAS_UNSAVED_CHANGES) el.textContent="⚠️ Modifiche non salvate online";
+  else if(HM_CLOUD_READY) el.textContent="☁️ Online sincronizzato";
+  else el.textContent="☁️ Solo locale";
 }
 
 
@@ -1631,9 +1630,8 @@ function savePlayerEditor(){
   const newOwner = String(q("plOwner")?.value || "SVIN").trim().toUpperCase();
   p.name=String(q("plName")?.value||"").trim();
   p.role=String(q("plRole")?.value||"").trim();
-  p.current=String(q("plCurrent")?.value||"").trim().toUpperCase();
+  p.current=String(q("plCurrent")?.value||"").trim();
   p.owner=newOwner;
-  if(!p.current && p.owner && p.owner !== "SVIN") p.current = p.owner;
   p.status=String(q("plStatus")?.value||"D").trim();
   p.bonus=String(q("plBonus")?.value||"").trim();
   p.contract=String(q("plContract")?.value||"").trim();
@@ -3318,86 +3316,42 @@ window.addEventListener("beforeunload", function(e){
 
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
 <script>
 (function(){
   const firebaseConfig={apiKey:"AIzaSyAXcSoKopRoUspjqizwvp3DShysk2n-ceI",authDomain:"hm-league-manager.firebaseapp.com",projectId:"hm-league-manager",storageBucket:"hm-league-manager.firebasestorage.app",messagingSenderId:"685194156294",appId:"1:685194156294:web:516afa4e813a02b6fbe687"};
-  let fbAuth=null;
+  let fbAuth=null, fbDb=null, fbUser=null, fbLoaded=false, fbSaving=false, fbSaveTimer=null;
   const $=id=>document.getElementById(id);
-
-  function setTopStatus(txt){
-    const el=$("firebaseStatusBadge") || $("cloudStatusBadge");
-    if(el) el.textContent=txt;
+  const setStatus=(t,m)=>{const e=$("firebaseStatusBadge"); if(!e)return; e.textContent=t; e.style.borderColor=m==="ok"?"#22c55e":m==="bad"?"#ef4444":"#334155"; e.style.color=m==="bad"?"#fecaca":"#dbeafe";};
+  const admin=()=>!!fbUser || (currentUser&&currentUser.role==="admin");
+  function makeAdmin(u){fbUser=u||fbUser||{displayName:"Federico",email:"admin"}; currentUser={username:fbUser.displayName||fbUser.email||"Federico",role:"admin",teams:["*"]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
+  function makeGuest(){fbUser=null; currentUser={username:"Ospite",role:"guest",teams:[]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
+  function patchPerms(){
+    isAdmin=function(){return admin()}; isLoggedIn=function(){return admin()}; userTeams=function(){return admin()?["*"]:[]}; canEditTeam=function(){return admin()}; canEditPlayerObj=function(){return admin()}; requireAdmin=function(){return admin()||deny("Solo Federico admin può modificare.")}; requireLogin=function(){return admin()||deny("Devi entrare con Google per modificare.")}; requireTeam=function(){return admin()||deny("Solo Federico admin può modificare.")};
+    Object.assign(window,{isAdmin,isLoggedIn,canEditTeam,canEditPlayerObj,requireAdmin,requireLogin,requireTeam});
   }
-  function setGoogleAdmin(user){
-    currentUser={username:(user && (user.displayName || user.email)) || "Federico", role:"admin", teams:["*"]};
-    try{ safeSetStorage("hm_current_user_v1", currentUser); }catch(e){}
+  function updateUI(){patchPerms(); const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb)lb.textContent=admin()?"👤 Admin Google":"🔐 Login Google"; if(sb){sb.disabled=!admin()||fbSaving; sb.style.opacity=sb.disabled?".45":"1";} try{updateAuthBadge()}catch(e){} try{applyPermissionsToVisibleView()}catch(e){}}
+  function renderSafe(){
+    updateUI();
+    if(typeof hmIsFilePickerCoolingDown==="function" && hmIsFilePickerCoolingDown()) return;
+    try{ if(typeof renderCurrentView==="function") renderCurrentView(); else if(typeof showView==="function") showView("dashboard"); }catch(e){console.error(e)}
+    updateUI();
   }
-  function setGuest(){
-    currentUser={username:"Ospite",role:"guest",teams:[]};
-    try{ safeSetStorage("hm_current_user_v1", currentUser); }catch(e){}
-  }
-  function refreshButtons(){
-    const loginBtn=$("hmFirebaseLoginBtn");
-    const saveBtn=$("hmFirebaseSaveBtn");
-    if(loginBtn) loginBtn.textContent = isLoggedIn() ? "👤 Admin Google" : "🔐 Login Google";
-    if(saveBtn){ saveBtn.disabled=!isLoggedIn(); saveBtn.style.opacity=isLoggedIn()?"1":".45"; }
-    if(typeof updateAuthBadge==="function") updateAuthBadge();
-    if(typeof updateCloudBadge==="function") updateCloudBadge();
-  }
-  async function login(){
-    try{
-      if(!fbAuth){ alert("Login Google non pronto. Ricarica la pagina."); return; }
-      if(isLoggedIn()){
-        await fbAuth.signOut();
-        setGuest();
-        setTopStatus("☁️ Uscito da Google");
-        refreshButtons();
-        if(typeof showView==="function") showView("dashboard");
-        return;
-      }
-      const provider=new firebase.auth.GoogleAuthProvider();
-      provider.setCustomParameters({prompt:"select_account"});
-      setTopStatus("🔐 Login Google in corso...");
-      const res=await fbAuth.signInWithPopup(provider);
-      setGoogleAdmin(res.user);
-      setTopStatus("🔓 Admin collegato");
-      refreshButtons();
-      if(typeof loadCloudData==="function") await loadCloudData();
-      if(typeof renderCurrentView==="function") renderCurrentView();
-    }catch(e){
-      console.error(e);
-      setTopStatus("⚠️ Login Google errore");
-      alert("Login Google non riuscito: "+(e.code||e.message||e));
-    }
-  }
-  function init(){
-    try{
-      if(!window.firebase){ setTopStatus("⚠️ Firebase SDK non caricato"); return; }
-      firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
-      fbAuth=firebase.auth();
-      fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn);
-      const loginBtn=$("hmFirebaseLoginBtn");
-      const saveBtn=$("hmFirebaseSaveBtn");
-      if(loginBtn && !loginBtn.dataset.authOnly){ loginBtn.dataset.authOnly="1"; loginBtn.addEventListener("click", login); }
-      if(saveBtn && !saveBtn.dataset.appScriptSave){
-        saveBtn.dataset.appScriptSave="1";
-        saveBtn.addEventListener("click", function(e){ e.preventDefault(); e.stopPropagation(); saveCloudNow(true); });
-      }
-      fbAuth.onAuthStateChanged(function(user){
-        if(user) setGoogleAdmin(user);
-        else if(!isLoggedIn()) setGuest();
-        refreshButtons();
-      });
-      refreshButtons();
-    }catch(e){
-      console.error(e);
-      setTopStatus("⚠️ Firebase Auth errore");
-    }
-  }
-  document.addEventListener("DOMContentLoaded", init);
-  if(document.readyState!=="loading") setTimeout(init,50);
+  const ref=()=>fbDb.collection("hmleague").doc("main");
+  const payload=()=>({version:4,updatedAt:new Date().toISOString(),teams,players,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,competitionsManager,coachesManager,regulationText});
+  function good(d){return d&&Array.isArray(d.players)&&d.players.length>50&&Array.isArray(d.teams)&&d.teams.length>=16}
+  function apply(d){if(!good(d))return false; teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news; honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages; rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations; auctionState=d.auctionState||auctionState; presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText; try{saveLocalOnly()}catch(e){} return true;}
+  async function fbLoad(){if(!fbDb)return false; setStatus("☁️ Carico dati online...","wait"); try{const s=await ref().get(); if(s.exists&&good(s.data())){apply(s.data()); fbLoaded=true; setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok")}else setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait"); renderSafe(); return true;}catch(e){console.error(e); setStatus("⚠️ Errore lettura Firebase","bad"); renderSafe(); return false;}}
+  async function fbSave(manual=true){patchPerms(); if(!admin()){if(manual)alert("Devi fare login Google prima di salvare."); return false;} fbSaving=true; updateUI(); setStatus("💾 Salvataggio online...","wait"); try{await ref().set(payload(),{merge:false}); HM_HAS_UNSAVED_CHANGES=false; fbLoaded=true; setStatus("✅ Salvato online","ok"); if(manual)alert("Salvato online su Firebase."); return true;}catch(e){console.error(e); setStatus("⚠️ Errore salvataggio Firebase","bad"); if(manual)alert("Errore salvataggio Firebase: "+(e.code||e.message||e)); return false;}finally{fbSaving=false; updateUI();}}
+  function patchSave(){loadCloudData=fbLoad; saveCloudNow=fbSave; window.loadCloudData=fbLoad; window.saveCloudNow=fbSave; saveAll=function(){patchPerms(); if(!admin()){alert("Devi fare login Google per modificare."); return false;} try{saveLocalOnly()}catch(e){} HM_HAS_UNSAVED_CHANGES=true; clearTimeout(fbSaveTimer); fbSaveTimer=setTimeout(()=>fbSave(false),900); updateUI(); return true;}; window.saveAll=saveAll;}
+  async function login(){try{if(!fbAuth){alert("Firebase non è pronto. Ricarica la pagina.");return} if(admin()){await fbAuth.signOut(); makeGuest(); setStatus("☁️ Uscito da Google","wait"); renderSafe(); return} const provider=new firebase.auth.GoogleAuthProvider(); provider.setCustomParameters({prompt:"select_account"}); setStatus("🔐 Login Google in corso...","wait"); const r=await fbAuth.signInWithPopup(provider); makeAdmin(r.user); setStatus("🔓 Admin collegato","ok"); await fbLoad(); renderSafe();}catch(e){console.error(e); setStatus("⚠️ Login Google errore","bad"); alert("Login Google non riuscito: "+(e.code||e.message||e));}}
+  function init(){try{if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return} firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig); fbAuth=firebase.auth(); fbDb=firebase.firestore(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn); patchPerms(); patchSave(); const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb&&!lb.dataset.fix){lb.dataset.fix="1"; lb.addEventListener("click",login)} if(sb&&!sb.dataset.fix){sb.dataset.fix="1"; sb.addEventListener("click",()=>fbSave(true))} updateUI(); setStatus("☁️ Firebase pronto","wait"); fbAuth.onAuthStateChanged(async u=>{if(u){makeAdmin(u); setStatus("🔓 Admin collegato","ok"); if(!fbLoaded)await fbLoad()}else{makeGuest(); if(!fbLoaded)await fbLoad()} renderSafe();}); fbLoad();}catch(e){console.error(e); setStatus("⚠️ Firebase errore","bad");}}
+  document.addEventListener("DOMContentLoaded",init); if(document.readyState!=="loading")setTimeout(init,50);
 })();
 </script>
+
+
+
 
 </body>
 </html>

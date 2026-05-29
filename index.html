@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Fix pulito</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -1438,7 +1438,6 @@ function clearFormation(code){
 
 
 function teamEditorHtml(t){
-  const currentLogo = t.logo ? `<img src="${t.logo}" alt="${esc(t.name)}" style="width:72px;height:72px;object-fit:cover;border-radius:18px;border:1px solid #334155">` : logo(t.code,72);
   return `<div class="card"><h3>Editor società</h3>
   <div class="grid grid3">
     <label>Nome<input class="input" id="edTeamName" value="${esc(t.name)}"></label>
@@ -1452,9 +1451,8 @@ function teamEditorHtml(t){
       <input class="input" type="file" id="edTeamLogo" accept="image/*" onchange="handleTeamLogoUpload(event,'${t.code}')">
     </label>
     <div>
-      <div class="muted" style="margin-bottom:6px">Logo attuale</div>
-      <div id="edTeamLogoPreview">${currentLogo}</div>
-      <button type="button" class="btn red" style="margin-top:8px" onclick="removeTeamLogo('${t.code}')">Rimuovi logo</button>
+      <div class="muted" style="margin-bottom:6px">Anteprima logo</div>
+      <div class="logoBox" id="edTeamLogoPreview">${t.logo?`<img src="${t.logo}" alt="logo">`:esc(t.code)}</div>
     </div>
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px">
@@ -1462,66 +1460,85 @@ function teamEditorHtml(t){
   </div></div>`;
 }
 
+function resizeTeamLogoFile(file, done){
+  const reader = new FileReader();
+  reader.onload = function(){
+    const original = reader.result;
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const max = 420;
+        let w = img.width || max;
+        let h = img.height || max;
+        const scale = Math.min(1, max / Math.max(w,h));
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0,0,w,h);
+        ctx.drawImage(img,0,0,w,h);
+        done(canvas.toDataURL("image/png"));
+      }catch(e){
+        console.warn("Compressione logo non riuscita, uso originale", e);
+        done(original);
+      }
+    };
+    img.onerror = function(){ done(original); };
+    img.src = original;
+  };
+  reader.onerror = function(){ alert("Non riesco a leggere il file logo."); };
+  reader.readAsDataURL(file);
+}
+
 function handleTeamLogoUpload(ev, code){
   try{
-    if(ev){ ev.preventDefault(); ev.stopPropagation(); }
+    if(ev){ ev.preventDefault?.(); ev.stopPropagation?.(); }
     if(!requireTeam(code)) return false;
-    const input = ev && ev.target ? ev.target : q("edTeamLogo");
-    const file = input && input.files ? input.files[0] : null;
+    const input = ev?.target || q("edTeamLogo");
+    const file = input?.files && input.files[0];
     if(!file) return false;
-    if(!file.type || !file.type.startsWith("image/")){
-      alert("Seleziona un file immagine valido.");
-      return false;
-    }
-    const reader = new FileReader();
-    reader.onload = function(){
-      const t = team(code);
-      if(!t) return;
-      t.logo = reader.result;
+    const t = team(code);
+    if(!t) return false;
+    resizeTeamLogoFile(file, function(dataUrl){
+      t.logo = dataUrl;
       const preview = q("edTeamLogoPreview");
-      if(preview){
-        preview.innerHTML = `<img src="${t.logo}" alt="${esc(t.name)}" style="width:72px;height:72px;object-fit:cover;border-radius:18px;border:1px solid #334155">`;
+      if(preview) preview.innerHTML = `<img src="${dataUrl}" alt="logo">`;
+      const ok = saveAll();
+      if(ok !== false){
+        try{ renderTeams(); }catch(e){}
+        try{ renderTeamDetail(); }catch(e){}
       }
-      saveAll();
-      const badge = q("firebaseStatusBadge");
-      if(badge && !String(badge.textContent||"").includes("Salv")) badge.textContent = "☁️ Logo salvato localmente, sync in corso";
-    };
-    reader.onerror = function(){ alert("Errore nel caricamento del logo."); };
-    reader.readAsDataURL(file);
+    });
     return false;
   }catch(err){
-    console.error("Errore logo società", err);
-    alert("Errore caricamento logo: " + (err.message || err));
+    console.error("Errore caricamento logo società", err);
+    alert("Errore caricamento logo: "+(err.message||err));
     return false;
   }
 }
-
-function removeTeamLogo(code){
-  if(!requireTeam(code)) return;
-  const t = team(code);
-  if(!t) return;
-  if(!confirm("Rimuovere il logo di " + t.name + "?")) return;
-  t.logo = "";
-  saveAll();
-  renderTeamDetail();
-}
-
 
 function saveTeamEditor(code){
   if(!requireTeam(code)) return false;
   const t=team(code);
   if(!t) return false;
-  t.name=String(q("edTeamName")?.value||t.name).trim();
+  t.name=q("edTeamName")?.value || t.name;
   t.primary=q("edTeamPrimary")?.value || t.primary;
   t.secondary=q("edTeamSecondary")?.value || t.secondary;
   t.text=q("edTeamText")?.value || t.text;
   t.jerseyStyle=q("edTeamJerseyStyle")?.value || t.jerseyStyle || "diagonal";
-  if(saveAll() === false) return false;
-  renderTeamDetail();
-  setTimeout(()=>{
-    const btn=[...document.querySelectorAll(".tab")].find(b=>String(b.textContent||"").includes("Editor società"));
-    if(btn) teamSub('editor',btn);
-  },0);
+  const file=q("edTeamLogo")?.files?.[0];
+  if(file){
+    resizeTeamLogoFile(file, function(dataUrl){
+      t.logo=dataUrl;
+      if(saveAll() === false) return;
+      renderTeamDetail();
+    });
+  } else {
+    if(saveAll() === false) return false;
+    renderTeamDetail();
+  }
   return true;
 }
 
@@ -1544,78 +1561,69 @@ function filterPlayers(){
 
 
 function openNewPlayerEditor(){
-  if(!requireAdmin()) return;
   selectedPlayerId=null;
-  const defaultOwner = selectedTeam || "SVIN";
   q("tradeModalBody").innerHTML=`<h3>Aggiungi calciatore al database</h3>
-  <p class="muted">Se lasci vuota “Squadra attuale”, il calciatore verrà inserito automaticamente nella squadra proprietaria.</p>
   <div class="grid grid3">
     <label>Nome<input class="input" id="plName" value=""></label>
     <label>Ruolo<input class="input" id="plRole" value="" placeholder="Por / Dc / C / A..."></label>
     <label>Squadra attuale<input class="input" id="plCurrent" value=""></label>
-    <label>Proprietario<select id="plOwner" class="input">${teams.map(t=>`<option value="${t.code}" ${t.code===defaultOwner?"selected":""}>${t.code} · ${t.name}</option>`).join("")}</select></label>
+    <label>Proprietario<select id="plOwner" class="input">${teams.map(t=>`<option value="${t.code}">${t.code} · ${t.name}</option>`).join("")}</select></label>
     <label>Stato<input class="input" id="plStatus" value="D"></label>
     <label>Bonus<input class="input" id="plBonus" value=""></label>
     <label>Contratto<input class="input" id="plContract" value="0"></label>
     <label>Scadenza<input class="input" id="plDeadline" value=""></label>
   </div>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" class="btn" onclick="closeTradeModal()">Annulla</button><button type="button" class="btn green" onclick="savePlayerEditor()">Aggiungi</button></div>`;
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button type="button" class="btn" onclick="closeTradeModal()">Annulla</button>
+    <button type="button" class="btn green" onclick="savePlayerEditor()">Aggiungi</button>
+  </div>`;
   q("tradeModal").style.display="flex";
 }
 
 function openPlayerEditor(id){
   const p=players.find(x=>x.id===id); if(!p) return;
-  if(!canEditPlayerObj(p) && !isAdmin()){ deny("Puoi modificare solo calciatori delle tue squadre."); return; }
   selectedPlayerId=id;
   const body=`<div class="grid grid3">
     <label>Nome<input class="input" id="plName" value="${esc(p.name)}"></label>
     <label>Ruolo<input class="input" id="plRole" value="${esc(p.role)}"></label>
-    <label>Squadra attuale<input class="input" id="plCurrent" value="${esc(p.current)}" placeholder="Lascia vuoto per usare il proprietario"></label>
+    <label>Squadra attuale<input class="input" id="plCurrent" value="${esc(p.current)}"></label>
     <label>Proprietario<select id="plOwner" class="input">${teams.map(t=>`<option value="${t.code}" ${t.code===p.owner?"selected":""}>${t.code} · ${t.name}</option>`).join("")}</select></label>
     <label>Stato<input class="input" id="plStatus" value="${esc(p.status)}"></label>
     <label>Bonus<input class="input" id="plBonus" value="${esc(p.bonus)}"></label>
     <label>Contratto<input class="input" id="plContract" value="${esc(p.contract)}"></label>
     <label>Scadenza<input class="input" id="plDeadline" value="${esc(p.deadline)}"></label>
   </div>
-  <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" class="btn" onclick="closeTradeModal()">Annulla</button><button type="button" class="btn red" onclick="deletePlayerEditor('${p.id}')">Elimina</button><button type="button" class="btn green" onclick="savePlayerEditor()">Salva</button></div>`;
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button type="button" class="btn red" onclick="deletePlayerEditor('${p.id}')">Elimina</button>
+    <button type="button" class="btn green" onclick="savePlayerEditor()">Salva</button>
+  </div>`;
   q("tradeModalBody").innerHTML=`<h3>Modifica calciatore</h3>${body}`;
   q("tradeModal").style.display="flex";
 }
 
 function savePlayerEditor(){
-  if(!requireLogin()) return false;
+  if(!isLoggedIn()){ alert("Devi fare login per modificare."); return false; }
   const isNew = !selectedPlayerId;
   let p=players.find(x=>x.id===selectedPlayerId);
-  const oldOwner = p ? String(p.owner||"") : "";
-  const oldCurrent = p ? String(p.current||"") : "";
   if(!p){
-    if(!requireAdmin()) return false;
     p={id:"P"+Date.now(),name:"",role:"",current:"",owner:"SVIN",status:"D",bonus:"",contract:"0",deadline:""};
     players.push(p);
-  }else if(!canEditPlayerObj(p) && !isAdmin()){
-    deny("Puoi modificare solo calciatori delle tue squadre.");
-    return false;
   }
-  const newOwner = String(q("plOwner")?.value||"SVIN").trim().toUpperCase();
-  const rawCurrent = String(q("plCurrent")?.value||"").trim().toUpperCase();
-  const newName = String(q("plName")?.value||"").trim();
-  if(!newName){ alert("Inserisci almeno il nome del calciatore."); return false; }
-  p.name=newName;
+  const newOwner = String(q("plOwner")?.value || "SVIN").trim().toUpperCase();
+  p.name=String(q("plName")?.value||"").trim();
   p.role=String(q("plRole")?.value||"").trim();
+  p.current=String(q("plCurrent")?.value||"").trim();
   p.owner=newOwner;
-  // La webapp costruisce le rose usando “current”: se è vuoto, o se prima coincideva col vecchio proprietario,
-  // aggiorno automaticamente alla nuova proprietà. Così il calciatore entra davvero nella squadra.
-  if(rawCurrent) p.current = rawCurrent;
-  else if(isNew || !oldCurrent || oldCurrent===oldOwner) p.current = newOwner;
-  else p.current = oldCurrent;
-  p.status=String(q("plStatus")?.value||"").trim();
+  p.status=String(q("plStatus")?.value||"D").trim();
   p.bonus=String(q("plBonus")?.value||"").trim();
   p.contract=String(q("plContract")?.value||"").trim();
   p.deadline=String(q("plDeadline")?.value||"").trim();
+  if(!p.name){ alert("Inserisci almeno il nome del calciatore."); return false; }
+  if(!p.owner) p.owner="SVIN";
   if(saveAll() === false) return false;
   closeTradeModal();
   renderPlayers();
-  if(q("view-teamDetail") && !q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
+  if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
   return true;
 }
 
@@ -1626,17 +1634,14 @@ function deletePlayerEditor(id){
   if(!confirm(`Eliminare definitivamente ${p.name}?`)) return false;
   players = players.filter(x=>x.id!==id);
   Object.keys(savedFormations||{}).forEach(teamCode=>{
-    const f = savedFormations[teamCode];
-    if(!f) return;
-    if(f.slots && typeof f.slots === "object"){
-      Object.keys(f.slots).forEach(slot=>{ if(f.slots[slot]===id) delete f.slots[slot]; });
-    }
-    Object.keys(f).forEach(k=>{ if(f[k]===id) delete f[k]; });
+    Object.keys(savedFormations[teamCode]||{}).forEach(slot=>{
+      if(savedFormations[teamCode][slot]===id) delete savedFormations[teamCode][slot];
+    });
   });
   if(saveAll() === false) return false;
   closeTradeModal();
   renderPlayers();
-  if(q("view-teamDetail") && !q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
+  if(!q("view-teamDetail").classList.contains("hidden")) renderTeamDetail();
   return true;
 }
 
@@ -1672,9 +1677,9 @@ function renderTrades(){
       <h3>Riepilogo provvisorio</h3>
       <div id="draftTradeSummary"></div>
       <div class="row" style="justify-content:flex-end">
-        <button type="button" class="btn" onclick="resetTradeForm()">Pulisci</button>
-        <button type="button" class="btn primary" onclick="openTradeReview()">Rivedi e conferma</button>
-        <button type="button" class="btn green" onclick="pendingTrade=JSON.parse(JSON.stringify(tradeState));confirmTradeFromModal()">Conferma subito</button>
+        <button class="btn" onclick="resetTradeForm()">Pulisci</button>
+        <button class="btn primary" onclick="openTradeReview()">Rivedi e conferma</button>
+        <button class="btn green" onclick="pendingTrade=JSON.parse(JSON.stringify(tradeState));confirmTradeFromModal()">Conferma subito</button>
       </div>
     </div>
     <div class="card" style="margin-top:14px">
@@ -1764,16 +1769,18 @@ function renderDraftSummary(){
 }
 
 function openTradeReview(){
-  if(!tradeState || (!tradeState.offer.length && !tradeState.request.length)){
+  if(!tradeState.offer.length && !tradeState.request.length){
     alert("Seleziona almeno un calciatore.");
     return;
   }
-  if(tradeState.from===tradeState.to){ alert("Scegli due squadre diverse."); return; }
+
   pendingTrade = JSON.parse(JSON.stringify(tradeState));
+
   q("tradeModalBody").innerHTML = `
     <div class="card">
       <h3>Riepilogo proposta scambio</h3>
       <p class="muted">${pendingTrade.from} ⇄ ${pendingTrade.to}</p>
+
       <div class="grid grid2">
         <div>
           <h4>${pendingTrade.from} cede</h4>
@@ -1784,16 +1791,18 @@ function openTradeReview(){
           <ul>${pendingTrade.request.map(itemSummary).join("") || "<li>Nessuno</li>"}</ul>
         </div>
       </div>
-      <p class="muted">Confermando, verranno aggiornati proprietari, squadra attuale, stato operazione, bonus/riscatto, crediti, registro e comunicato ufficiale.</p>
+
+      <p class="muted">Confermando verranno aggiornati proprietà calciatori, crediti, registro scambi e comunicato ufficiale.</p>
+
       <div class="row" style="justify-content:flex-end;margin-top:14px">
         <button type="button" class="btn" onclick="closeTradeModal()">Modifica</button>
         <button type="button" class="btn red" onclick="resetTradeForm();closeTradeModal()">Annulla</button>
         <button type="button" id="confirmTradeBtn" class="btn green" onclick="confirmTradeFromModal()">Conferma e registra</button>
       </div>
     </div>`;
-  q("tradeModal").style.display = "flex";
-}
 
+  q("tradeModal").style.display="flex";
+}
 
 function tradePlayerNames(items){
   return (items||[]).map(it=>players.find(p=>p.id===it.id)?.name || it.id).join(", ") || "nessun calciatore";
@@ -1869,56 +1878,88 @@ window.moveCredits = moveCredits;
 
 function confirmTradeFromModal(){
   try{
-    const t = pendingTrade ? JSON.parse(JSON.stringify(pendingTrade)) : JSON.parse(JSON.stringify(tradeState||{}));
-    t.offer = Array.isArray(t.offer) ? t.offer : [];
-    t.request = Array.isArray(t.request) ? t.request : [];
-    if(!t.from || !t.to || t.from===t.to){ alert("Scambio non valido: scegli due squadre diverse."); return false; }
-    if(!t.offer.length && !t.request.length){ alert("Seleziona almeno un calciatore."); return false; }
-    if(!isAdmin() && !(canEditTeam(t.from)||canEditTeam(t.to))){ deny("Puoi confermare solo scambi che coinvolgono una delle tue squadre."); return false; }
-
-    const restore = [];
-    const budgetRestore = teams.map(tm=>({code:tm.code,credits:tm.credits,hmcoin:tm.hmcoin}));
-
-    function applyItem(it, oldTeam, newTeam){
-      const p = players.find(x=>x.id===it.id);
-      if(!p) return;
-      restore.push({id:p.id, owner:p.owner, current:p.current, status:p.status, bonus:p.bonus, contract:p.contract, deadline:p.deadline});
-      p.owner = newTeam;
-      p.current = newTeam;
-      if(it.type !== undefined && String(it.type).trim()) p.status = String(it.type).trim();
-      if(it.cost !== undefined && String(it.cost).trim()) p.contract = String(it.cost).trim();
-      const bonusTxt = String(it.bonus||"").trim();
-      const ransomTxt = String(it.ransom||"").trim();
-      if(bonusTxt || ransomTxt){
-        p.bonus = [bonusTxt, ransomTxt ? "Riscatto " + ransomTxt : ""].filter(Boolean).join(" · ");
-      }
-      // paga chi riceve il calciatore, incassa chi lo cede
-      moveCredits(newTeam, oldTeam, it.cost);
+    if(!pendingTrade){
+      pendingTrade = JSON.parse(JSON.stringify(tradeState || {}));
+    }
+    if(!pendingTrade || !pendingTrade.from || !pendingTrade.to){
+      alert("Nessuno scambio da confermare.");
+      return false;
+    }
+    pendingTrade.offer = Array.isArray(pendingTrade.offer) ? pendingTrade.offer : [];
+    pendingTrade.request = Array.isArray(pendingTrade.request) ? pendingTrade.request : [];
+    if(!pendingTrade.offer.length && !pendingTrade.request.length){
+      alert("Seleziona almeno un calciatore.");
+      return false;
     }
 
-    t.offer.forEach(it=>applyItem(it, t.from, t.to));
-    t.request.forEach(it=>applyItem(it, t.to, t.from));
+    const restore = [];
+    const budgetRestore = teams.map(t=>({code:t.code,credits:t.credits,hmcoin:t.hmcoin}));
+
+    function applyTransfer(item, newOwner){
+      const p = players.find(x=>x.id===item.id);
+      if(!p) return;
+      restore.push({
+        id:p.id,
+        owner:p.owner,
+        status:p.status,
+        bonus:p.bonus,
+        contract:p.contract,
+        deadline:p.deadline,
+        ransom:p.ransom
+      });
+      p.owner = newOwner;
+      if(String(item.type||"").trim()) p.status = String(item.type).trim();
+      if(item.bonus !== undefined) p.bonus = String(item.bonus||"").trim();
+      if(item.ransom !== undefined && String(item.ransom||"").trim()){
+        p.ransom = String(item.ransom).trim();
+        if(p.status==="PD" || p.status==="PO") p.deadline = "Riscatto " + String(item.ransom).trim();
+      }
+    }
+
+    // La squadra che riceve il giocatore paga il costo alla squadra cedente.
+    pendingTrade.offer.forEach(it=>{
+      moveCredits(pendingTrade.to, pendingTrade.from, it.cost);
+      applyTransfer(it, pendingTrade.to);
+    });
+
+    pendingTrade.request.forEach(it=>{
+      moveCredits(pendingTrade.from, pendingTrade.to, it.cost);
+      applyTransfer(it, pendingTrade.from);
+    });
 
     const registeredTrade = {
-      ...t,
-      id:"T"+Date.now(),
+      ...JSON.parse(JSON.stringify(pendingTrade)),
       date:new Date().toLocaleString("it-IT"),
+      id:"T"+Date.now(),
       restore,
       budgetRestore,
       applied:true
     };
 
     trades.unshift(registeredTrade);
-    if(typeof createAutoTradeNews === "function") createAutoTradeNews(registeredTrade);
+
+    if(typeof createAutoTradeNews === "function"){
+      createAutoTradeNews(registeredTrade);
+    }else{
+      news.unshift({
+        title:`UFFICIALE: scambio registrato tra ${teamFullName(registeredTrade.from)} e ${teamFullName(registeredTrade.to)}`,
+        type:"Trasferimento",
+        body:`Scambio registrato tra ${teamFullName(registeredTrade.from)} e ${teamFullName(registeredTrade.to)}. Proprietari e crediti aggiornati nel database HM League.`,
+        author:"Ufficio Comunicati HM League",
+        pinned:false,
+        date:new Date().toLocaleDateString("it-IT")
+      });
+    }
 
     if(saveAll() === false) return false;
     closeTradeModal();
     resetTradeForm();
     renderTrades();
+
     alert("Scambio registrato: calciatori trasferiti, crediti aggiornati e comunicato creato.");
     return true;
   }catch(err){
-    console.error("Errore conferma scambio", err);
+    console.error(err);
     alert("Errore durante la registrazione dello scambio: " + (err.message || err));
     return false;
   }
@@ -1934,7 +1975,6 @@ document.addEventListener("click", function(e){
     confirmTradeFromModal();
   }
 }, true);
-
 
 function resetTradeForm(){
   tradeState.offer=[]; tradeState.request=[]; pendingTrade=null; 
@@ -2082,7 +2122,6 @@ function deleteConfirmedTrade(i){
 
   if(!confirm("Eliminare lo scambio e ripristinare i proprietari precedenti?")) return;
 
-  restoreBudgets(t);
   restoreBudgets(t);
   if(t.applied && Array.isArray(t.restore)){
     t.restore.forEach(r=>{
@@ -3281,6 +3320,9 @@ window.addEventListener("beforeunload", function(e){
   document.addEventListener("DOMContentLoaded",init); if(document.readyState!=="loading")setTimeout(init,50);
 })();
 </script>
+
+
+
 
 </body>
 </html>

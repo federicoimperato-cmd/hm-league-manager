@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante 3 · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -3324,6 +3324,7 @@ window.addEventListener("beforeunload", function(e){
   const $=id=>document.getElementById(id);
   const setStatus=(t,m)=>{const e=$("firebaseStatusBadge"); if(!e)return; e.textContent=t; e.style.borderColor=m==="ok"?"#22c55e":m==="bad"?"#ef4444":"#334155"; e.style.color=m==="bad"?"#fecaca":"#dbeafe";};
   const admin=()=>!!fbUser || (currentUser&&currentUser.role==="admin");
+
   function makeAdmin(u){fbUser=u||fbUser||{displayName:"Federico",email:"admin"}; currentUser={username:fbUser.displayName||fbUser.email||"Federico",role:"admin",teams:["*"]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
   function makeGuest(){fbUser=null; currentUser={username:"Ospite",role:"guest",teams:[]}; try{safeSetStorage("hm_current_user_v1",currentUser)}catch(e){}}
   function patchPerms(){
@@ -3337,43 +3338,100 @@ window.addEventListener("beforeunload", function(e){
     try{ if(typeof renderCurrentView==="function") renderCurrentView(); else if(typeof showView==="function") showView("dashboard"); }catch(e){console.error(e)}
     updateUI();
   }
+
   const metaRef=()=>fbDb.collection("hmleague").doc("main");
   const partsCol=()=>metaRef().collection("parts");
   const partRef=(id)=>partsCol().doc(id);
   const assetsCol=()=>metaRef().collection("assets");
+  const tradesCol=()=>metaRef().collection("trades_v2");
+  const newsCol=()=>metaRef().collection("news_v2");
 
   function clonePlain(v){try{return JSON.parse(JSON.stringify(v ?? null));}catch(e){return v;}}
+  function cleanForFirestore(v){return clonePlain(v);}
+  function safeId(v){return String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,140) || ("id_"+Date.now());}
+  function ensureIds(arr,prefix){
+    if(!Array.isArray(arr)) return [];
+    arr.forEach((x,i)=>{ if(x && typeof x==="object" && !x.id) x.id = prefix + "_" + Date.now() + "_" + i + "_" + Math.floor(Math.random()*100000); });
+    return arr;
+  }
   function stripTeamLogos(arr){return (Array.isArray(arr)?arr:[]).map(t=>{const x={...t}; delete x.logo; return x;});}
-  function teamLogoRows(){return (Array.isArray(teams)?teams:[]).filter(t=>String(t?.logo||"").trim()).map(t=>({id:"teamLogo_"+String(t.code||"").replace(/[^A-Za-z0-9_-]/g,"_"), code:t.code, value:t.logo}));}
+  function teamLogoRows(){return (Array.isArray(teams)?teams:[]).filter(t=>String(t?.logo||"").trim()).map(t=>({id:"teamLogo_"+safeId(t.code), code:t.code, value:t.logo}));}
   function splitOrgData(){
     const base=clonePlain(orgData)||{};
     const assets=[];
     Object.keys(base).forEach(code=>{
       const o=base[code]||{};
-      if(o.presidentImg){assets.push({id:"org_"+code+"_presidentImg", code, field:"presidentImg", value:o.presidentImg}); delete o.presidentImg;}
-      if(o.stadiumImg){assets.push({id:"org_"+code+"_stadiumImg", code, field:"stadiumImg", value:o.stadiumImg}); delete o.stadiumImg;}
+      if(o.presidentImg){assets.push({id:"org_"+safeId(code)+"_presidentImg", code, field:"presidentImg", value:o.presidentImg}); delete o.presidentImg;}
+      if(o.stadiumImg){assets.push({id:"org_"+safeId(code)+"_stadiumImg", code, field:"stadiumImg", value:o.stadiumImg}); delete o.stadiumImg;}
       base[code]=o;
     });
     return {base,assets};
   }
-  function awardAssetRows(){return Object.entries(awardImages||{}).filter(([k,v])=>String(v||"").trim()).map(([k,v])=>({id:"award_"+String(k).replace(/[^A-Za-z0-9_-]/g,"_"), key:k, value:v}));}
-
-  const payload=()=>({version:5,updatedAt:new Date().toISOString(),teams,players,trades,news,honors,individualTitles,positionHistory,orgData,awardImages,rankingData,rankingHidden,seasonHistory,savedFormations,auctionState,presidentActions,competitionsManager,coachesManager,regulationText});
+  function awardAssetRows(){return Object.entries(awardImages||{}).filter(([k,v])=>String(v||"").trim()).map(([k,v])=>({id:"award_"+safeId(k), key:k, value:v}));}
   function good(d){return d&&Array.isArray(d.players)&&d.players.length>50&&Array.isArray(d.teams)&&d.teams.length>=16}
-  function apply(d){if(!good(d))return false; teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news; honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages; rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations; auctionState=d.auctionState||auctionState; presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText; try{saveLocalOnly()}catch(e){} return true;}
+  function apply(d){
+    if(!good(d))return false;
+    teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news;
+    honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages;
+    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations; auctionState=d.auctionState||auctionState; presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
+    ensureIds(trades,"trade"); ensureIds(news,"news");
+    try{saveLocalOnly()}catch(e){}
+    return true;
+  }
 
   function buildSplitDocs(){
+    ensureIds(trades,"trade");
+    ensureIds(news,"news");
     const org=splitOrgData();
+    const tradeIndex=(Array.isArray(trades)?trades:[]).map((t,i)=>({id:safeId(t.id || ("trade_"+i)), sort:i, date:t.date||"", from:t.from||"", to:t.to||""}));
+    const newsIndex=(Array.isArray(news)?news:[]).map((n,i)=>({id:safeId(n.id || ("news_"+i)), sort:i, date:n.date||"", title:n.title||""}));
     const docs={
-      core:{version:5,updatedAt:new Date().toISOString(),news,rankingData,rankingHidden,auctionState,presidentActions,regulationText},
+      core:{version:6,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState,presidentActions,regulationText},
       teams:{teams:stripTeamLogos(teams)},
       players:{players},
-      trades:{trades},
+      tradesIndex:{items:tradeIndex,count:tradeIndex.length,split:true},
+      newsIndex:{items:newsIndex,count:newsIndex.length,split:true},
+      // Questi due documenti restano volutamente piccoli: sostituiscono eventuali vecchi documenti enormi.
+      trades:{split:true,count:tradeIndex.length,updatedAt:new Date().toISOString()},
+      news:{split:true,count:newsIndex.length,updatedAt:new Date().toISOString()},
       honors:{honors,individualTitles,positionHistory,seasonHistory},
       managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base}
     };
     const assets=[...teamLogoRows(),...org.assets,...awardAssetRows()];
-    return {docs,assets};
+    return {docs,assets,tradeIndex,newsIndex};
+  }
+
+  async function commitInChunks(writes){
+    let batch=fbDb.batch(), count=0;
+    async function flush(){ if(count>0){ await batch.commit(); batch=fbDb.batch(); count=0; } }
+    for(const w of writes){
+      if(w.type==="set") batch.set(w.ref, cleanForFirestore(w.data), w.options||{merge:false});
+      else if(w.type==="delete") batch.delete(w.ref);
+      count++;
+      if(count>=430) await flush();
+    }
+    await flush();
+  }
+
+  async function fbSaveSplit(){
+    const {docs,assets}=buildSplitDocs();
+    const writes=[];
+    writes.push({type:"set",ref:metaRef(),data:{version:6,updatedAt:new Date().toISOString(),mode:"split_v2"},options:{merge:true}});
+    Object.entries(docs).forEach(([id,data])=>writes.push({type:"set",ref:partRef(id),data,options:{merge:false}}));
+    assets.forEach(a=>writes.push({type:"set",ref:assetsCol().doc(a.id),data:a,options:{merge:false}}));
+    (Array.isArray(trades)?trades:[]).forEach((t,i)=>writes.push({type:"set",ref:tradesCol().doc(safeId(t.id || ("trade_"+i))),data:{...t,_sort:i},options:{merge:false}}));
+    (Array.isArray(news)?news:[]).forEach((n,i)=>writes.push({type:"set",ref:newsCol().doc(safeId(n.id || ("news_"+i))),data:{...n,_sort:i},options:{merge:false}}));
+    await commitInChunks(writes);
+  }
+
+  async function docsFromIndex(col,indexItems){
+    const snap=await col.get();
+    const byId={};
+    snap.forEach(doc=>{byId[doc.id]=doc.data()||{};});
+    if(Array.isArray(indexItems) && indexItems.length){
+      return indexItems.map((it,i)=>({...(byId[it.id]||{}), id:(byId[it.id]?.id||it.id), _sort:it.sort??i})).filter(x=>Object.keys(x).length>1).sort((a,b)=>(a._sort??0)-(b._sort??0));
+    }
+    return Object.entries(byId).map(([id,x])=>({...x,id:x.id||id})).sort((a,b)=>(a._sort??0)-(b._sort??0));
   }
 
   async function fbLoadSplit(){
@@ -3382,13 +3440,15 @@ window.addEventListener("beforeunload", function(e){
     const d={};
     snap.forEach(x=>{d[x.id]=x.data()||{};});
     const aSnap=await assetsCol().get();
+    const splitTrades = await docsFromIndex(tradesCol(), d.tradesIndex?.items || []);
+    const splitNews = await docsFromIndex(newsCol(), d.newsIndex?.items || []);
     const full={
-      version:d.core?.version||5,
+      version:d.core?.version||6,
       updatedAt:d.core?.updatedAt||"",
       teams:d.teams?.teams||[],
       players:d.players?.players||[],
-      trades:d.trades?.trades||[],
-      news:d.core?.news||[],
+      trades: splitTrades.length ? splitTrades : (d.trades?.trades||[]),
+      news: splitNews.length ? splitNews : (d.core?.news || d.news?.news || []),
       honors:d.honors?.honors||[],
       individualTitles:d.honors?.individualTitles||[],
       positionHistory:d.honors?.positionHistory||[],
@@ -3414,23 +3474,11 @@ window.addEventListener("beforeunload", function(e){
     return full;
   }
 
-  async function fbSaveSplit(){
-    const {docs,assets}=buildSplitDocs();
-    const batch=fbDb.batch();
-    batch.set(metaRef(),{version:5,updatedAt:new Date().toISOString(),mode:"split"},{merge:true});
-    Object.entries(docs).forEach(([id,data])=>batch.set(partRef(id),data,{merge:false}));
-    // Nota: non cancelliamo asset vecchi qui per evitare perdita immagini se un salvataggio parziale fallisce.
-    // Un asset sostituito viene sovrascritto; un asset rimosso può restare finché non si fa pulizia dedicata.
-    assets.forEach(a=>batch.set(assetsCol().doc(a.id),a,{merge:false}));
-    await batch.commit();
-  }
-
   async function fbLoad(){
     if(!fbDb)return false;
     setStatus("☁️ Carico dati online...","wait");
     try{
       let data=await fbLoadSplit();
-      // Fallback: vecchio documento unico, per compatibilità con i dati già salvati prima del passaggio a documenti separati.
       if(!good(data)){
         const old=await metaRef().get();
         if(old.exists && good(old.data())) data=old.data();
@@ -3447,21 +3495,57 @@ window.addEventListener("beforeunload", function(e){
     fbSaving=true; updateUI(); setStatus("💾 Salvataggio online...","wait");
     try{
       await fbSaveSplit();
+      try{saveLocalOnly()}catch(e){}
       HM_HAS_UNSAVED_CHANGES=false; fbLoaded=true;
-      setStatus("✅ Salvato online","ok");
+      setStatus("✅ Online sincronizzato","ok");
       if(manual)alert("Salvato online su Firebase.");
       return true;
     }catch(e){console.error(e); setStatus("⚠️ Errore salvataggio Firebase","bad"); if(manual)alert("Errore salvataggio Firebase: "+(e.code||e.message||e)); return false;}
     finally{fbSaving=false; updateUI();}
   }
 
-  function patchSave(){loadCloudData=fbLoad; saveCloudNow=fbSave; window.loadCloudData=fbLoad; window.saveCloudNow=fbSave; saveAll=function(){patchPerms(); if(!admin()){alert("Devi fare login Google per modificare."); return false;} try{saveLocalOnly()}catch(e){} HM_HAS_UNSAVED_CHANGES=true; clearTimeout(fbSaveTimer); fbSaveTimer=setTimeout(()=>fbSave(false),900); updateUI(); return true;}; window.saveAll=saveAll;}
-  async function login(){try{if(!fbAuth){alert("Firebase non è pronto. Ricarica la pagina.");return} if(admin()){await fbAuth.signOut(); makeGuest(); setStatus("☁️ Uscito da Google","wait"); renderSafe(); return} const provider=new firebase.auth.GoogleAuthProvider(); provider.setCustomParameters({prompt:"select_account"}); setStatus("🔐 Login Google in corso...","wait"); const r=await fbAuth.signInWithPopup(provider); makeAdmin(r.user); setStatus("🔓 Admin collegato","ok"); await fbLoad(); renderSafe();}catch(e){console.error(e); setStatus("⚠️ Login Google errore","bad"); alert("Login Google non riuscito: "+(e.code||e.message||e));}}
-  function init(){try{if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return} firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig); fbAuth=firebase.auth(); fbDb=firebase.firestore(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn); patchPerms(); patchSave(); const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn"); if(lb&&!lb.dataset.fix){lb.dataset.fix="1"; lb.addEventListener("click",login)} if(sb&&!sb.dataset.fix){sb.dataset.fix="1"; sb.addEventListener("click",()=>fbSave(true))} updateUI(); setStatus("☁️ Firebase pronto","wait"); fbAuth.onAuthStateChanged(async u=>{if(u){makeAdmin(u); setStatus("🔓 Admin collegato","ok"); if(!fbLoaded)await fbLoad()}else{makeGuest(); if(!fbLoaded)await fbLoad()} renderSafe();}); fbLoad();}catch(e){console.error(e); setStatus("⚠️ Firebase errore","bad");}}
+  function patchSave(){
+    loadCloudData=fbLoad; saveCloudNow=fbSave; window.loadCloudData=fbLoad; window.saveCloudNow=fbSave;
+    saveAll=function(){
+      patchPerms();
+      if(!admin()){alert("Devi fare login Google per modificare."); return false;}
+      try{saveLocalOnly()}catch(e){}
+      HM_HAS_UNSAVED_CHANGES=true;
+      clearTimeout(fbSaveTimer);
+      fbSaveTimer=setTimeout(()=>fbSave(false),900);
+      updateUI();
+      return true;
+    };
+    window.saveAll=saveAll;
+  }
+
+  async function login(){
+    try{
+      if(!fbAuth){alert("Firebase non è pronto. Ricarica la pagina.");return}
+      if(admin()){await fbAuth.signOut(); makeGuest(); setStatus("☁️ Uscito da Google","wait"); renderSafe(); return}
+      const provider=new firebase.auth.GoogleAuthProvider(); provider.setCustomParameters({prompt:"select_account"});
+      setStatus("🔐 Login Google in corso...","wait");
+      const r=await fbAuth.signInWithPopup(provider);
+      makeAdmin(r.user); setStatus("🔓 Admin collegato","ok"); await fbLoad(); renderSafe();
+    }catch(e){console.error(e); setStatus("⚠️ Login Google errore","bad"); alert("Login Google non riuscito: "+(e.code||e.message||e));}
+  }
+  function init(){
+    try{
+      if(!window.firebase){setStatus("⚠️ Firebase SDK non caricato","bad");return}
+      firebase.apps.length?firebase.app():firebase.initializeApp(firebaseConfig);
+      fbAuth=firebase.auth(); fbDb=firebase.firestore(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn);
+      patchPerms(); patchSave();
+      const lb=$("hmFirebaseLoginBtn"), sb=$("hmFirebaseSaveBtn");
+      if(lb&&!lb.dataset.fix){lb.dataset.fix="1"; lb.addEventListener("click",login)}
+      if(sb&&!sb.dataset.fix){sb.dataset.fix="1"; sb.addEventListener("click",()=>fbSave(true))}
+      updateUI(); setStatus("☁️ Firebase pronto","wait");
+      fbAuth.onAuthStateChanged(async u=>{if(u){makeAdmin(u); setStatus("🔓 Admin collegato","ok"); if(!fbLoaded)await fbLoad()}else{makeGuest(); if(!fbLoaded)await fbLoad()} renderSafe();});
+      fbLoad();
+    }catch(e){console.error(e); setStatus("⚠️ Firebase errore","bad");}
+  }
   document.addEventListener("DOMContentLoaded",init); if(document.readyState!=="loading")setTimeout(init,50);
 })();
 </script>
-
 
 
 

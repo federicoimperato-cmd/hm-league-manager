@@ -3398,7 +3398,7 @@ window.addEventListener("beforeunload", function(e){
     const docs={
       // Asta live: nel core salvo solo lo storico, non l'asta in corso.
       // L'asta in corso resta nel documento realtime/auction per non essere cancellata dai salvataggi generali.
-      core:{version:6,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState:{history:Array.isArray(auctionState?.history)?auctionState.history:[]},presidentActions,regulationText},
+      core:{version:6,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState:{history:Array.isArray(auctionState?.history)?auctionState.history:[]},presidentActions,regulationText,pendingTrades:clonePlain(window.pendingTrades || [])},
       teams:{teams:stripTeamLogos(teams)},
       players:{players},
       tradesIndex:{items:tradeIndex,count:tradeIndex.length,split:true},
@@ -4766,6 +4766,96 @@ window.addEventListener("beforeunload", function(e){
       saveAfterTradeAdminChange().then(()=>{try{if(typeof renderTrades==="function")renderTrades();}catch(e){}});
     }
   }, 2000);
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   FIX MIRATO SOLO SCAMBI IN ATTESA
+   - il salvataggio generale Firebase include sempre pendingTrades
+   - approva/rifiuta sincronizzano subito la lista in cloud
+   - se admin elimina una proposta, non resta nella memoria dei presidenti
+   ========================================================= */
+(function(){
+  const PENDING_KEY = "hm_pending_trades_v1";
+  function safePending(){
+    try{
+      if(!Array.isArray(window.pendingTrades)) window.pendingTrades = JSON.parse(localStorage.getItem(PENDING_KEY)||"[]");
+    }catch(e){ window.pendingTrades = []; }
+    return window.pendingTrades;
+  }
+  function savePendingLocalNow(){
+    try{ localStorage.setItem(PENDING_KEY, JSON.stringify(safePending())); }catch(e){}
+  }
+  function firebaseDb(){
+    try{
+      if(!window.firebase || !firebase.firestore) return null;
+      if(firebase.apps && !firebase.apps.length && typeof firebaseConfig !== "undefined") firebase.initializeApp(firebaseConfig);
+      return firebase.firestore();
+    }catch(e){ return null; }
+  }
+  async function savePendingCloudNow(){
+    savePendingLocalNow();
+    const db = firebaseDb();
+    if(!db) return false;
+    try{
+      await db.collection("hmleague").doc("main").collection("parts").doc("core").set({
+        pendingTrades: JSON.parse(JSON.stringify(safePending())),
+        pendingTradesUpdatedAt: new Date().toISOString()
+      }, {merge:true});
+      return true;
+    }catch(e){
+      console.warn("Scambi in attesa non sincronizzati subito", e);
+      return false;
+    }
+  }
+  window.hmSavePendingTradesCloudNow = savePendingCloudNow;
+
+  const oldReject = window.rejectPendingTrade;
+  window.rejectPendingTrade = rejectPendingTrade = async function(i){
+    if(typeof internalAdmin === "function" && !internalAdmin()) return (typeof denied === "function" ? denied("Solo Federico può rifiutare.") : alert("Solo Federico può rifiutare."));
+    const list = safePending();
+    if(!list[i]) return false;
+    if(!confirm("Eliminare questa proposta in attesa?")) return false;
+    list.splice(i,1);
+    savePendingLocalNow();
+    await savePendingCloudNow();
+    try{ if(typeof saveAll === "function") saveAll(); }catch(e){}
+    try{ if(typeof renderTrades === "function") renderTrades(); }catch(e){}
+    return true;
+  };
+
+  const oldApprove = window.approvePendingTrade;
+  window.approvePendingTrade = approvePendingTrade = async function(i){
+    if(typeof internalAdmin === "function" && !internalAdmin()) return (typeof denied === "function" ? denied("Solo Federico può approvare.") : alert("Solo Federico può approvare."));
+    const list = safePending();
+    const t = list[i];
+    if(!t) return false;
+    if(!confirm("Approvare e rendere ufficiale questo scambio?")) return false;
+    list.splice(i,1);
+    savePendingLocalNow();
+    await savePendingCloudNow();
+    try{
+      if(typeof applyTradeOfficial === "function") applyTradeOfficial(t);
+      else if(oldApprove) return oldApprove.call(this,i);
+      if(typeof saveAll === "function") saveAll();
+      if(typeof renderTrades === "function") renderTrades();
+    }catch(e){ console.error(e); alert("Errore approvazione scambio: "+(e.message||e)); }
+    return true;
+  };
+
+  // Quando un presidente invia una nuova proposta, forza la sincronizzazione immediata della lista pending.
+  const oldConfirm = window.confirmTradeFromModal;
+  window.confirmTradeFromModal = confirmTradeFromModal = async function(){
+    const before = safePending().length;
+    const res = oldConfirm ? oldConfirm.apply(this, arguments) : false;
+    setTimeout(()=>{
+      const after = safePending().length;
+      if(after !== before) savePendingCloudNow();
+    }, 150);
+    return res;
+  };
 })();
 </script>
 

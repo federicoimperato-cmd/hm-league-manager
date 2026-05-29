@@ -3545,6 +3545,164 @@ window.addEventListener("beforeunload", function(e){
   }
   document.addEventListener("DOMContentLoaded",init); if(document.readyState!=="loading")setTimeout(init,50);
 })();
+
+
+/* =========================================================
+   FIX CALCIATORI DEFINITIVO - solo editor calciatori
+   - ruolo da tendina
+   - squadra attuale da tendina
+   - proprietario da tendina
+   - salvataggio corretto role/current/owner
+   - duplicazione calciatore
+   ========================================================= */
+(function(){
+  function hmEsc(v){
+    try { return typeof esc === "function" ? esc(v) : String(v??"").replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m])); }
+    catch(e){ return String(v??""); }
+  }
+  function hmNormCode(v){ return String(v||"").trim().toUpperCase(); }
+  function hmTeamOptions(selected, includeEmpty){
+    selected = hmNormCode(selected);
+    const base = includeEmpty ? [`<option value="" ${!selected?"selected":""}>— Nessuna / Svincolato —</option>`] : [];
+    const arr = Array.isArray(teams) ? teams : [];
+    return base.concat(arr.map(t=>{
+      const code = hmNormCode(t.code);
+      return `<option value="${hmEsc(code)}" ${code===selected?"selected":""}>${hmEsc(code)} · ${hmEsc(t.name||"")}</option>`;
+    })).join("");
+  }
+  function hmRoleOptions(selected){
+    selected = String(selected||"").trim();
+    const common = ["Por","Dc","Dd","Ds","B","E","M","C","W","T","A","Pc","Dd;Dc","Ds;Dc","Dd;Ds;E","B;Dd;E","B;Ds;E","Ds;E","Dd;E","E;W","E;M","M;C","C;T","C;W","C;W;T","W;A","W;T","W;T;A","T;A","A;Pc"];
+    const fromDb = Array.from(new Set((Array.isArray(players)?players:[]).map(p=>String(p.role||"").trim()).filter(Boolean)));
+    const roles = Array.from(new Set(["", ...common, ...fromDb, selected].filter((v,i,a)=>v!==undefined && (v || i===0))));
+    return roles.map(r=>`<option value="${hmEsc(r)}" ${r===selected?"selected":""}>${r?hmEsc(r):"— Seleziona ruolo —"}</option>`).join("");
+  }
+  function hmStatusOptions(selected){
+    selected = String(selected||"D").trim();
+    const list = ["D","PS","PD","PO","PRIMAVERA 2005","PRIMAVERA 2006","PRIMAVERA 2007","PRIMAVERA 2008","PRIMAVERA 2009","PRIMAVERA 2010","PRIMAVERA 2011","Svincolato", selected].filter(Boolean);
+    const unique = Array.from(new Set(list));
+    return unique.map(s=>`<option value="${hmEsc(s)}" ${s===selected?"selected":""}>${hmEsc(s)}</option>`).join("");
+  }
+  function hmPlayerForm(p, mode){
+    p = p || {name:"",role:"",current:"",owner:"SVIN",status:"D",bonus:"",contract:"0",deadline:""};
+    const title = mode === "new" ? "Aggiungi calciatore al database" : (mode === "duplicate" ? "Duplica calciatore" : "Modifica calciatore");
+    const saveLabel = mode === "edit" ? "Salva" : (mode === "duplicate" ? "Crea duplicato" : "Aggiungi");
+    const deleteBtn = mode === "edit" ? `<button type="button" class="btn red" onclick="deletePlayerEditor('${hmEsc(p.id)}')">Elimina</button>` : "";
+    const duplicateBtn = mode === "edit" ? `<button type="button" class="btn yellow" onclick="duplicatePlayerEditor('${hmEsc(p.id)}')">Duplica</button>` : "";
+    return `<h3>${title}</h3>
+      <div class="grid grid3">
+        <label>Nome<input class="input" id="plName" value="${hmEsc(p.name)}" placeholder="Nome calciatore"></label>
+        <label>Ruolo<select class="input" id="plRole">${hmRoleOptions(p.role)}</select></label>
+        <label>Squadra attuale<select class="input" id="plCurrent">${hmTeamOptions(p.current, true)}</select></label>
+        <label>Proprietario<select id="plOwner" class="input">${hmTeamOptions(p.owner || "SVIN", false)}</select></label>
+        <label>Stato<select class="input" id="plStatus">${hmStatusOptions(p.status || "D")}</select></label>
+        <label>Bonus<input class="input" id="plBonus" value="${hmEsc(p.bonus)}"></label>
+        <label>Contratto<input class="input" id="plContract" value="${hmEsc(p.contract)}"></label>
+        <label>Scadenza<input class="input" id="plDeadline" value="${hmEsc(p.deadline)}"></label>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="muted"><b>Nota:</b> se lasci “Squadra attuale” vuota e scegli un proprietario, il sistema assegna automaticamente il calciatore alla squadra proprietaria. Se vuoi svincolarlo, metti Proprietario = SVIN.</div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        ${deleteBtn}
+        ${duplicateBtn}
+        <button type="button" class="btn" onclick="closeTradeModal()">Annulla</button>
+        <button type="button" class="btn green" onclick="savePlayerEditor()">${saveLabel}</button>
+      </div>`;
+  }
+  function hmOpenModal(html){
+    const body = q("tradeModalBody"), modal = q("tradeModal");
+    if(!body || !modal){ alert("Errore apertura editor calciatore."); return; }
+    body.innerHTML = html;
+    modal.style.display = "flex";
+  }
+
+  window.openNewPlayerEditor = function(){
+    if(typeof requireAdmin === "function" && !requireAdmin()) return false;
+    selectedPlayerId = null;
+    hmOpenModal(hmPlayerForm(null, "new"));
+  };
+
+  window.openPlayerEditor = function(id){
+    const p = (Array.isArray(players)?players:[]).find(x=>String(x.id)===String(id));
+    if(!p) return false;
+    if(typeof canEditPlayerObj === "function" && !canEditPlayerObj(p) && typeof requireAdmin === "function" && !requireAdmin()) return false;
+    selectedPlayerId = p.id;
+    hmOpenModal(hmPlayerForm(p, "edit"));
+  };
+
+  window.duplicatePlayerEditor = function(id){
+    const p = (Array.isArray(players)?players:[]).find(x=>String(x.id)===String(id));
+    if(!p) return false;
+    if(typeof requireAdmin === "function" && !requireAdmin()) return false;
+    selectedPlayerId = null;
+    const clone = {...p, id:"", name:p.name};
+    hmOpenModal(hmPlayerForm(clone, "duplicate"));
+  };
+
+  window.savePlayerEditor = function(){
+    if(typeof isLoggedIn === "function" && !isLoggedIn()){ alert("Devi fare login per modificare."); return false; }
+    const isNew = !selectedPlayerId;
+    if(isNew && typeof requireAdmin === "function" && !requireAdmin()) return false;
+
+    let p = (Array.isArray(players)?players:[]).find(x=>String(x.id)===String(selectedPlayerId));
+    if(!p){
+      p = {id:"P"+Date.now()+"_"+Math.random().toString(16).slice(2), name:"", role:"", current:"", owner:"SVIN", status:"D", bonus:"", contract:"0", deadline:""};
+      players.push(p);
+    } else if(typeof canEditPlayerObj === "function" && !canEditPlayerObj(p) && typeof requireAdmin === "function" && !requireAdmin()) {
+      return false;
+    }
+
+    const name = String(q("plName")?.value||"").trim();
+    const role = String(q("plRole")?.value||"").trim();
+    let current = hmNormCode(q("plCurrent")?.value);
+    let owner = hmNormCode(q("plOwner")?.value || "SVIN");
+    const status = String(q("plStatus")?.value||"D").trim();
+
+    if(!name){ alert("Inserisci almeno il nome del calciatore."); return false; }
+    if(!role){ alert("Seleziona il ruolo del calciatore."); return false; }
+    if(!owner) owner = "SVIN";
+
+    // Regola chiara: se il proprietario è una squadra e la squadra attuale è vuota,
+    // il calciatore entra automaticamente nella squadra proprietaria.
+    // Se invece il proprietario è SVIN, resta davvero svincolato.
+    if(owner === "SVIN") current = "";
+    else if(!current) current = owner;
+
+    p.name = name;
+    p.role = role;
+    p.current = current;
+    p.owner = owner;
+    p.status = status;
+    p.bonus = String(q("plBonus")?.value||"").trim();
+    p.contract = String(q("plContract")?.value||"").trim();
+    p.deadline = String(q("plDeadline")?.value||"").trim();
+
+    if(typeof saveAll === "function" && saveAll() === false) return false;
+    closeTradeModal();
+    try{ renderPlayers(); }catch(e){ console.warn(e); }
+    try{ if(q("view-teamDetail") && !q("view-teamDetail").classList.contains("hidden")) renderTeamDetail(); }catch(e){ console.warn(e); }
+    return true;
+  };
+
+  window.deletePlayerEditor = function(id){
+    if(typeof requireAdmin === "function" && !requireAdmin()) return false;
+    const p = (Array.isArray(players)?players:[]).find(x=>String(x.id)===String(id));
+    if(!p) return false;
+    if(!confirm(`Eliminare definitivamente ${p.name}?`)) return false;
+    players = players.filter(x=>String(x.id)!==String(id));
+    Object.keys(savedFormations||{}).forEach(teamCode=>{
+      Object.keys(savedFormations[teamCode]||{}).forEach(slot=>{
+        if(String(savedFormations[teamCode][slot])===String(id)) delete savedFormations[teamCode][slot];
+      });
+    });
+    if(typeof saveAll === "function" && saveAll() === false) return false;
+    closeTradeModal();
+    try{ renderPlayers(); }catch(e){ console.warn(e); }
+    try{ if(q("view-teamDetail") && !q("view-teamDetail").classList.contains("hidden")) renderTeamDetail(); }catch(e){ console.warn(e); }
+    return true;
+  };
+})();
 </script>
 
 

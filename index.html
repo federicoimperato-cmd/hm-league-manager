@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante Asta · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -254,17 +254,26 @@ function openLoginModal(){
     </div>`;
   q("tradeModal").style.display="flex";
 }
-function loginUser(){
+async function loginUser(){
   const u=normalizeLoginName(q("hmLoginUser")?.value);
-  const pass=String(q("hmLoginPass")?.value||"");
+  const pass=String(q("hmLoginPass")?.value||"").trim();
   const rec=HM_AUTH_USERS[u];
   if(!rec || rec.password!==pass){alert("Utente o password errati.");return;}
+
+  // Login interno + autenticazione Firebase anonima.
+  // Senza questo passaggio l'utente è riconosciuto dal gestionale,
+  // ma Firebase può rifiutare il salvataggio.
+  if(typeof window.hmFirebaseEnsureAuth === "function"){
+    const ok = await window.hmFirebaseEnsureAuth();
+    if(!ok) return;
+  }
+
   currentUser={username:rec.name,role:rec.role,teams:[...rec.teams]};
   safeSetStorage("hm_current_user_v1", currentUser);
   closeTradeModal();
   updateAuthBadge();
   showView("dashboard");
-  loadCloudData();
+  if(typeof loadCloudData === "function") loadCloudData();
 }
 function logoutUser(){
   currentUser={username:"Ospite",role:"guest",teams:[]};

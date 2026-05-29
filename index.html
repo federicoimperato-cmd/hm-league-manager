@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante ASTA LIVE · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -3376,7 +3376,14 @@ window.addEventListener("beforeunload", function(e){
     if(!good(d))return false;
     teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news;
     honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages;
-    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations; auctionState=d.auctionState||auctionState; presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
+    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations;
+    // Asta live: NON sovrascrivere mai l'asta in corso caricando il gestionale generale.
+    // Il documento realtime/auction è la fonte vera per playerId, bids, activeTeams e passedTeams.
+    // Dal salvataggio generale recuperiamo solo lo storico aggiudicazioni.
+    if(d.auctionState && Array.isArray(d.auctionState.history)){
+      auctionState = Object.assign({}, auctionState || {}, {history:d.auctionState.history});
+    }
+    presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
     ensureIds(trades,"trade"); ensureIds(news,"news");
     try{saveLocalOnly()}catch(e){}
     return true;
@@ -3389,7 +3396,9 @@ window.addEventListener("beforeunload", function(e){
     const tradeIndex=(Array.isArray(trades)?trades:[]).map((t,i)=>({id:safeId(t.id || ("trade_"+i)), sort:i, date:t.date||"", from:t.from||"", to:t.to||""}));
     const newsIndex=(Array.isArray(news)?news:[]).map((n,i)=>({id:safeId(n.id || ("news_"+i)), sort:i, date:n.date||"", title:n.title||""}));
     const docs={
-      core:{version:6,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState,presidentActions,regulationText},
+      // Asta live: nel core salvo solo lo storico, non l'asta in corso.
+      // L'asta in corso resta nel documento realtime/auction per non essere cancellata dai salvataggi generali.
+      core:{version:6,updatedAt:new Date().toISOString(),rankingData,rankingHidden,auctionState:{history:Array.isArray(auctionState?.history)?auctionState.history:[]},presidentActions,regulationText},
       teams:{teams:stripTeamLogos(teams)},
       players:{players},
       tradesIndex:{items:tradeIndex,count:tradeIndex.length,split:true},
@@ -3458,7 +3467,8 @@ window.addEventListener("beforeunload", function(e){
       seasonHistory:d.honors?.seasonHistory||[],
       rankingData:d.core?.rankingData||[],
       rankingHidden:d.core?.rankingHidden||[],
-      auctionState:d.core?.auctionState||auctionState,
+      // Non caricare qui playerId/bids dell'asta: arrivano dal listener realtime.
+      auctionState:Object.assign({}, auctionState||{}, {history:Array.isArray(d.core?.auctionState?.history)?d.core.auctionState.history:[]}),
       presidentActions:d.core?.presidentActions||[],
       regulationText:d.core?.regulationText||"",
       savedFormations:d.managers?.savedFormations||{},

@@ -75,7 +75,7 @@ button{cursor:pointer}
     <div class="between">
       <div>
         <div class="kicker">HM League Manager</div>
-        <h1>Gestionale completo funzionante ASTA LIVE · Scambi admin fix</h1>
+        <h1>Gestionale completo funzionante · Scambi admin fix</h1>
         <div class="muted">Demo locale con dati reali CSV. Per renderla online servirà database cloud + login.</div>
       </div>
       <div class="row">
@@ -3924,7 +3924,14 @@ window.addEventListener("beforeunload", function(e){
         </div>
         <div class="card"><h3>Asta in corso</h3>${auctionHtml}</div>
       </div>
-      <div class="card" style="margin-top:14px"><h3>Storico aste</h3>${(auctionState.history||[]).length?auctionState.history.map((h,i)=>`<div class="playerRow">${hmJersey(h.team,42)}<div><b>${hmEsc(h.playerName)}</b><div class="muted">Aggiudicato a ${hmTeamLabel(h.team)} per ${hmEsc(h.amount)} crediti</div></div><button class="btn red" type="button" onclick="undoAuctionOperation(${i})" ${hmIsAdmin()?'':'disabled'}>Annulla</button></div>`).join(""):'<div class="muted">Nessuna operazione.</div>'}</div>`;
+      <div class="card" style="margin-top:14px">
+        <div class="between">
+          <h3>Riepilogo storico asta</h3>
+          <button class="btn red" type="button" onclick="clearAuctionHistory()" ${hmIsAdmin()?'':'disabled'}>AZZERA storico asta</button>
+        </div>
+        <div class="muted" style="margin-bottom:10px">Qui puoi correggere prezzo o squadra se hai sbagliato, eliminare una riga dallo storico o annullare proprio l'operazione.</div>
+        ${hmRenderAuctionHistorySummary()}
+      </div>`;
     try{ renderAuctionSearchResults(); }catch(e){}
     try{ if(typeof applyPermissionsToVisibleView === "function") applyPermissionsToVisibleView(); }catch(e){}
   };
@@ -4049,6 +4056,111 @@ window.addEventListener("beforeunload", function(e){
   window.undoAuctionOperation = function(i){
     if(!hmIsAdmin()){ alert("Solo admin può annullare un'operazione d'asta."); return; }
     if(typeof oldUndo === "function") return oldUndo(i);
+  };
+
+
+  function hmRenderAuctionHistorySummary(){
+    const rows = Array.isArray(auctionState?.history) ? auctionState.history : [];
+    if(!rows.length) return '<div class="muted">Nessuna operazione.</div>';
+    return rows.map((h,i)=>`
+      <div class="playerRow" style="grid-template-columns:60px 1fr auto">
+        ${hmJersey(h.team,42)}
+        <div>
+          <b>${hmEsc(h.playerName||'Calciatore')}</b>
+          <div class="muted">${hmEsc(h.date||'')} · ${hmEsc(hmTeamLabel(h.team))} · ${hmEsc(h.amount)} crediti</div>
+        </div>
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn yellow" type="button" onclick="editAuctionHistoryItem(${i})" ${hmIsAdmin()?'':'disabled'}>Modifica</button>
+          <button class="btn red" type="button" onclick="deleteAuctionHistoryItem(${i})" ${hmIsAdmin()?'':'disabled'}>Elimina</button>
+          <button class="btn" type="button" onclick="undoAuctionOperation(${i})" ${hmIsAdmin()?'':'disabled'}>Annulla operazione</button>
+        </div>
+      </div>`).join('');
+  }
+
+  function hmAuctionHistoryTeamOptions(selected){
+    return (Array.isArray(teams)?teams:[])
+      .filter(t=>t.code && t.code!=="SVIN")
+      .map(t=>`<option value="${hmEsc(t.code)}" ${String(t.code)===String(selected)?'selected':''}>${hmEsc(hmTeamLabel(t.code))} · crediti ${hmEsc(t.credits??0)}</option>`)
+      .join('');
+  }
+
+  window.editAuctionHistoryItem = function(i){
+    if(!hmIsAdmin()){ alert("Solo admin può modificare lo storico asta."); return; }
+    const h = Array.isArray(auctionState?.history) ? auctionState.history[i] : null;
+    if(!h){ alert("Operazione non trovata."); return; }
+    const modal = document.getElementById("tradeModal");
+    const body = document.getElementById("tradeModalBody");
+    if(!modal || !body) return;
+    body.innerHTML = `
+      <h3>Modifica operazione asta</h3>
+      <p class="muted">Corregge il riepilogo e aggiorna anche proprietario del calciatore e crediti delle squadre.</p>
+      <div class="grid grid2">
+        <label>Calciatore<input class="input" value="${hmEsc(h.playerName||'')}" disabled></label>
+        <label>Data<input class="input" value="${hmEsc(h.date||'')}" disabled></label>
+        <label>Squadra vincente<select id="aucHistTeam" class="input">${hmAuctionHistoryTeamOptions(h.team)}</select></label>
+        <label>Costo<input id="aucHistAmount" class="input" type="number" min="0" value="${hmEsc(h.amount||0)}"></label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button class="btn" type="button" onclick="closeTradeModal()">Annulla</button>
+        <button class="btn green" type="button" onclick="saveAuctionHistoryEdit(${i})">Salva modifica</button>
+      </div>`;
+    modal.style.display="flex";
+  };
+
+  window.saveAuctionHistoryEdit = function(i){
+    if(!hmIsAdmin()){ alert("Solo admin può modificare lo storico asta."); return; }
+    const rows = Array.isArray(auctionState?.history) ? auctionState.history : [];
+    const h = rows[i];
+    if(!h){ alert("Operazione non trovata."); return; }
+    const newTeam = String(document.getElementById("aucHistTeam")?.value||"").trim().toUpperCase();
+    const newAmount = Number(document.getElementById("aucHistAmount")?.value||0);
+    if(!newTeam || newTeam==="SVIN"){ alert("Seleziona una squadra valida."); return; }
+    if(!Number.isFinite(newAmount) || newAmount < 0){ alert("Inserisci un costo valido."); return; }
+
+    const oldTeam = String(h.team||"").toUpperCase();
+    const oldAmount = Number(h.amount||0);
+    const oldT = hmTeam(oldTeam);
+    const newT = hmTeam(newTeam);
+
+    // Correzione crediti: rimborsa la vecchia squadra e scala la nuova.
+    if(oldT) oldT.credits = (Number(oldT.credits)||0) + oldAmount;
+    if(newT) newT.credits = (Number(newT.credits)||0) - newAmount;
+
+    const p = (players||[]).find(x=>String(x.id)===String(h.playerId));
+    if(p){ p.owner = newTeam; p.current = newTeam; }
+
+    h.team = newTeam;
+    h.amount = newAmount;
+    h.editedAt = hmNow();
+    h.editedBy = currentUser?.username || "admin";
+
+    try{ if(typeof saveAll === "function") saveAll(); else hmSaveLocal(); }
+    catch(e){ console.error(e); hmSaveLocal(); }
+    try{ closeTradeModal(); }catch(e){}
+    renderAuction();
+  };
+
+  window.deleteAuctionHistoryItem = function(i){
+    if(!hmIsAdmin()){ alert("Solo admin può eliminare righe dallo storico asta."); return; }
+    const rows = Array.isArray(auctionState?.history) ? auctionState.history : [];
+    const h = rows[i];
+    if(!h) return;
+    if(!confirm(`Eliminare dal riepilogo l'operazione di ${h.playerName||'questo calciatore'}?\n\nNon annulla il trasferimento e non modifica i crediti: cancella solo la riga dallo storico.`)) return;
+    rows.splice(i,1);
+    try{ if(typeof saveAll === "function") saveAll(); else hmSaveLocal(); }
+    catch(e){ console.error(e); hmSaveLocal(); }
+    renderAuction();
+  };
+
+  window.clearAuctionHistory = function(){
+    if(!hmIsAdmin()){ alert("Solo admin può azzerare lo storico asta."); return; }
+    const count = Array.isArray(auctionState?.history) ? auctionState.history.length : 0;
+    if(!count){ alert("Storico asta già vuoto."); return; }
+    if(!confirm(`AZZERARE lo storico asta (${count} operazioni)?\n\nNon ripristina calciatori e crediti. Cancella solo il riepilogo per alleggerire l'elenco.`)) return;
+    auctionState.history = [];
+    try{ if(typeof saveAll === "function") saveAll(); else hmSaveLocal(); }
+    catch(e){ console.error(e); hmSaveLocal(); }
+    renderAuction();
   };
 
   document.addEventListener("DOMContentLoaded",()=>setTimeout(hmStartLiveListener,800));

@@ -4992,7 +4992,11 @@ window.addEventListener("beforeunload", function(e){
     {id:"hm_cup", name:"HM Cup", aliases:["HM Cup","Hm Cup","Coppa HM"]},
     {id:"hm_super_cup", name:"HM Super Cup", aliases:["HM Super Cup","HM Supercup","Hm Supercup","HM SUPERCUP","HM SuperCup","HM Super Cup "]},
     {id:"hm_serie_b", name:"HM Serie B", aliases:["HM Serie B","HMB","HM B","Serie B","HM SerieB"]},
-    {id:"coppa_primavera", name:"Coppa Primavera", aliases:["Coppa Primavera","Primavera"]}
+    {id:"coppa_primavera", name:"Coppa Primavera", aliases:["Coppa Primavera","Primavera"]},
+    {id:"champions_league", name:"Champions League", aliases:["Champions League","Champions","Champions HM","HM Champions"]},
+    {id:"europa_league", name:"Europa League", aliases:["Europa League","Europa","Europa HM","HM Europa"]},
+    {id:"supercoppa_europea", name:"Supercoppa Europea", aliases:["Supercoppa Europea","Super Coppa Europea","European Super Cup"]},
+    {id:"mondiale_per_club", name:"Mondiale per Club", aliases:["Mondiale per Club","Mondiale Club","Club World Cup"]}
   ];
 
   function hmNormAwardText(v){
@@ -5158,6 +5162,200 @@ window.addEventListener("beforeunload", function(e){
     if(typeof saveAll === "function") saveAll();
     renderCompetitions();
   };
+})();
+
+
+// =======================================================
+// FIX SOLO: RINOMINA GLOBALE SOCIETÀ (ADMIN)
+// =======================================================
+(function(){
+  if(window.HM_GLOBAL_RENAME_INSTALLED) return;
+  window.HM_GLOBAL_RENAME_INSTALLED = true;
+
+  function hmTeamCodesForRename(){
+    try{return (teams||[]).filter(t=>t && t.code && t.code!=="SVIN").map(t=>String(t.code));}
+    catch(e){return [];}
+  }
+  function hmNormCode(v){return String(v||"").trim().toUpperCase();}
+  function hmReplaceCodeToken(value, oldCode, newCode){
+    if(value === null || value === undefined) return value;
+    const s = String(value);
+    if(!s) return value;
+    if(s === oldCode) return newCode;
+    // Sostituisce solo sigle come token separati, evitando nomi/calciatori o parole normali.
+    const parts = s.split(/(\s+|\/|,|;|\||\+)/g);
+    let changed = false;
+    const out = parts.map(p=>{
+      if(p === oldCode){changed=true; return newCode;}
+      return p;
+    }).join("");
+    return changed ? out : value;
+  }
+  function hmDeepReplaceTeamCodes(obj, oldCode, newCode){
+    const teamKeys = new Set([
+      "code","team","teamCode","owner","current","from","to","winner","winnerCode","loser","loserCode",
+      "home","away","club","clubCode","participant","participantCode","champion","runnerUp","teamA","teamB",
+      "sourceTeam","targetTeam","fromTeam","toTeam","squadra","proprietario"
+    ]);
+    function walk(x){
+      if(Array.isArray(x)){ x.forEach(walk); return; }
+      if(!x || typeof x !== "object") return;
+      Object.keys(x).forEach(k=>{
+        const v=x[k];
+        if(v && typeof v === "object") walk(v);
+        else if(typeof v === "string" && teamKeys.has(k)) x[k]=hmReplaceCodeToken(v, oldCode, newCode);
+      });
+    }
+    walk(obj);
+  }
+  function hmRenameObjectKey(obj, oldKey, newKey){
+    if(!obj || typeof obj !== "object") return obj;
+    if(Object.prototype.hasOwnProperty.call(obj, oldKey)){
+      obj[newKey] = obj[newKey] && typeof obj[newKey]==="object" && typeof obj[oldKey]==="object"
+        ? Object.assign({}, obj[oldKey], obj[newKey])
+        : obj[oldKey];
+      delete obj[oldKey];
+    }
+    return obj;
+  }
+  function hmUpdatePaired(oldCode,newCode){
+    try{
+      if(typeof PAIRED === "object" && PAIRED){
+        if(PAIRED[oldCode] !== undefined){ PAIRED[newCode]=PAIRED[oldCode]; delete PAIRED[oldCode]; }
+        Object.keys(PAIRED).forEach(k=>{ if(PAIRED[k]===oldCode) PAIRED[k]=newCode; });
+      }
+    }catch(e){}
+  }
+  function hmUpdateAuthTeams(oldCode,newCode){
+    try{
+      if(typeof HM_AUTH_USERS === "object" && HM_AUTH_USERS){
+        Object.values(HM_AUTH_USERS).forEach(u=>{
+          if(Array.isArray(u.teams)) u.teams = u.teams.map(c=>c===oldCode?newCode:c);
+        });
+      }
+      if(currentUser && Array.isArray(currentUser.teams)){
+        currentUser.teams = currentUser.teams.map(c=>c===oldCode?newCode:c);
+        safeSetStorage("hm_current_user_v1", currentUser);
+      }
+    }catch(e){}
+  }
+  function hmRenameFormations(oldCode,newCode){
+    try{
+      if(savedFormations && typeof savedFormations === "object"){
+        hmRenameObjectKey(savedFormations, oldCode, newCode);
+      }
+    }catch(e){}
+  }
+  function hmRenameOrgData(oldCode,newCode){
+    try{
+      if(orgData && typeof orgData === "object") hmRenameObjectKey(orgData, oldCode, newCode);
+    }catch(e){}
+  }
+  function hmRenameRankingHidden(oldCode,newCode){
+    try{
+      if(Array.isArray(rankingHidden)) rankingHidden = rankingHidden.map(c=>c===oldCode?newCode:c);
+    }catch(e){}
+  }
+  function hmRenameTeamLogosAndAssets(oldCode,newCode){
+    try{
+      if(HM_TEAM_LOGO_DRAFTS && HM_TEAM_LOGO_DRAFTS[oldCode]){
+        HM_TEAM_LOGO_DRAFTS[newCode]=HM_TEAM_LOGO_DRAFTS[oldCode];
+        delete HM_TEAM_LOGO_DRAFTS[oldCode];
+      }
+    }catch(e){}
+  }
+  function hmRenameEverywhere(oldCode,newCode,newName){
+    const t = (teams||[]).find(x=>x && x.code===oldCode);
+    if(!t) throw new Error("Società vecchia non trovata: "+oldCode);
+    if((teams||[]).some(x=>x && x.code===newCode && newCode!==oldCode)) throw new Error("La nuova sigla esiste già: "+newCode);
+
+    t.code = newCode;
+    if(newName) t.name = newName;
+
+    hmDeepReplaceTeamCodes(players, oldCode, newCode);
+    hmDeepReplaceTeamCodes(trades, oldCode, newCode);
+    if(typeof pendingTrades !== "undefined") hmDeepReplaceTeamCodes(pendingTrades, oldCode, newCode);
+    hmDeepReplaceTeamCodes(honors, oldCode, newCode);
+    hmDeepReplaceTeamCodes(individualTitles, oldCode, newCode);
+    hmDeepReplaceTeamCodes(positionHistory, oldCode, newCode);
+    hmDeepReplaceTeamCodes(rankingData, oldCode, newCode);
+    hmDeepReplaceTeamCodes(seasonHistory, oldCode, newCode);
+    hmDeepReplaceTeamCodes(auctionState, oldCode, newCode);
+    hmDeepReplaceTeamCodes(presidentActions, oldCode, newCode);
+    hmDeepReplaceTeamCodes(competitionsManager, oldCode, newCode);
+    hmDeepReplaceTeamCodes(coachesManager, oldCode, newCode);
+    hmRenameRankingHidden(oldCode,newCode);
+    hmRenameFormations(oldCode,newCode);
+    hmRenameOrgData(oldCode,newCode);
+    hmUpdatePaired(oldCode,newCode);
+    hmUpdateAuthTeams(oldCode,newCode);
+    hmRenameTeamLogosAndAssets(oldCode,newCode);
+
+    if(selectedTeam===oldCode) selectedTeam=newCode;
+  }
+
+  window.hmOpenGlobalRenameTeam = function(){
+    if(typeof requireAdmin === "function" && !requireAdmin()) return;
+    const options = hmTeamCodesForRename().map(c=>{
+      const t=(teams||[]).find(x=>x.code===c);
+      return `<option value="${esc(c)}">${esc(c)} - ${esc(t?.name||"")}</option>`;
+    }).join("");
+    q("tradeModalBody").innerHTML = `
+      <h3>Rinomina globale società</h3>
+      <p class="muted">Cambia sigla e nome ovunque: rosa, storico, ranking, albo d'oro, scambi, formazioni e dati società. Fai prima un backup.</p>
+      <div class="grid grid3">
+        <label>Società da rinominare
+          <select class="input" id="hmRenameOldCode">${options}</select>
+        </label>
+        <label>Nuova sigla
+          <input class="input" id="hmRenameNewCode" placeholder="Es. NEW" maxlength="6">
+        </label>
+        <label>Nuovo nome società
+          <input class="input" id="hmRenameNewName" placeholder="Nuovo nome">
+        </label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button class="btn" onclick="closeTradeModal()">Annulla</button>
+        <button class="btn yellow" onclick="hmRunGlobalRenameTeam()">Rinomina globalmente</button>
+      </div>`;
+    q("tradeModal").style.display="flex";
+  };
+
+  window.hmRunGlobalRenameTeam = function(){
+    if(typeof requireAdmin === "function" && !requireAdmin()) return;
+    const oldCode = hmNormCode(q("hmRenameOldCode")?.value);
+    const newCode = hmNormCode(q("hmRenameNewCode")?.value);
+    const newName = String(q("hmRenameNewName")?.value||"").trim();
+    if(!oldCode || !newCode || !newName){ alert("Compila vecchia sigla, nuova sigla e nuovo nome."); return; }
+    if(newCode === "SVIN"){ alert("La sigla SVIN è riservata agli svincolati."); return; }
+    if(!/^[A-Z0-9]{2,6}$/.test(newCode)){ alert("La nuova sigla deve avere 2-6 caratteri, solo lettere maiuscole o numeri."); return; }
+    if((teams||[]).some(t=>t && t.code===newCode && newCode!==oldCode)){ alert("Esiste già una società con questa sigla."); return; }
+    const msg = `Stai per rinominare globalmente ${oldCode} in ${newCode} (${newName}).\n\nQuesta modifica aggiorna rosa, storico, ranking, albo d'oro, scambi e formazioni.\n\nHai fatto un backup?`;
+    if(!confirm(msg)) return;
+    try{
+      hmRenameEverywhere(oldCode,newCode,newName);
+      if(saveAll() === false) return;
+      closeTradeModal();
+      showView("teams");
+      alert("Rinomina globale completata: "+oldCode+" → "+newCode);
+    }catch(err){
+      console.error("Errore rinomina globale", err);
+      alert("Errore rinomina globale: "+(err.message||err));
+    }
+  };
+
+  const hmOldRenderTeams = window.renderTeams || (typeof renderTeams === "function" ? renderTeams : null);
+  if(hmOldRenderTeams){
+    window.renderTeams = renderTeams = function(){
+      hmOldRenderTeams.apply(this, arguments);
+      try{
+        const box=q("view-teams")?.querySelector(".between");
+        if(box && isAdmin && isAdmin() && !q("hmGlobalRenameBtn")){
+          box.insertAdjacentHTML("beforeend", `<button class="btn yellow" id="hmGlobalRenameBtn" type="button" onclick="hmOpenGlobalRenameTeam()">🔁 Rinomina globale società</button>`);
+        }
+      }catch(e){}
+    };
+  }
 })();
 </script>
 

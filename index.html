@@ -4983,5 +4983,183 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+<script>
+/* ===== FIX SOLO ALBO D'ORO: competizione a tendina + chiave logo stabile ===== */
+(function(){
+  const HM_AWARD_PRESETS = [
+    {id:"hm_league", name:"HM League", aliases:["HM League","Hm League","HML"]},
+    {id:"hm_cup", name:"HM Cup", aliases:["HM Cup","Hm Cup","Coppa HM"]},
+    {id:"hm_super_cup", name:"HM Super Cup", aliases:["HM Super Cup","HM Supercup","Hm Supercup","HM SUPERCUP","HM SuperCup","HM Super Cup "]},
+    {id:"hm_serie_b", name:"HM Serie B", aliases:["HM Serie B","HMB","HM B","Serie B","HM SerieB"]},
+    {id:"coppa_primavera", name:"Coppa Primavera", aliases:["Coppa Primavera","Primavera"]}
+  ];
+
+  function hmNormAwardText(v){
+    return String(v||"").replace(/\s+/g," ").trim();
+  }
+  function hmAwardPresetFor(name){
+    const raw = hmNormAwardText(name);
+    const low = raw.toLowerCase();
+    return HM_AWARD_PRESETS.find(p => p.aliases.some(a => hmNormAwardText(a).toLowerCase() === low));
+  }
+  function hmAwardDisplayName(name){
+    const p = hmAwardPresetFor(name);
+    return p ? p.name : hmNormAwardText(name);
+  }
+  function hmAwardStableKeyFromName(name){
+    const p = hmAwardPresetFor(name);
+    if(p) return "honor_" + p.id;
+    return "honor_" + hmAwardDisplayName(name);
+  }
+  function hmAwardKeyCandidatesFromName(name){
+    const display = hmAwardDisplayName(name);
+    const direct = "honor_" + hmNormAwardText(name);
+    const stable = hmAwardStableKeyFromName(name);
+    const keys = [stable, direct, "honor_" + display];
+    const p = hmAwardPresetFor(name);
+    if(p){
+      p.aliases.forEach(a => keys.push("honor_" + hmNormAwardText(a)));
+    }
+    return [...new Set(keys.filter(Boolean))];
+  }
+  function hmGetAwardImage(nameOrKey){
+    const s = String(nameOrKey||"");
+    const rawName = s.startsWith("honor_") ? s.slice(6) : s;
+    const candidates = s.startsWith("honor_") ? [s, ...hmAwardKeyCandidatesFromName(rawName)] : hmAwardKeyCandidatesFromName(rawName);
+    for(const k of candidates){
+      if(awardImages && awardImages[k]) return awardImages[k];
+    }
+    return "";
+  }
+  function hmSaveAwardImageAllKeys(nameOrKey, value){
+    const s = String(nameOrKey||"");
+    const rawName = s.startsWith("honor_") ? s.slice(6) : s;
+    hmAwardKeyCandidatesFromName(rawName).forEach(k => { awardImages[k] = value; });
+  }
+  function hmAwardOptions(selected){
+    const map = new Map();
+    HM_AWARD_PRESETS.forEach(p => map.set(p.name, p.name));
+    (honors||[]).forEach(h => {
+      const n = hmAwardDisplayName(h.award);
+      if(n) map.set(n,n);
+    });
+    if(selected){
+      const n = hmAwardDisplayName(selected);
+      if(n) map.set(n,n);
+    }
+    return [...map.values()].sort((a,b)=>{
+      const ai = HM_AWARD_PRESETS.findIndex(p=>p.name===a);
+      const bi = HM_AWARD_PRESETS.findIndex(p=>p.name===b);
+      if(ai>=0 || bi>=0) return (ai<0?999:ai) - (bi<0?999:bi);
+      return a.localeCompare(b,'it');
+    });
+  }
+  function hmTeamOptions(selected){
+    const opts = (teams||[]).filter(t=>t && t.code && t.code!=="SVIN").map(t=>{
+      const sel = String(selected||"").toUpperCase() === t.code ? " selected" : "";
+      return `<option value="${esc(t.code)}"${sel}>${esc(t.code)} - ${esc(t.name||t.code)}</option>`;
+    }).join("");
+    const manualSel = selected ? "" : " selected";
+    return `<option value=""${manualSel}>Nome manuale / storico</option>${opts}`;
+  }
+  function hmRenderAwardModal(mode, rowIndex){
+    const isEdit = typeof rowIndex === "number" && rowIndex >= 0;
+    const row = isEdit ? honors[rowIndex] : {award:"HM League",season:"2025/2026",team:"IMP",manualTeam:""};
+    const awardName = hmAwardDisplayName(row.award || "HM League");
+    const options = hmAwardOptions(awardName).map(n=>`<option value="${esc(n)}"${n===awardName?' selected':''}>${esc(n)}</option>`).join("");
+    q("tradeModalBody").innerHTML = `
+      <h3>${isEdit ? "Modifica vincitore Albo d'Oro" : "Aggiungi vincitore Albo d'Oro"}</h3>
+      <p class="muted">Scegli la competizione dalla tendina: così il logo/coppa resta agganciato correttamente.</p>
+      <div class="grid grid2">
+        <label>Competizione
+          <select id="hmHonorAwardSelect" class="input">${options}</select>
+        </label>
+        <label>Stagione
+          <input id="hmHonorSeasonInput" class="input" value="${esc(row.season||"2025/2026")}">
+        </label>
+        <label>Squadra esistente
+          <select id="hmHonorTeamSelect" class="input" onchange="document.getElementById('hmHonorManualTeamInput').disabled=!!this.value">${hmTeamOptions(row.team||"")}</select>
+        </label>
+        <label>Nome manuale/storico
+          <input id="hmHonorManualTeamInput" class="input" value="${esc(row.manualTeam||"")}" ${row.team?'disabled':''}>
+        </label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button class="btn" onclick="closeTradeModal()">Annulla</button>
+        <button class="btn green" onclick="hmSaveHonorFromModal(${isEdit ? rowIndex : -1})">Salva</button>
+      </div>`;
+    q("tradeModal").style.display="flex";
+  }
+
+  window.hmSaveHonorFromModal = function(rowIndex){
+    const award = hmAwardDisplayName(q("hmHonorAwardSelect")?.value || "HM League");
+    const season = q("hmHonorSeasonInput")?.value || "";
+    const teamCode = String(q("hmHonorTeamSelect")?.value || "").toUpperCase();
+    const manualTeam = teamCode ? "" : (q("hmHonorManualTeamInput")?.value || "");
+    const row = {team:teamCode, manualTeam, award, season};
+    if(rowIndex >= 0 && honors[rowIndex]) honors[rowIndex] = row;
+    else honors.push(row);
+    if(typeof closeTradeModal === "function") closeTradeModal();
+    if(typeof saveAll === "function") saveAll();
+    renderCompetitions();
+  };
+
+  const oldImgPreview = window.imgPreview;
+  window.imgPreview = function(key, size=54){
+    if(String(key||"").startsWith("honor_")){
+      const src = hmGetAwardImage(key);
+      return src ? `<img src="${src}" style="width:${size}px;height:${size}px;object-fit:contain;border-radius:12px;background:#0b1627;border:1px solid #334155;padding:4px">` : `<div class="logoBox" style="width:${size}px;height:${size}px">🏆</div>`;
+    }
+    return oldImgPreview ? oldImgPreview(key,size) : `<div class="logoBox" style="width:${size}px;height:${size}px">🏆</div>`;
+  };
+
+  window.uploadAwardImage = function(input, key){
+    const file = input.files && input.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = reader.result;
+      if(String(key||"").startsWith("honor_")) hmSaveAwardImageAllKeys(key, value);
+      else awardImages[key] = value;
+      if(typeof saveAll === "function") saveAll();
+      const view = (typeof currentVisibleViewName === "function") ? currentVisibleViewName() : "";
+      if(view === "competitions" && typeof renderCompetitions === "function") renderCompetitions();
+      else if(view === "teamDetail" && typeof renderTeamDetail === "function") renderTeamDetail();
+      else if(typeof renderCompetitions === "function") renderCompetitions();
+    };
+    reader.readAsDataURL(file);
+  };
+
+  window.renderCompetitions = function(){
+    const awards = [...new Set((honors||[]).map(h=>hmAwardDisplayName(h.award)).filter(Boolean))];
+    q("view-competitions").innerHTML = `<div class="between"><div><h2>Albo d'oro generale</h2><p class="muted">Si aggiorna insieme agli albi delle singole società.</p></div><button class="btn primary" onclick="addGeneralHonor()">Aggiungi vincitore</button></div>
+    <div class="grid" style="margin-top:14px">${awards.length?awards.map(a=>{
+      const rows=(honors||[]).map((h,i)=>({...h,_i:i})).filter(h=>hmAwardDisplayName(h.award)===a);
+      return `<div class="card"><div class="row">${imgPreview("honor_"+a,64)}<div><h3>${esc(a)}</h3><label class="muted">Logo/coppa <input type="file" accept="image/*" onchange="uploadAwardImage(this,'honor_${esc(a)}')"></label></div></div><table class="table"><tr><th>Stagione</th><th>Vincitore</th><th></th></tr>${rows.map((h,idx)=>`<tr><td>${esc(h.season)}</td><td>${h.team ? teamLabel(h.team) : esc(h.manualTeam || "-")}</td><td><button class="btn" onclick="editGeneralHonor('${esc(a)}',${idx})">Modifica</button><button class="btn red" onclick="deleteGeneralHonor('${esc(a)}',${idx})">Elimina</button></td></tr>`).join("")}</table></div>`;
+    }).join(""):'<div class="card muted">Nessun trofeo inserito.</div>'}</div>`;
+  };
+
+  window.addGeneralHonor = function(){ hmRenderAwardModal("add", -1); };
+  window.editGeneralHonor = function(award, localIndex){
+    const display = hmAwardDisplayName(award);
+    const list = (honors||[]).map((x,i)=>({...x,_i:i})).filter(x=>hmAwardDisplayName(x.award)===display);
+    const row = list[localIndex];
+    if(!row) return;
+    hmRenderAwardModal("edit", row._i);
+  };
+  window.deleteGeneralHonor = function(award, localIndex){
+    const display = hmAwardDisplayName(award);
+    const list = (honors||[]).map((x,i)=>({...x,_i:i})).filter(x=>hmAwardDisplayName(x.award)===display);
+    const row = list[localIndex];
+    if(!row) return;
+    if(!confirm("Eliminare questa voce dall'Albo d'Oro?")) return;
+    honors.splice(row._i,1);
+    if(typeof saveAll === "function") saveAll();
+    renderCompetitions();
+  };
+})();
+</script>
+
 </body>
 </html>

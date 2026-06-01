@@ -2246,18 +2246,90 @@ function teamHonorsHtml(code){
   return `<div class="grid">
     <div class="card">
       <div class="between"><h3>Albo d'oro società</h3><button class="btn primary" onclick="addHonor('${code}')">Aggiungi trofeo</button></div>
-      <p class="muted">I trofei inseriti qui aggiornano anche l'Albo d'oro generale.</p>
-      <div class="grid">${h.length?h.map((x,i)=>honorCard(x,"honors",i,code)).join(""):'<div class="muted">Nessun trofeo inserito.</div>'}</div>
+      <p class="muted">Riepilogo compatto: competizione, totale vittorie e stagioni vinte.</p>
+      <div class="grid">${h.length?teamHonorsGroupedHtml(code):'<div class="muted">Nessun trofeo inserito.</div>'}</div>
     </div>
     <div class="card">
       <div class="between"><h3>Titoli individuali</h3><button class="btn primary" onclick="addIndividualTitle('${code}')">Aggiungi titolo individuale</button></div>
-      <div class="grid">${ind.length?ind.map((x,i)=>individualCard(x,i,code)).join(""):'<div class="muted">Nessun titolo individuale inserito.</div>'}</div>
+      <div class="grid">${ind.length?teamIndividualGroupedHtml(code):'<div class="muted">Nessun titolo individuale inserito.</div>'}</div>
     </div>
     <div class="card">
       <div class="between"><h3>Storico posizionamenti</h3><button class="btn primary" onclick="addPosition('${code}')">Aggiungi posizione</button></div>
       <table class="table"><tr><th>Stagione</th><th>Serie</th><th>Posizione</th><th></th></tr>${pos.map((p,i)=>`<tr><td>${esc(p.season)}</td><td>${esc(p.series)}</td><td>${esc(p.position)}</td><td><button class="btn" onclick="editPosition('${code}',${i})">Modifica</button><button class="btn red" onclick="deletePosition('${code}',${i})">Elimina</button></td></tr>`).join("")}</table>
     </div>
   </div>`;
+}
+
+function teamHonorsGroupedHtml(code){
+  const rows=honors.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
+  const groups={};
+  rows.forEach(x=>{
+    const key=String(x.award||"Senza nome").trim()||"Senza nome";
+    if(!groups[key]) groups[key]=[];
+    groups[key].push(x);
+  });
+  return Object.entries(groups).map(([award,list])=>{
+    const ordered=[...list].sort((a,b)=>String(a.season||"").localeCompare(String(b.season||"")));
+    return `<div class="playerRow" style="grid-template-columns:64px 1fr auto;align-items:start">
+      ${imgPreview("honor_"+award,56)}
+      <div>
+        <div class="between" style="gap:8px"><b>${esc(award)}</b><span class="badge">${ordered.length} vittorie</span></div>
+        <div class="muted" style="margin-top:6px;line-height:1.8">${ordered.map(x=>`<span class="badge">${esc(x.season||"-")}</span>`).join(" ")}</div>
+        <label class="muted" style="display:block;margin-top:8px;font-size:12px">Logo/coppa <input type="file" accept="image/*" onchange="uploadAwardImage(this,'honor_${esc(award)}')"></label>
+      </div>
+      <div class="row" style="justify-content:flex-end">
+        ${ordered.map(x=>`<button class="btn" title="Modifica ${esc(x.season||'')}" onclick="editHonorByGlobalIndex('${code}',${x._i})">${esc(x.season||'Modifica')}</button><button class="btn red" title="Elimina ${esc(x.season||'')}" onclick="deleteHonorByGlobalIndex('${code}',${x._i})">✕</button>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function teamIndividualGroupedHtml(code){
+  const rows=individualTitles.map((x,i)=>({...x,_i:i})).filter(x=>x.team===code);
+  const groups={};
+  rows.forEach(x=>{
+    const key=String(x.award||"Premio").trim()||"Premio";
+    if(!groups[key]) groups[key]=[];
+    groups[key].push(x);
+  });
+  return Object.entries(groups).map(([award,list])=>{
+    const ordered=[...list].sort((a,b)=>String(a.season||"").localeCompare(String(b.season||"")));
+    return `<div class="playerRow" style="grid-template-columns:64px 1fr auto;align-items:start">
+      ${imgPreview("individual_"+award,56)}
+      <div>
+        <div class="between" style="gap:8px"><b>${esc(award)}</b><span class="badge">${ordered.length}</span></div>
+        <div style="margin-top:6px;line-height:1.9">${ordered.map(x=>`<div><span class="badge">${esc(x.season||"-")}</span> <span class="muted">${esc(x.player||"-")}</span></div>`).join("")}</div>
+        <label class="muted" style="display:block;margin-top:8px;font-size:12px">Icona premio <input type="file" accept="image/*" onchange="uploadAwardImage(this,'individual_${esc(award)}')"></label>
+      </div>
+      <div class="row" style="justify-content:flex-end">
+        ${ordered.map(x=>`<button class="btn" title="Modifica ${esc(x.season||'')}" onclick="editIndividualTitleByGlobalIndex('${code}',${x._i})">${esc(x.season||'Modifica')}</button><button class="btn red" title="Elimina ${esc(x.season||'')}" onclick="deleteIndividualTitleByGlobalIndex('${code}',${x._i})">✕</button>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function editHonorByGlobalIndex(code,globalIndex){
+  const row=honors[globalIndex]; if(!row || row.team!==code) return;
+  const award=prompt("Nome trofeo/competizione",row.award); if(!award) return;
+  const season=prompt("Stagione",row.season) || "";
+  honors[globalIndex]={team:code,award,season};
+  saveAll(); renderTeamDetail();
+}
+function deleteHonorByGlobalIndex(code,globalIndex){
+  const row=honors[globalIndex]; if(!row || row.team!==code) return;
+  if(confirm("Eliminare trofeo?")){honors.splice(globalIndex,1);saveAll();renderTeamDetail();}
+}
+function editIndividualTitleByGlobalIndex(code,globalIndex){
+  const row=individualTitles[globalIndex]; if(!row || row.team!==code) return;
+  const award=prompt("Premio",row.award); if(!award) return;
+  const player=prompt("Nome",row.player||"");
+  const season=prompt("Stagione",row.season)||"";
+  individualTitles[globalIndex]={team:code,award,player,season};
+  saveAll();renderTeamDetail();
+}
+function deleteIndividualTitleByGlobalIndex(code,globalIndex){
+  const row=individualTitles[globalIndex]; if(!row || row.team!==code) return;
+  if(confirm("Eliminare titolo individuale?")){individualTitles.splice(globalIndex,1);saveAll();renderTeamDetail();}
 }
 
 function honorCard(x,type,i,code){

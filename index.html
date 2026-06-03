@@ -3593,12 +3593,15 @@ window.addEventListener("beforeunload", function(e){
   function patchSave(){
     loadCloudData=fbLoad; saveCloudNow=fbSave; window.loadCloudData=fbLoad; window.saveCloudNow=fbSave;
     saveAll=function(){
+      // Admin: salvataggio online manuale. Qui salvo solo in locale e marco modifiche non pubblicate.
       patchPerms();
-      if(!admin()){alert("Devi fare login Google per modificare."); return false;}
+      if(!admin()){alert("Devi fare login per modificare."); return false;}
       try{saveLocalOnly()}catch(e){}
       HM_HAS_UNSAVED_CHANGES=true;
-      clearTimeout(fbSaveTimer);
-      fbSaveTimer=setTimeout(()=>fbSave(false),900);
+      try{
+        const b=document.getElementById("firebaseStatusBadge");
+        if(b){b.textContent="⚠️ Modifiche locali non pubblicate"; b.style.borderColor="#facc15"; b.style.color="#fde68a";}
+      }catch(e){}
       updateUI();
       return true;
     };
@@ -3770,9 +3773,8 @@ window.addEventListener("beforeunload", function(e){
 
     if(!existing) players.push(next);
 
-    // Salva locale + Firebase usando il sistema già funzionante del file.
+    // Salva solo in locale. Pubblicazione online manuale con pulsante Salva online.
     if(typeof saveAll === "function" && saveAll() === false) return false;
-    try{ if(typeof fbSave === "function") fbSave(false); }catch(e){}
     closeTradeModal();
     try{ renderPlayers(); }catch(e){ console.warn(e); }
     try{ if(q("view-teamDetail") && !q("view-teamDetail").classList.contains("hidden")) renderTeamDetail(); }catch(e){ console.warn(e); }
@@ -3791,7 +3793,6 @@ window.addEventListener("beforeunload", function(e){
       });
     });
     if(typeof saveAll === "function" && saveAll() === false) return false;
-    try{ if(typeof fbSave === "function") fbSave(false); }catch(e){}
     closeTradeModal();
     try{ renderPlayers(); }catch(e){ console.warn(e); }
     try{ if(q("view-teamDetail") && !q("view-teamDetail").classList.contains("hidden")) renderTeamDetail(); }catch(e){ console.warn(e); }
@@ -4775,9 +4776,9 @@ window.addEventListener("beforeunload", function(e){
   }
   async function saveAfterTradeAdminChange(){
     try{
+      // Admin: solo locale. La pubblicazione avviene premendo Salva online.
       if(typeof saveAll === "function") saveAll();
-      if(typeof saveCloudNow === "function") await saveCloudNow(false);
-    }catch(e){console.warn("Salvataggio dopo modifica registro scambi:", e);} 
+    }catch(e){console.warn("Salvataggio locale dopo modifica registro scambi:", e);} 
   }
 
   const oldRenderTrades = typeof window.renderTrades === "function" ? window.renderTrades : null;
@@ -5573,6 +5574,97 @@ window.addEventListener("beforeunload", function(e){
   // Rende subito effettivi i permessi se la pagina è già aperta.
   try{ if(typeof currentVisibleViewName==='function' && currentVisibleViewName()==='actions') renderPresidentActions(); }catch(e){}
   try{ if(typeof applyInternalPermissions === 'function') applyInternalPermissions(); }catch(e){}
+})();
+</script>
+
+
+
+<script>
+/* =========================================================
+   FIX MIRATO: ADMIN NO AUTOSAVE + FILTRI CALCIATORI PRESIDENTI
+   - Admin: saveAll salva solo locale; pubblicazione solo con Salva online.
+   - Presidenti: restano salvataggi immediati per azioni consentite.
+   - Asta live non toccata.
+   - Presidenti possono usare filtri in Calciatori ma non modificare.
+   ========================================================= */
+(function(){
+  if(window.HM_FINAL_NO_AUTOSAVE_FILTERS_FIX) return;
+  window.HM_FINAL_NO_AUTOSAVE_FILTERS_FIX = true;
+
+  function qx(id){return document.getElementById(id)}
+  function isIntLogged(){try{return typeof internalLogged==='function'?internalLogged():(currentUser&&currentUser.role&&currentUser.role!=='guest');}catch(e){return false}}
+  function isIntAdmin(){try{return typeof internalAdmin==='function'?internalAdmin():(currentUser&&currentUser.role==='admin');}catch(e){return false}}
+  function isIntTeam(c){try{return typeof internalCanTeam==='function'?internalCanTeam(c):false;}catch(e){return false}}
+  function deny2(msg){if(typeof denied==='function') return denied(msg); alert(msg); return false;}
+  function markLocal(){
+    try{HM_HAS_UNSAVED_CHANGES=true;}catch(e){}
+    try{if(typeof saveLocalOnly==='function') saveLocalOnly();}catch(e){}
+    try{
+      const b=qx('firebaseStatusBadge');
+      if(b){b.textContent='⚠️ Modifiche locali non pubblicate'; b.style.borderColor='#facc15'; b.style.color='#fde68a';}
+    }catch(e){}
+  }
+
+  // Salvataggio generale: admin locale, presidenti online solo attraverso i salvataggi consentiti.
+  window.saveAll = saveAll = function(){
+    if(!isIntLogged()) return deny2('Devi fare login per modificare.');
+    if(isIntAdmin()){
+      markLocal();
+      return true;
+    }
+    try{if(typeof saveLocalOnly==='function') saveLocalOnly();}catch(e){}
+    if(typeof savePresidentAllowedOnline==='function') return savePresidentAllowedOnline();
+    if(typeof window.hmPresidentSaveAllowedOnline==='function') return window.hmPresidentSaveAllowedOnline();
+    return true;
+  };
+  window.scheduleCloudSave = scheduleCloudSave = function(){markLocal(); return false;};
+
+  // Pulsante Salva online: admin pubblica tutto; presidente salva solo dati consentiti.
+  const sb = qx('hmFirebaseSaveBtn');
+  if(sb){
+    sb.disabled = !isIntLogged();
+    sb.style.opacity = sb.disabled ? '.45' : '1';
+    sb.onclick = function(e){
+      e.preventDefault(); e.stopPropagation();
+      if(!isIntLogged()) return deny2('Devi fare login per salvare.');
+      if(isIntAdmin()){
+        if(typeof ensureAnonAuth==='function') ensureAnonAuth().then(ok=>{if(ok && typeof saveCloudNow==='function') saveCloudNow(true);});
+        else if(typeof saveCloudNow==='function') saveCloudNow(true);
+      }else{
+        if(typeof savePresidentAllowedOnline==='function') return savePresidentAllowedOnline();
+        if(typeof window.hmPresidentSaveAllowedOnline==='function') return window.hmPresidentSaveAllowedOnline();
+      }
+    };
+  }
+
+  const oldApply = window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  window.applyInternalPermissions = window.applyPermissionsToVisibleView = function(){
+    try{ if(typeof oldApply==='function') oldApply(); }catch(e){}
+    try{
+      const view = typeof currentVisibleViewName==='function' ? currentVisibleViewName() : '';
+      if(view === 'players' && isIntLogged() && !isIntAdmin()){
+        // filtri calciatori attivi per presidenti
+        document.querySelectorAll('#view-players input,#view-players select,#view-players textarea').forEach(el=>{
+          const on=String(el.getAttribute('oninput')||'')+String(el.getAttribute('onchange')||'');
+          const id=String(el.id||'');
+          if(id.startsWith('pl') || on.includes('filterPlayers')){ el.disabled=false; el.style.opacity='1'; }
+        });
+        document.querySelectorAll('#view-players button').forEach(btn=>{
+          const on=String(btn.getAttribute('onclick')||'');
+          const allow = on.includes('clearFilters');
+          btn.disabled = !allow;
+          btn.style.opacity = allow ? '1' : '.45';
+          if(!allow) btn.title='Solo Federico può modificare i calciatori';
+        });
+      }
+      // budget sempre bloccato ai presidenti
+      if(isIntLogged() && !isIntAdmin()){
+        document.querySelectorAll('button[onclick*="editBudget"],button[onclick*="saveBudget"]').forEach(b=>{b.disabled=true; b.style.opacity='.45'; b.title='Solo Federico può modificare il budget';});
+      }
+    }catch(e){}
+  };
+
+  try{ if(typeof applyInternalPermissions==='function') applyInternalPermissions(); }catch(e){}
 })();
 </script>
 

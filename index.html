@@ -5432,5 +5432,149 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+
+<script>
+/* =========================================================
+   FIX MIRATO: AZIONI PRESIDENTE + SALVATAGGIO LOCALE
+   - Presidenti: possono creare Azioni Presidente solo per le proprie squadre.
+   - Admin: mantiene modifica/elimina completo.
+   - saveAll(): salva solo in locale e marca modifiche non pubblicate.
+   - Salva online resta manuale dal pulsante in alto.
+   - Asta live e funzioni Firebase dedicate non vengono modificate.
+   ========================================================= */
+(function(){
+  if(window.HM_ACTIONS_LOCAL_SAVE_FIX) return;
+  window.HM_ACTIONS_LOCAL_SAVE_FIX = true;
+
+  function hmQ(id){ return document.getElementById(id); }
+  function hmEsc(s){
+    try{ return (typeof esc === 'function') ? esc(s) : String(s ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+    catch(e){ return String(s ?? ''); }
+  }
+  function hmAdmin(){ try{return typeof internalAdmin==='function' ? internalAdmin() : (typeof isAdmin==='function' && isAdmin());}catch(e){return false;} }
+  function hmLogged(){ try{return typeof internalLogged==='function' ? internalLogged() : (typeof isLoggedIn==='function' && isLoggedIn());}catch(e){return false;} }
+  function hmTeams(){ try{return typeof internalTeams==='function' ? internalTeams() : (typeof userTeams==='function' ? userTeams() : []);}catch(e){return [];} }
+  function hmCanTeam(code){ try{return hmAdmin() || (typeof internalCanTeam==='function' ? internalCanTeam(code) : (typeof canEditTeam==='function' && canEditTeam(code)));}catch(e){return false;} }
+  function hmDenied(msg){ if(typeof denied==='function') return denied(msg); alert(msg); return false; }
+  function hmTeamLabel(code){ try{return typeof teamLabel==='function' ? teamLabel(code) : String(code||'');}catch(e){return String(code||'');} }
+  function hmTeamFullName(code){ try{return typeof teamFullName==='function' ? teamFullName(code) : hmTeamLabel(code);}catch(e){return hmTeamLabel(code);} }
+
+  function hmMarkLocalUnsaved(){
+    try{ HM_HAS_UNSAVED_CHANGES = true; }catch(e){}
+    try{ if(typeof updateCloudBadge === 'function') updateCloudBadge(); }catch(e){}
+    try{
+      const badge = hmQ('firebaseStatusBadge');
+      if(badge){
+        badge.textContent = '⚠️ Modifiche locali non pubblicate';
+        badge.style.borderColor = '#facc15';
+        badge.style.color = '#fde68a';
+      }
+    }catch(e){}
+  }
+
+  // Salvataggio generale: niente online automatico, solo locale.
+  window.saveAll = saveAll = function(){
+    if(!hmLogged()) return hmDenied('Devi fare login per modificare.');
+    try{ if(typeof saveLocalOnly === 'function') saveLocalOnly(); }catch(e){ console.warn('saveLocalOnly non riuscito', e); }
+    hmMarkLocalUnsaved();
+    return true;
+  };
+
+  // Disattiva eventuali chiamate residue all'autosave generale.
+  window.scheduleCloudSave = scheduleCloudSave = function(){ hmMarkLocalUnsaved(); return false; };
+
+  function hmActionRows(){
+    const rows = Array.isArray(presidentActions) ? presidentActions : [];
+    if(!rows.length) return '<tr><td colspan="8" class="muted">Nessuna azione registrata.</td></tr>';
+    return rows.map((a,i)=>{
+      const canManage = hmAdmin();
+      const buttons = canManage
+        ? `<button class="btn" onclick="openPresidentActionModal(${i})">Modifica</button><button class="btn red" onclick="deletePresidentAction(${i})">Elimina</button>`
+        : '<span class="muted">Solo lettura</span>';
+      return `<tr><td>${hmEsc(a.date)}</td><td>${hmTeamLabel(a.team)}</td><td><b>${hmEsc(a.action)}</b></td><td>${a.against?hmTeamFullName(a.against):'-'}</td><td>${hmEsc(a.competition||'-')}</td><td>${a.suspended&&a.status!=='Pagata'?'Sospesi '+hmEsc(a.cost):hmEsc(a.creditDelta)}</td><td><span class="badge">${hmEsc(a.status)}</span></td><td>${buttons}</td></tr>`;
+    }).join('');
+  }
+
+  window.renderPresidentActions = renderPresidentActions = function(){
+    const canCreate = hmAdmin() || hmLogged();
+    hmQ('view-actions').innerHTML = `<div class="between"><div><h2>Azioni Presidente</h2><p class="muted">Gestione crediti e registro azioni.</p></div>${canCreate?'<button class="btn primary" onclick="openPresidentActionModal()">Nuova azione</button>':''}</div><div class="card" style="margin-top:14px"><h3>Registro azioni</h3><table class="table"><tr><th>Data</th><th>Squadra</th><th>Azione</th><th>Contro</th><th>Competizione</th><th>Crediti</th><th>Stato</th><th></th></tr>${hmActionRows()}</table></div>`;
+  };
+
+  window.openPresidentActionModal = openPresidentActionModal = function(index=null){
+    if(!hmLogged()) return hmDenied('Devi fare login per registrare azioni.');
+    if(index !== null && !hmAdmin()) return hmDenied('Solo Federico admin può modificare azioni già registrate.');
+    const row = index!==null ? presidentActions[index] : {team:(hmTeams()[0]||'IMP'), action:'Ritiro forzato', against:'', competition:'Campionato', status:'Attiva'};
+    const selectableTeams = (hmAdmin() ? teams.filter(t=>t.code!=='SVIN') : teams.filter(t=>hmTeams().includes(t.code)));
+    if(!selectableTeams.length) return hmDenied('Nessuna squadra autorizzata per questo utente.');
+    const teamOptions = selectableTeams.map(t=>`<option value="${hmEsc(t.code)}" ${t.code===row.team?'selected':''}>${hmTeamLabel(t.code)}</option>`).join('');
+    const againstOptions = teams.filter(t=>t.code!=='SVIN').map(t=>`<option value="${hmEsc(t.code)}" ${t.code===row.against?'selected':''}>${hmTeamLabel(t.code)}</option>`).join('');
+    hmQ('tradeModalBody').innerHTML = `<h3>${index!==null?'Modifica':'Nuova'} azione presidente</h3><div class="grid grid2"><label>Squadra<select class="input" id="paTeam">${teamOptions}</select></label><label>Azione<select class="input" id="paAction">${PRESIDENT_ACTION_TYPES.map(a=>`<option value="${hmEsc(a.name)}" ${a.name===row.action?'selected':''}>${hmEsc(a.name)}</option>`).join('')}</select></label><label>Contro<select class="input" id="paAgainst"><option value="">Nessuna</option>${againstOptions}</select></label><label>Competizione<select class="input" id="paCompetition"><option ${row.competition==='Campionato'?'selected':''}>Campionato</option><option ${row.competition==='Coppa'?'selected':''}>Coppa</option></select></label><label>Stato<select class="input" id="paStatus">${['Attiva','Conclusa','Annullata','Pagata'].map(s=>`<option ${s===row.status?'selected':''}>${s}</option>`).join('')}</select></label></div><p class="muted" style="margin-top:10px">La modifica viene salvata in locale. Per pubblicarla online usa il pulsante <b>Salva online</b>.</p><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" onclick="closeTradeModal()">Annulla</button><button class="btn green" type="button" onclick="savePresidentAction(${index===null?'null':index})">Salva</button></div>`;
+    hmQ('tradeModal').style.display='flex';
+  };
+
+  window.savePresidentAction = savePresidentAction = function(index=null){
+    if(!hmLogged()) return hmDenied('Devi fare login per registrare azioni.');
+    const teamCode = hmQ('paTeam')?.value;
+    if(!hmCanTeam(teamCode)) return hmDenied('Puoi registrare azioni solo per le tue squadre.');
+    if(index !== null && !hmAdmin()) return hmDenied('Solo Federico admin può modificare azioni già registrate.');
+    const a = actionType(hmQ('paAction').value);
+    const status = hmQ('paStatus').value;
+    const creditDelta = a.suspended ? (status==='Pagata' ? -Number(a.cost) : 0) : -Number(a.cost);
+    const row = {team:teamCode, action:a.name, against:hmQ('paAgainst').value, competition:hmQ('paCompetition').value, status, suspended:!!a.suspended, cost:a.cost, creditDelta, date:index===null?new Date().toLocaleString('it-IT'):presidentActions[index].date, applied:false};
+    if(index!==null){
+      const old=presidentActions[index];
+      if(old?.applied) applyPresidentActionCredits(old,true);
+      presidentActions[index]=row;
+    }else{
+      presidentActions.unshift(row);
+      index=0;
+    }
+    if(row.status!=='Annullata'){
+      applyPresidentActionCredits(row,false);
+      presidentActions[index].applied=true;
+    }
+    saveAll();
+    closeTradeModal();
+    renderPresidentActions();
+    return true;
+  };
+
+  window.deletePresidentAction = deletePresidentAction = function(i){
+    if(!hmAdmin()) return hmDenied('Solo Federico admin può eliminare azioni presidente.');
+    const row=presidentActions[i];
+    if(!row) return false;
+    if(!confirm('Eliminare questa azione presidente?')) return false;
+    if(row?.applied) applyPresidentActionCredits(row,true);
+    presidentActions.splice(i,1);
+    saveAll();
+    renderPresidentActions();
+    return true;
+  };
+
+  // Permessi: in Azioni Presidente consenti solo nuova azione ai presidenti; modifica/elimina restano admin.
+  const oldApplyPerm = window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  window.applyInternalPermissions = window.applyPermissionsToVisibleView = function(){
+    if(typeof oldApplyPerm === 'function') oldApplyPerm();
+    try{
+      const view = typeof currentVisibleViewName === 'function' ? currentVisibleViewName() : '';
+      if(view === 'actions'){
+        document.querySelectorAll('#view-actions button').forEach(btn=>{
+          const on = String(btn.getAttribute('onclick')||'');
+          const ok = hmAdmin() || (hmLogged() && on.includes('openPresidentActionModal()'));
+          btn.disabled = !ok;
+          btn.style.opacity = ok ? '1' : '.45';
+        });
+      }
+      document.querySelectorAll('#tradeModal button,#tradeModal input,#tradeModal select,#tradeModal textarea').forEach(el=>{el.disabled=false; el.style.opacity='1';});
+    }catch(e){}
+  };
+
+  // Rende subito effettivi i permessi se la pagina è già aperta.
+  try{ if(typeof currentVisibleViewName==='function' && currentVisibleViewName()==='actions') renderPresidentActions(); }catch(e){}
+  try{ if(typeof applyInternalPermissions === 'function') applyInternalPermissions(); }catch(e){}
+})();
+</script>
+
 </body>
 </html>

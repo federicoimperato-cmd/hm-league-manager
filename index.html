@@ -319,6 +319,19 @@ function applyPermissionsToVisibleView(){
   const visible=[...document.querySelectorAll(".view")].find(x=>!x.classList.contains("hidden"));
   if(visible){
     visible.querySelectorAll("button,input,select,textarea").forEach(el=>setControlLocked(el,!allowEdit));
+
+    // Calciatori: i presidenti devono poter usare SOLO ricerca/filtri.
+    // Le azioni vere (Aggiungi/Modifica/Elimina/Salva calciatore) restano bloccate.
+    if(view === "players" && isLoggedIn() && !isAdmin()){
+      ["plSearch","plRole","plCurrent","plOwner","plStatus","plBonus","plDeadline","plContractMin","plContractMax"].forEach(id=>{
+        const el = q(id);
+        if(el){ el.disabled = false; el.style.opacity = "1"; }
+      });
+      visible.querySelectorAll('button[onclick^="clearFilters(\'pl\'"]').forEach(btn=>{
+        btn.disabled = false;
+        btn.style.opacity = "1";
+      });
+    }
   }
   // Ripristino backup solo admin; backup download sempre consentito.
   document.querySelectorAll('button[onclick*="triggerRestoreBackup"]').forEach(b=>setControlLocked(b,!isAdmin()));

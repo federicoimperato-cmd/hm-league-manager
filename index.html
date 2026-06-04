@@ -5668,5 +5668,200 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+
+<script>
+/* =========================================================
+   FIX MIRATO: FILTRI CALCIATORI PRESIDENTI + EDITOR RUOLI MODULI
+   - Presidenti: filtri Calciatori attivi, modifiche calciatori bloccate.
+   - Admin: editor ruoli slot modulo in Formazione.
+   - Non tocca salvataggio, asta, scambi, albo, backup.
+   ========================================================= */
+(function(){
+  if(window.HM_FILTERS_MODULE_EDITOR_FIX) return;
+  window.HM_FILTERS_MODULE_EDITOR_FIX = true;
+
+  function qs(sel,root){return Array.from((root||document).querySelectorAll(sel));}
+  function byId(id){return document.getElementById(id);}
+  function isAdm(){try{return typeof internalAdmin==='function'?internalAdmin():typeof isAdmin==='function'?isAdmin():false;}catch(e){return false;}}
+  function isLog(){try{return typeof internalLogged==='function'?internalLogged():typeof isLoggedIn==='function'?isLoggedIn():false;}catch(e){return false;}}
+  function escLocal(s){try{return typeof esc==='function'?esc(s):String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}catch(e){return String(s||'');}}
+
+  // ---------- FILTRI CALCIATORI ----------
+  function enablePlayersReadOnlyFilters(){
+    try{
+      const root=byId('view-players');
+      if(!root || !isLog() || isAdm()) return;
+      // Mantiene attivi solo controlli filtro/ricerca.
+      qs('input,select,textarea',root).forEach(el=>{
+        const id=String(el.id||'');
+        const on=String(el.getAttribute('oninput')||'')+' '+String(el.getAttribute('onchange')||'');
+        const isFilter = id.startsWith('pl') || on.includes('filterPlayers') || on.includes('clearFilters');
+        el.disabled = !isFilter;
+        el.style.opacity = isFilter ? '1' : '.45';
+      });
+      qs('button',root).forEach(btn=>{
+        const on=String(btn.getAttribute('onclick')||'');
+        const allow = on.includes("clearFilters('pl") || on.includes('clearFilters(\"pl') || on.includes('filterPlayers');
+        btn.disabled = !allow;
+        btn.style.opacity = allow ? '1' : '.45';
+        if(!allow) btn.title = 'Solo Federico può modificare i calciatori';
+      });
+    }catch(e){console.warn('enablePlayersReadOnlyFilters',e);}
+  }
+
+  const oldRenderPlayers = typeof renderPlayers==='function' ? renderPlayers : null;
+  if(oldRenderPlayers){
+    window.renderPlayers = renderPlayers = function(){
+      const r = oldRenderPlayers.apply(this, arguments);
+      setTimeout(enablePlayersReadOnlyFilters,0);
+      return r;
+    };
+  }
+  const oldFilterPlayers = typeof filterPlayers==='function' ? filterPlayers : null;
+  if(oldFilterPlayers){
+    window.filterPlayers = filterPlayers = function(){
+      const r = oldFilterPlayers.apply(this, arguments);
+      setTimeout(enablePlayersReadOnlyFilters,0);
+      return r;
+    };
+  }
+  const oldClearFilters = typeof clearFilters==='function' ? clearFilters : null;
+  if(oldClearFilters){
+    window.clearFilters = clearFilters = function(prefix, scopeTeam){
+      const r = oldClearFilters.apply(this, arguments);
+      if(prefix==='pl') setTimeout(enablePlayersReadOnlyFilters,0);
+      return r;
+    };
+  }
+
+  // ---------- EDITOR RUOLI MODULI ----------
+  const HM_MODULE_ROLES_KEY='hm_module_roles_v1';
+  const DEFAULT_MODULE_ROWS={
+    "343":[["Por"],["Dc","Dc","Dc"],["E","M/C","C","E"],["W/A","A/Pc","W/A"]],
+    "3421":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","C","E/W"],["T","T/A"],["A/Pc"]],
+    "352":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","M","C","E/W"],["A/Pc","A/Pc"]],
+    "3412":[["Por"],["Dc","Dc","Dc"],["E/W","M/C","C","E/W"],["T"],["A/Pc","A/Pc"]],
+    "433":[["Por"],["Dd","Dc","Dc","Ds"],["M/C","M","C"],["W/A","A/Pc","W/A"]],
+    "4312":[["Por"],["Dd","Dc","Dc","Ds"],["M/C","M","C"],["T"],["A/Pc","A/Pc"]],
+    "442":[["Por"],["Dd","Dc","Dc","Ds"],["E/W","M/C","C","E/W"],["A/Pc","A/Pc"]],
+    "4141":[["Por"],["Dd","Dc","Dc","Ds"],["M"],["E/W","C/T","T","W"],["A/Pc"]],
+    "4231":[["Por"],["Dd","Dc","Dc","Ds"],["M","M/C"],["W/T","T","W/A"],["A/Pc"]]
+  };
+  function getModuleRoles(){
+    try{
+      const saved=JSON.parse(localStorage.getItem(HM_MODULE_ROLES_KEY)||'null');
+      return saved && typeof saved==='object' ? Object.assign({}, DEFAULT_MODULE_ROWS, saved) : JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS));
+    }catch(e){return JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS));}
+  }
+  function setModuleRoles(cfg){
+    try{localStorage.setItem(HM_MODULE_ROLES_KEY, JSON.stringify(cfg));}catch(e){}
+  }
+  function moduleCodes(){return Object.keys(getModuleRoles());}
+  window.moduleRows = moduleRows = function(module){
+    const cfg=getModuleRoles();
+    return cfg[module] || cfg['343'] || DEFAULT_MODULE_ROWS['343'];
+  };
+
+  window.formationHtml = formationHtml = function(code){
+    const mods=moduleCodes();
+    const current=savedFormations[code]?.module || (mods[0]||'343');
+    return `<div class="card">
+      <div class="between">
+        <div>
+          <h3>Formazione ideale</h3>
+          <p class="muted">Campo verticale: scegli il modulo e in ogni casella compaiono solo i calciatori compatibili con quel ruolo.</p>
+        </div>
+        <div class="row">
+          <select id="modulo" class="input" onchange="renderPitch('${code}')">
+            ${mods.map(m=>`<option value="${escLocal(m)}" ${m===current?'selected':''}>${escLocal(m)}</option>`).join('')}
+          </select>
+          ${isAdm()?`<button type="button" class="btn" onclick="openModuleRolesEditor()">⚙️ Modifica ruoli moduli</button>`:''}
+        </div>
+      </div>
+      <div id="pitchBox" style="margin-top:14px"></div>
+    </div><script>setTimeout(()=>renderPitch('${code}'),0)<\/script>`;
+  };
+
+  function rowsToText(rows){return (rows||[]).map(line=>(line||[]).join(',')).join('\n');}
+  function textToRows(text){
+    return String(text||'').split(/\n+/).map(line=>line.split(',').map(x=>x.trim()).filter(Boolean)).filter(line=>line.length);
+  }
+  function renderModuleEditorBody(selected){
+    const cfg=getModuleRoles();
+    selected = selected || Object.keys(cfg)[0] || '343';
+    const txt=rowsToText(cfg[selected]||DEFAULT_MODULE_ROWS[selected]||DEFAULT_MODULE_ROWS['343']);
+    return `<h3>Editor ruoli moduli</h3>
+      <p class="muted">Solo admin. Una riga = una linea del campo. Ruoli separati da virgola. Esempio fascia: <b>E/W</b> permette sia E che W.</p>
+      <div class="grid grid2">
+        <label>Modulo
+          <select id="hmModuleEditCode" class="input" onchange="hmRefreshModuleEditor(this.value)">
+            ${Object.keys(cfg).map(m=>`<option value="${escLocal(m)}" ${m===selected?'selected':''}>${escLocal(m)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Nuovo modulo opzionale
+          <input id="hmNewModuleCode" class="input" placeholder="es. 4321">
+        </label>
+      </div>
+      <label style="display:block;margin-top:12px">Righe modulo
+        <textarea id="hmModuleRowsText" class="input" style="width:100%;min-height:190px;font-family:monospace">${escLocal(txt)}</textarea>
+      </label>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button type="button" class="btn" onclick="closeTradeModal()">Chiudi</button>
+        <button type="button" class="btn yellow" onclick="resetModuleRolesToDefault()">Reset default</button>
+        <button type="button" class="btn green" onclick="saveModuleRolesEditor()">Salva modulo</button>
+      </div>`;
+  }
+  window.openModuleRolesEditor = function(){
+    if(!isAdm()){alert('Solo Federico admin può modificare i ruoli dei moduli.');return false;}
+    const modal=byId('tradeModal'), body=byId('tradeModalBody');
+    if(!modal||!body) return false;
+    body.innerHTML=renderModuleEditorBody(byId('modulo')?.value || '343');
+    modal.style.display='flex';
+  };
+  window.hmRefreshModuleEditor = function(module){
+    const body=byId('tradeModalBody'); if(body) body.innerHTML=renderModuleEditorBody(module);
+  };
+  window.saveModuleRolesEditor = function(){
+    if(!isAdm()){alert('Solo Federico admin può modificare i ruoli dei moduli.');return false;}
+    const cfg=getModuleRoles();
+    const selected=String(byId('hmModuleEditCode')?.value||'').trim();
+    const newCode=String(byId('hmNewModuleCode')?.value||'').trim();
+    const code=(newCode||selected).replace(/\s+/g,'');
+    const rows=textToRows(byId('hmModuleRowsText')?.value||'');
+    if(!code){alert('Inserisci/seleziona un modulo.');return false;}
+    if(!rows.length){alert('Inserisci almeno una riga modulo.');return false;}
+    cfg[code]=rows;
+    if(newCode && selected && selected!==code && cfg[selected]) delete cfg[selected];
+    setModuleRoles(cfg);
+    try{ if(typeof saveAll==='function') saveAll(); }catch(e){}
+    try{ closeTradeModal(); }catch(e){}
+    try{ if(selectedTeam) renderTeamDetail(); }catch(e){}
+    return true;
+  };
+  window.resetModuleRolesToDefault = function(){
+    if(!isAdm()) return false;
+    if(!confirm('Ripristinare i moduli predefiniti?')) return false;
+    setModuleRoles(JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS)));
+    try{ if(typeof saveAll==='function') saveAll(); }catch(e){}
+    try{ closeTradeModal(); }catch(e){}
+    try{ if(selectedTeam) renderTeamDetail(); }catch(e){}
+    return true;
+  };
+
+  const oldApplyPerm = window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  window.applyInternalPermissions = window.applyPermissionsToVisibleView = function(){
+    try{ if(typeof oldApplyPerm==='function') oldApplyPerm(); }catch(e){}
+    setTimeout(enablePlayersReadOnlyFilters,0);
+    try{
+      const btn=byId('hmFirebaseSaveBtn');
+      if(btn){btn.disabled=!isLog(); btn.style.opacity=isLog()?'1':'.45';}
+    }catch(e){}
+  };
+
+  try{ if(typeof currentVisibleViewName==='function' && currentVisibleViewName()==='players') enablePlayersReadOnlyFilters(); }catch(e){}
+})();
+</script>
+
 </body>
 </html>

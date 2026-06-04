@@ -5876,5 +5876,116 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+
+<script>
+/* =========================================================
+   FIX FINALE SOLO FILTRI CALCIATORI PUBBLICI
+   - I filtri della tab Calciatori sono sempre utilizzabili da tutti.
+   - Non sblocca aggiungi/modifica/elimina/salva calciatori.
+   - Non tocca altre sezioni.
+   ========================================================= */
+(function(){
+  if(window.HM_PLAYERS_FILTERS_PUBLIC_FINAL_FIX) return;
+  window.HM_PLAYERS_FILTERS_PUBLIC_FINAL_FIX = true;
+
+  function currentView(){
+    try{
+      if(typeof currentVisibleViewName === 'function') return currentVisibleViewName();
+      const v=[...document.querySelectorAll('.view')].find(x=>!x.classList.contains('hidden'));
+      return v ? String(v.id||'').replace('view-','') : '';
+    }catch(e){return '';}
+  }
+  function isPlayersView(){ return currentView()==='players' || !!document.querySelector('#view-players:not(.hidden)'); }
+  function enablePlayerFilters(){
+    try{
+      const root=document.getElementById('view-players');
+      if(!root) return;
+
+      // Filtri generati da filtersHtml("pl"). Devono restare attivi per tutti.
+      const filterIds = [
+        'plSearch','plRole','plCurrent','plOwner','plStatus','plBonus','plDeadline','plContractMin','plContractMax'
+      ];
+      filterIds.forEach(id=>{
+        const el=document.getElementById(id);
+        if(el){
+          el.disabled=false;
+          el.removeAttribute('disabled');
+          el.style.opacity='1';
+          el.style.pointerEvents='auto';
+        }
+      });
+
+      // Qualsiasi controllo che chiama filterPlayers è filtro, quindi va lasciato attivo.
+      root.querySelectorAll('input,select,textarea').forEach(el=>{
+        const on = String(el.getAttribute('oninput')||'') + ' ' + String(el.getAttribute('onchange')||'');
+        const id = String(el.id||'');
+        const isFilter = id.startsWith('pl') || on.includes('filterPlayers') || on.includes('clearFilters');
+        if(isFilter){
+          el.disabled=false;
+          el.removeAttribute('disabled');
+          el.style.opacity='1';
+          el.style.pointerEvents='auto';
+        }
+      });
+
+      // Solo il pulsante Pulisci filtri resta attivo. Tutti gli altri bottoni calciatori restano bloccati ai non admin dalle regole esistenti.
+      root.querySelectorAll('button').forEach(btn=>{
+        const on=String(btn.getAttribute('onclick')||'');
+        const isClear = on.includes('clearFilters') || /pulisci\s*filtri/i.test(btn.textContent||'');
+        if(isClear){
+          btn.disabled=false;
+          btn.removeAttribute('disabled');
+          btn.style.opacity='1';
+          btn.style.pointerEvents='auto';
+        }
+      });
+    }catch(e){console.warn('HM player filters public fix', e);}
+  }
+
+  // Dopo qualsiasi cambio permessi, riattiva i filtri.
+  const previousApply = window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  window.applyInternalPermissions = window.applyPermissionsToVisibleView = function(){
+    try{ if(typeof previousApply === 'function') previousApply.apply(this, arguments); }catch(e){}
+    setTimeout(enablePlayerFilters, 0);
+    setTimeout(enablePlayerFilters, 80);
+    setTimeout(enablePlayerFilters, 250);
+  };
+
+  // Dopo render/filtraggio calciatori, riattiva i filtri.
+  if(typeof window.renderPlayers === 'function'){
+    const previousRenderPlayers = window.renderPlayers;
+    window.renderPlayers = renderPlayers = function(){
+      const r = previousRenderPlayers.apply(this, arguments);
+      setTimeout(enablePlayerFilters,0);
+      setTimeout(enablePlayerFilters,100);
+      return r;
+    };
+  }
+  if(typeof window.filterPlayers === 'function'){
+    const previousFilterPlayers = window.filterPlayers;
+    window.filterPlayers = filterPlayers = function(){
+      const r = previousFilterPlayers.apply(this, arguments);
+      setTimeout(enablePlayerFilters,0);
+      return r;
+    };
+  }
+
+  // Osserva la tab Calciatori: se un vecchio blocco li disabilita dopo, li riabilita subito.
+  try{
+    const root=document.getElementById('view-players');
+    if(root){
+      const obs=new MutationObserver(()=>{ if(isPlayersView()) enablePlayerFilters(); });
+      obs.observe(root,{subtree:true, childList:true, attributes:true, attributeFilter:['disabled','class','style']});
+    }
+  }catch(e){}
+
+  // Sicurezza leggera: solo quando sei nella tab Calciatori.
+  setInterval(()=>{ if(isPlayersView()) enablePlayerFilters(); }, 600);
+  document.addEventListener('click',()=>{ if(isPlayersView()) setTimeout(enablePlayerFilters,30); }, true);
+  setTimeout(enablePlayerFilters,0);
+})();
+</script>
+
 </body>
 </html>

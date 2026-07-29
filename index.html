@@ -3704,6 +3704,9 @@ window.addEventListener("beforeunload", function(e){
   }
   function hmPlayerForm(p, mode){
     p = p || {name:"",role:"",current:"",owner:"SVIN",status:"D",bonus:"",contract:"",deadline:""};
+    const currentCodes = hmNormCode(p.current).split(/\s+/).filter(Boolean);
+    const primaveraChecked = String(p.status||"").toUpperCase().includes("PRIMAVERA") && currentCodes.length >= 2;
+    const mainCurrent = primaveraChecked ? currentCodes[0] : p.current;
     const title = mode==="new" ? "Aggiungi calciatore" : mode==="duplicate" ? "Duplica calciatore" : "Modifica calciatore";
     const saveLabel = mode==="edit" ? "Salva calciatore" : mode==="duplicate" ? "Crea duplicato" : "Aggiungi calciatore";
     const deleteBtn = mode==="edit" ? `<button type="button" class="btn red" onclick="deletePlayerEditor('${hmEsc(p.id)}')">Elimina</button>` : "";
@@ -3712,15 +3715,16 @@ window.addEventListener("beforeunload", function(e){
       <div class="grid grid3">
         <label>Nome<input class="input" id="hmPlName" value="${hmEsc(p.name)}" placeholder="Nome calciatore"></label>
         <label>Ruolo<select class="input" id="hmPlRole">${hmRoleOptions(p.role)}</select></label>
-        <label>Squadra attuale<select class="input" id="hmPlCurrent">${hmTeamOptions(p.current, true)}</select></label>
+        <label>Squadra attuale<select class="input" id="hmPlCurrent">${hmTeamOptions(mainCurrent, true)}</select></label>
         <label>Proprietario<select class="input" id="hmPlOwner">${hmTeamOptions(p.owner || "SVIN", false)}</select></label>
         <label>Stato<select class="input" id="hmPlStatus">${hmStatusOptions(p.status || "D")}</select></label>
+        <label style="display:flex;align-items:center;gap:10px;padding-top:24px"><input type="checkbox" id="hmPlPrimavera" ${primaveraChecked?"checked":""}> <b>Primavera</b></label>
         <label>Bonus<input class="input" id="hmPlBonus" value="${hmEsc(p.bonus)}"></label>
         <label>Contratto<input class="input" id="hmPlContract" value="${hmEsc(p.contract)}"></label>
         <label>Scadenza<input class="input" id="hmPlDeadline" value="${hmEsc(p.deadline)}"></label>
       </div>
       <div class="card" style="margin-top:12px">
-        <div class="muted"><b>Regola salvataggio:</b> se scegli un proprietario e lasci vuota la squadra attuale, il sistema usa automaticamente il proprietario come squadra attuale. Per svincolare davvero, scegli Proprietario = SVIN.</div>
+        <div class="muted"><b>Regola salvataggio:</b> se scegli un proprietario e lasci vuota la squadra attuale, il sistema usa automaticamente il proprietario come squadra attuale. Per svincolare davvero, scegli Proprietario = SVIN. Se spunti <b>Primavera</b>, il sistema abbina automaticamente la seconda squadra e salva Proprietario = SVIN; scegli anche lo Stato PRIMAVERA con l'anno corretto.</div>
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         ${deleteBtn}
@@ -3766,13 +3770,23 @@ window.addEventListener("beforeunload", function(e){
     let current = hmNormCode(hmVal("hmPlCurrent"));
     let owner = hmNormCode(hmVal("hmPlOwner") || "SVIN");
     let status = hmVal("hmPlStatus") || "D";
+    const primaveraChecked = !!document.getElementById("hmPlPrimavera")?.checked;
 
     if(!name){ alert("Inserisci almeno il nome del calciatore."); return false; }
     if(!role){ alert("Seleziona il ruolo del calciatore."); return false; }
     if(!owner) owner = "SVIN";
     if(current === "SVIN") current = "";
-    if(owner === "SVIN") { current = ""; status = status || "Svincolato"; }
-    else if(!current) current = owner;
+
+    if(primaveraChecked){
+      if(!current){ alert("Per la Primavera seleziona la squadra attuale."); return false; }
+      const paired = (typeof PAIRED === "object" && PAIRED) ? hmNormCode(PAIRED[current]) : "";
+      if(!paired){ alert("Non trovo la squadra Primavera abbinata a " + current + "."); return false; }
+      current = current + " " + paired;
+      owner = "SVIN";
+    }else{
+      if(owner === "SVIN") { current = ""; status = status || "Svincolato"; }
+      else if(!current) current = owner;
+    }
 
     const next = existing || {id:"P"+Date.now()+"_"+Math.random().toString(16).slice(2)};
     next.name = name;

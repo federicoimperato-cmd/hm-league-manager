@@ -104,6 +104,7 @@ button{cursor:pointer}
       <button class="navbtn" data-view="coaches">👔 Allenatori</button>
       <button class="navbtn" data-view="compmanager">🏅 Competizioni</button>
       <button class="navbtn" data-view="competitions">🏆 Albo d'Oro</button>
+      <button class="navbtn" id="hmAdminNavBtn" data-view="admin">🛠️ Admin</button>
       <button class="navbtn" data-view="style">🎨 Editor sito</button>
     </aside>
 
@@ -125,6 +126,7 @@ button{cursor:pointer}
       <section id="view-coaches" class="panel view hidden"></section>
       <section id="view-compmanager" class="panel view hidden"></section>
       <section id="view-competitions" class="panel view hidden"></section>
+      <section id="view-admin" class="panel view hidden"></section>
       <section id="view-style" class="panel view hidden"></section>
     </main>
   </div>
@@ -937,6 +939,7 @@ function showView(name){
   if(name==="coaches") renderCoaches();
   if(name==="compmanager") renderCompetitionManager();
   if(name==="competitions") renderCompetitions();
+  if(name==="admin") renderAdminTools();
   if(name==="style") renderStyle();
   setTimeout(applyPermissionsToVisibleView,0);
 }
@@ -1449,7 +1452,7 @@ function renderPitch(code){
         </div>`).join("")}
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
-      <button class="btn green" onclick="saveAll();alert('Formazione salvata')">Salva formazione</button>
+      <button class="btn green" onclick="saveFormationKeepVisible('${code}')">Salva formazione</button>
       <button class="btn red" onclick="clearFormation('${code}')">Svuota formazione</button>
     </div>`;
   saveAll();
@@ -3463,6 +3466,9 @@ window.addEventListener("beforeunload", function(e){
     teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news;
     honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages;
     rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations;
+    if(d.moduleRoles && typeof d.moduleRoles==="object" && Object.keys(d.moduleRoles).length){
+      try{ window.HM_MODULE_ROLES_SHARED=clonePlain(d.moduleRoles); localStorage.setItem("hm_module_roles_v1", JSON.stringify(d.moduleRoles)); }catch(e){ console.warn("Moduli condivisi non applicati",e); }
+    }
     // Asta live: NON sovrascrivere mai l'asta in corso caricando il gestionale generale.
     // Il documento realtime/auction è la fonte vera per playerId, bids, activeTeams e passedTeams.
     // Dal salvataggio generale recuperiamo solo lo storico aggiudicazioni.
@@ -3493,7 +3499,7 @@ window.addEventListener("beforeunload", function(e){
       trades:{split:true,count:tradeIndex.length,updatedAt:new Date().toISOString()},
       news:{split:true,count:newsIndex.length,updatedAt:new Date().toISOString()},
       honors:{honors,individualTitles,positionHistory,seasonHistory},
-      managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base}
+      managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base,moduleRoles:(()=>{try{return JSON.parse(localStorage.getItem("hm_module_roles_v1")||"{}")||{}}catch(e){return {}}})()}
     };
     const assets=[...teamLogoRows(),...org.assets,...awardAssetRows()];
     return {docs,assets,tradeIndex,newsIndex};
@@ -3558,6 +3564,7 @@ window.addEventListener("beforeunload", function(e){
       presidentActions:d.core?.presidentActions||[],
       regulationText:d.core?.regulationText||"",
       savedFormations:d.managers?.savedFormations||{},
+      moduleRoles:d.managers?.moduleRoles||null,
       competitionsManager:d.managers?.competitionsManager??null,
       coachesManager:d.managers?.coachesManager??null,
       orgData:d.managers?.orgData||{},
@@ -4370,7 +4377,9 @@ window.addEventListener("beforeunload", function(e){
       if(!fdb) return true;
       const main = fdb.collection("hmleague").doc("main");
       const writes = [];
-      writes.push(main.collection("parts").doc("managers").set({savedFormations:clean(savedFormations||{})},{merge:true}));
+      const managerPatch={savedFormations:clean(savedFormations||{})};
+      if(internalAdmin()) managerPatch.moduleRoles=clean((()=>{try{return JSON.parse(localStorage.getItem("hm_module_roles_v1")||"{}")||{}}catch(e){return {}}})());
+      writes.push(main.collection("parts").doc("managers").set(managerPatch,{merge:true}));
       writes.push(main.collection("parts").doc("core").set({pendingTrades:clean(window.pendingTrades || pendingTrades || [])},{merge:true}));
       await Promise.all(writes);
       setStatus("✅ Online sincronizzato", false);
@@ -5789,14 +5798,16 @@ window.addEventListener("beforeunload", function(e){
   };
   function getModuleRoles(){
     try{
-      const saved=JSON.parse(localStorage.getItem(HM_MODULE_ROLES_KEY)||'null');
+      const shared=(window.HM_MODULE_ROLES_SHARED && typeof window.HM_MODULE_ROLES_SHARED==='object') ? window.HM_MODULE_ROLES_SHARED : null;
+      const saved=shared || JSON.parse(localStorage.getItem(HM_MODULE_ROLES_KEY)||'null');
       return saved && typeof saved==='object' ? Object.assign({}, DEFAULT_MODULE_ROWS, saved) : JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS));
     }catch(e){return JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS));}
   }
   function setModuleRoles(cfg){
-    try{localStorage.setItem(HM_MODULE_ROLES_KEY, JSON.stringify(cfg));}catch(e){}
+    try{ window.HM_MODULE_ROLES_SHARED=JSON.parse(JSON.stringify(cfg||{})); localStorage.setItem(HM_MODULE_ROLES_KEY, JSON.stringify(cfg||{})); }catch(e){}
   }
   function moduleCodes(){return Object.keys(getModuleRoles());}
+  window.hmGetModuleRoles = getModuleRoles;
   window.moduleRows = moduleRows = function(module){
     const cfg=getModuleRoles();
     return cfg[module] || cfg['343'] || DEFAULT_MODULE_ROWS['343'];
@@ -5805,6 +5816,7 @@ window.addEventListener("beforeunload", function(e){
   window.formationHtml = formationHtml = function(code){
     const mods=moduleCodes();
     const current=savedFormations[code]?.module || (mods[0]||'343');
+    if(current && !mods.includes(current)) mods.unshift(current);
     return `<div class="card">
       <div class="between">
         <div>
@@ -5874,6 +5886,7 @@ window.addEventListener("beforeunload", function(e){
     if(newCode && selected && selected!==code && cfg[selected]) delete cfg[selected];
     setModuleRoles(cfg);
     try{ if(typeof saveAll==='function') saveAll(); }catch(e){}
+    try{ if(typeof hmPresidentSaveAllowedOnline==='function') hmPresidentSaveAllowedOnline(); }catch(e){}
     try{ closeTradeModal(); }catch(e){}
     try{ if(selectedTeam) renderTeamDetail(); }catch(e){}
     return true;
@@ -5883,6 +5896,7 @@ window.addEventListener("beforeunload", function(e){
     if(!confirm('Ripristinare i moduli predefiniti?')) return false;
     setModuleRoles(JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS)));
     try{ if(typeof saveAll==='function') saveAll(); }catch(e){}
+    try{ if(typeof hmPresidentSaveAllowedOnline==='function') hmPresidentSaveAllowedOnline(); }catch(e){}
     try{ closeTradeModal(); }catch(e){}
     try{ if(selectedTeam) renderTeamDetail(); }catch(e){}
     return true;
@@ -5903,6 +5917,203 @@ window.addEventListener("beforeunload", function(e){
 </script>
 
 
+
+
+
+
+
+<script>
+/* =========================================================
+   HM ADMIN CENTER + FORMAZIONE STABILE
+   - Hub admin per diagnostica/manutenzione senza toccare dati automaticamente.
+   - I moduli formazione sono condivisi in Firebase.
+   - Il tasto Salva formazione mantiene il campo visibile e sincronizza solo i manager.
+   ========================================================= */
+(function(){
+  const $=id=>document.getElementById(id);
+  const escA=v=>String(v??"").replace(/[&<>\"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;"}[m]));
+  function adminOk(){
+    try{return (typeof internalAdmin==='function' && internalAdmin()) || (typeof isAdmin==='function' && isAdmin());}
+    catch(e){return false;}
+  }
+  function loggedOk(){
+    try{return (typeof internalLogged==='function' && internalLogged()) || (typeof isLoggedIn==='function' && isLoggedIn());}
+    catch(e){return false;}
+  }
+  function moduleCfg(){
+    try{
+      if(typeof window.hmGetModuleRoles==='function') return window.hmGetModuleRoles()||{};
+      return JSON.parse(localStorage.getItem('hm_module_roles_v1')||'{}')||{};
+    }catch(e){return {};}
+  }
+  function knownTeamSet(){ return new Set((Array.isArray(teams)?teams:[]).map(t=>String(t.code||'').trim().toUpperCase()).filter(Boolean)); }
+  function savedModuleSet(){ return new Set(Object.keys(moduleCfg())); }
+  function formationIssues(){
+    const out=[];
+    const ids=new Set((Array.isArray(players)?players:[]).map(p=>String(p.id)));
+    const mods=savedModuleSet();
+    Object.entries(savedFormations||{}).forEach(([teamCode,f])=>{
+      if(!knownTeamSet().has(String(teamCode).toUpperCase())) out.push(`Formazione associata a squadra inesistente: ${teamCode}`);
+      const m=String(f?.module||'');
+      if(m && !mods.has(m)) out.push(`Modulo ${m} usato da ${teamCode} ma non presente nella configurazione condivisa`);
+      Object.entries(f?.slots||{}).forEach(([slot,pid])=>{
+        if(pid && !ids.has(String(pid))) out.push(`${teamCode}: slot ${slot} punta a un calciatore non più presente (${pid})`);
+      });
+    });
+    return out;
+  }
+  function dataIssues(){
+    const out=[];
+    const teamSet=knownTeamSet();
+    const seen=new Set();
+    (Array.isArray(players)?players:[]).forEach(p=>{
+      const id=String(p?.id||'');
+      if(!id) out.push(`Calciatore senza ID: ${p?.name||'senza nome'}`);
+      else if(seen.has(id)) out.push(`ID calciatore duplicato: ${id}`);
+      else seen.add(id);
+      const owner=String(p?.owner||'').trim().toUpperCase();
+      if(owner && !teamSet.has(owner)) out.push(`${p?.name||id}: proprietario non riconosciuto ${owner}`);
+      const current=String(p?.current||'').trim().toUpperCase();
+      if(current){
+        current.split(/\s+/).filter(Boolean).forEach(c=>{ if(!teamSet.has(c)) out.push(`${p?.name||id}: squadra attuale non riconosciuta ${c}`); });
+      }
+    });
+    return out;
+  }
+  function diagnostics(){ return [...dataIssues(),...formationIssues()]; }
+
+  window.saveFormationKeepVisible = async function(code){
+    try{
+      const can=(typeof canEditTeam==='function') ? canEditTeam(code) : adminOk();
+      if(!can){ alert('Puoi salvare solo la formazione delle tue squadre.'); return false; }
+      savedFormations[code]=savedFormations[code] || {module:$('modulo')?.value||'343',slots:{}};
+      savedFormations[code].module=$('modulo')?.value || savedFormations[code].module || '343';
+      try{ if(typeof saveLocalOnly==='function') saveLocalOnly(); }catch(e){}
+      let online=true;
+      try{
+        if(typeof hmPresidentSaveAllowedOnline==='function') online=await hmPresidentSaveAllowedOnline();
+        else if(typeof saveAll==='function') saveAll();
+      }catch(e){ online=false; console.error(e); }
+      try{ if(typeof renderPitch==='function') renderPitch(code); }catch(e){console.error(e);}
+      const sub=$('teamSub-formazione'); if(sub) sub.classList.remove('hidden');
+      try{
+        document.querySelectorAll('#view-teamDetail .tabs .tab').forEach(b=>{
+          const on=String(b.getAttribute('onclick')||'');
+          b.classList.toggle('active',on.includes("teamSub('formazione'"));
+        });
+      }catch(e){}
+      alert(online===false ? 'Formazione salvata sul dispositivo. Sincronizzazione online non riuscita.' : 'Formazione salvata e sincronizzata.');
+      return true;
+    }catch(e){ console.error(e); alert('Errore salvataggio formazione: '+(e.message||e)); return false; }
+  };
+
+  window.hmAdminRunDiagnostics=function(){
+    const box=$('hmAdminDiagnostics'); if(!box) return false;
+    if(!adminOk()){box.innerHTML='<div class="muted">Area riservata admin.</div>';return false;}
+    const issues=diagnostics();
+    box.innerHTML=issues.length
+      ? `<div class="stat"><div class="n">${issues.length}</div><div>anomalie da controllare</div></div><div style="margin-top:12px;max-height:330px;overflow:auto">${issues.map(x=>`<div class="card" style="padding:10px;margin:7px 0">⚠️ ${escA(x)}</div>`).join('')}</div>`
+      : '<div class="stat"><div class="n">0</div><div>✅ Nessuna anomalia rilevata nei controlli automatici</div></div>';
+    return true;
+  };
+
+  window.hmAdminRepairFormationRefs=async function(){
+    if(!adminOk()){alert('Solo Federico admin.');return false;}
+    const ids=new Set((Array.isArray(players)?players:[]).map(p=>String(p.id)));
+    let removed=0;
+    Object.values(savedFormations||{}).forEach(f=>{
+      if(!f || typeof f!=='object' || !f.slots) return;
+      Object.keys(f.slots).forEach(k=>{ const pid=f.slots[k]; if(pid && !ids.has(String(pid))){ delete f.slots[k]; removed++; } });
+    });
+    if(!removed){alert('Nessun riferimento formazione rotto da riparare.');hmAdminRunDiagnostics();return true;}
+    if(!confirm(`Trovati ${removed} riferimenti a calciatori inesistenti. Rimuoverli dalle sole formazioni?`)){return false;}
+    try{ if(typeof saveLocalOnly==='function') saveLocalOnly(); }catch(e){}
+    try{ if(typeof hmPresidentSaveAllowedOnline==='function') await hmPresidentSaveAllowedOnline(); else if(typeof saveAll==='function') saveAll(); }catch(e){console.error(e);}
+    hmAdminRunDiagnostics();
+    alert(`Riparazione completata: rimossi ${removed} riferimenti non validi. Nessun calciatore è stato cancellato.`);
+    return true;
+  };
+
+  window.hmAdminReloadCloud=async function(){
+    if(!adminOk()){alert('Solo Federico admin.');return false;}
+    try{ if(window.HM_HAS_UNSAVED_CHANGES && !confirm('Ci sono modifiche locali non pubblicate. Ricaricando dal cloud potresti perderle. Continuare?')) return false; }catch(e){}
+    try{ if(typeof loadCloudData==='function'){await loadCloudData(); return true;} }catch(e){console.error(e);alert('Errore ricaricamento cloud: '+(e.message||e));}
+    return false;
+  };
+  window.hmAdminRerender=function(){
+    try{ if(typeof renderCurrentView==='function') renderCurrentView(); else if(typeof showView==='function') showView('dashboard'); return true; }catch(e){console.error(e);return false;}
+  };
+
+  window.renderAdminTools=function(){
+    const root=$('view-admin'); if(!root) return;
+    const nav=$('hmAdminNavBtn'); if(nav) nav.style.display=adminOk()?'flex':'none';
+    if(!adminOk()){
+      root.innerHTML='<h2>🛠️ Admin</h2><div class="card"><b>Area riservata.</b><p class="muted">Accedi come Federico admin per usare manutenzione e configurazione.</p></div>';
+      return;
+    }
+    const cfg=moduleCfg();
+    const forms=Object.keys(savedFormations||{}).length;
+    const assigned=Object.values(savedFormations||{}).reduce((n,f)=>n+Object.values(f?.slots||{}).filter(Boolean).length,0);
+    root.innerHTML=`
+      <div class="between">
+        <div><h2 style="margin-bottom:6px">🛠️ Centro Admin HML</h2><div class="muted">Configurazione, sincronizzazione, backup e controlli di integrità. Le riparazioni automatiche sono limitate alle operazioni sicure.</div></div>
+        <span class="badge">Solo Federico</span>
+      </div>
+      <div class="grid grid4" style="margin-top:16px">
+        <div class="stat"><div class="muted">Calciatori</div><div class="n">${(players||[]).length}</div></div>
+        <div class="stat"><div class="muted">Società</div><div class="n">${(teams||[]).filter(t=>t.code!=='SVIN').length}</div></div>
+        <div class="stat"><div class="muted">Moduli condivisi</div><div class="n">${Object.keys(cfg).length}</div></div>
+        <div class="stat"><div class="muted">Giocatori in formazioni</div><div class="n">${assigned}</div><div class="muted">${forms} squadre salvate</div></div>
+      </div>
+      <div class="grid grid2" style="margin-top:16px">
+        <div class="card">
+          <h3>⚽ Formazioni e moduli</h3>
+          <p class="muted">I moduli creati qui vengono ora condivisi online e non restano più legati al singolo dispositivo.</p>
+          <div class="row">
+            <button class="btn primary" onclick="openModuleRolesEditor()">⚙️ Gestisci moduli</button>
+            <button class="btn" onclick="hmAdminRunDiagnostics()">🔎 Controlla formazioni</button>
+            <button class="btn yellow" onclick="hmAdminRepairFormationRefs()">🩹 Ripara riferimenti rotti</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>☁️ Sincronizzazione</h3>
+          <p class="muted">Salva tutto sul cloud oppure ricarica l'ultima versione online. Il ricaricamento avvisa prima se hai modifiche locali non pubblicate.</p>
+          <div class="row">
+            <button class="btn green" onclick="saveCloudNow(true)">💾 Salva tutto online</button>
+            <button class="btn" onclick="hmAdminReloadCloud()">🔄 Ricarica dal cloud</button>
+            <button class="btn" onclick="hmAdminRerender()">🖥️ Ridisegna schermata</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>📦 Sicurezza dati</h3>
+          <p class="muted">Prima di interventi importanti crea sempre un backup completo.</p>
+          <div class="row">
+            <button class="btn green" onclick="downloadFullBackup()">📦 Scarica backup</button>
+            <button class="btn yellow" onclick="triggerRestoreBackup()">♻️ Ripristina backup</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>🧪 Diagnostica</h3>
+          <p class="muted">Controlla ID duplicati, squadre non riconosciute, moduli mancanti e formazioni che puntano a calciatori inesistenti. Non modifica nulla durante il controllo.</p>
+          <button class="btn primary" onclick="hmAdminRunDiagnostics()">Avvia controllo integrità</button>
+        </div>
+      </div>
+      <div id="hmAdminDiagnostics" style="margin-top:16px"></div>`;
+    setTimeout(()=>{try{hmAdminRunDiagnostics();}catch(e){}},0);
+  };
+
+  function syncAdminNav(){ const n=$('hmAdminNavBtn'); if(n) n.style.display=adminOk()?'flex':'none'; }
+  const oldApply=window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  window.applyInternalPermissions=window.applyPermissionsToVisibleView=function(){
+    const r=oldApply?oldApply.apply(this,arguments):undefined;
+    syncAdminNav();
+    if(typeof currentVisibleViewName==='function' && currentVisibleViewName()==='admin' && !adminOk()) try{showView('dashboard');}catch(e){}
+    return r;
+  };
+  document.addEventListener('DOMContentLoaded',()=>setTimeout(syncAdminNav,50));
+  setTimeout(syncAdminNav,50);
+})();
+</script>
 
 
 

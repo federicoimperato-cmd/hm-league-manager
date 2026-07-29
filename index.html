@@ -5961,15 +5961,15 @@ window.addEventListener("beforeunload", function(e){
 
 <script>
 /* =========================================================
-   HM ADMIN SAFE V3
+   HM ADMIN SAFE V4
    BASE: versione Primavera funzionante.
    PRINCIPIO: NON modifica buildSplitDocs/fbSave/saveCloudNow.
    La condivisione moduli usa un documento Firebase separato,
    così un eventuale errore NON può bloccare il salvataggio generale.
    ========================================================= */
 (function(){
-  if(window.HM_ADMIN_SAFE_V3) return;
-  window.HM_ADMIN_SAFE_V3=true;
+  if(window.HM_ADMIN_SAFE_V4) return;
+  window.HM_ADMIN_SAFE_V4=true;
   const $=id=>document.getElementById(id);
   const MODULE_KEY='hm_module_roles_v1';
   const MODULE_DOC_ID='modulesConfig';
@@ -6016,7 +6016,9 @@ window.addEventListener("beforeunload", function(e){
     try{
       await ensureFirebaseAuthSafe();
       const cfg=localModules();
-      await modulesDocRef().set({version:1,updatedAt:new Date().toISOString(),moduleRoles:cfg},{merge:false});
+      // Firestore non consente array annidati (i moduli sono righe -> slot -> ruoli).
+      // Li serializziamo come JSON in un campo stringa: la struttura resta IDENTICA al caricamento.
+      await modulesDocRef().set({version:2,updatedAt:new Date().toISOString(),moduleRolesJson:JSON.stringify(cfg)},{merge:false});
       if(showMessage) alert('Moduli pubblicati online. Il salvataggio generale non è stato toccato.');
       try{renderAdminSafe();}catch(e){}
       return true;
@@ -6034,8 +6036,15 @@ window.addEventListener("beforeunload", function(e){
       const snap=await modulesDocRef().get();
       if(!snap.exists){ if(showMessage) alert('Nessuna configurazione moduli condivisa trovata online.'); return false; }
       const d=snap.data()||{};
-      if(!d.moduleRoles || typeof d.moduleRoles!=='object') throw new Error('Configurazione moduli online non valida');
-      localStorage.setItem(MODULE_KEY,JSON.stringify(d.moduleRoles));
+      let sharedCfg=null;
+      if(typeof d.moduleRolesJson==='string'){
+        try{ sharedCfg=JSON.parse(d.moduleRolesJson); }catch(parseErr){ throw new Error('Configurazione moduli online JSON non valida'); }
+      }else if(d.moduleRoles && typeof d.moduleRoles==='object' && !Array.isArray(d.moduleRoles)){
+        // Compatibilità prudenziale con eventuali vecchie configurazioni.
+        sharedCfg=d.moduleRoles;
+      }
+      if(!sharedCfg || typeof sharedCfg!=='object' || Array.isArray(sharedCfg)) throw new Error('Configurazione moduli online non valida');
+      localStorage.setItem(MODULE_KEY,JSON.stringify(sharedCfg));
       if(showMessage) alert('Moduli condivisi caricati su questo dispositivo.');
       // Se una formazione è già aperta, aggiorna solo l'area formazione.
       try{
@@ -6134,7 +6143,7 @@ window.addEventListener("beforeunload", function(e){
     }
     const unsaved=(typeof HM_HAS_UNSAVED_CHANGES!=='undefined' && HM_HAS_UNSAVED_CHANGES);
     root.innerHTML=`
-      <div class="between"><div><h2 style="margin:0 0 6px">🛠️ Centro Admin HML</h2><div class="muted">Strumenti isolati: nessuna modifica automatica ai dati e nessuna alterazione del salvataggio generale.</div></div><span class="badge">SAFE V3</span></div>
+      <div class="between"><div><h2 style="margin:0 0 6px">🛠️ Centro Admin HML</h2><div class="muted">Strumenti isolati: nessuna modifica automatica ai dati e nessuna alterazione del salvataggio generale.</div></div><span class="badge">SAFE V4</span></div>
       <div class="grid grid4" style="margin-top:16px">
         <div class="stat"><div class="muted">Calciatori</div><div class="n">${(players||[]).length}</div></div>
         <div class="stat"><div class="muted">Squadre</div><div class="n">${(teams||[]).filter(t=>t.code!=='SVIN').length}</div></div>
@@ -6168,6 +6177,364 @@ window.addEventListener("beforeunload", function(e){
   setTimeout(()=>hmLoadSharedModules(false),1200);
   setTimeout(syncAdminNav,100);
   document.addEventListener('DOMContentLoaded',()=>{setTimeout(syncAdminNav,100);setTimeout(()=>hmLoadSharedModules(false),1200);});
+})();
+</script>
+
+<script>
+/* =========================================================
+   HM ADMIN CONTROL CENTER V5
+   Estensione separata sopra SAFE V4.
+   NON modifica il salvataggio generale Firebase.
+   Configurazioni variabili (stati, ruoli, abbinamenti, premi,
+   azioni presidente) sono salvate in un documento cloud separato.
+   ========================================================= */
+(function(){
+  if(window.HM_ADMIN_CONTROL_V5) return;
+  window.HM_ADMIN_CONTROL_V5 = true;
+
+  const $ = id => document.getElementById(id);
+  const CFG_KEY = 'hm_admin_config_v1';
+  const CFG_DOC_ID = 'adminConfig';
+
+  function adm(){ try{return typeof isAdmin==='function' ? !!isAdmin() : !!(currentUser&&currentUser.role==='admin');}catch(e){return false;} }
+  function escV(v){ return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]||m)); }
+  function markUnsaved(){
+    try{ if(typeof saveAll==='function') saveAll(); }
+    catch(e){ console.warn('saveAll admin V5',e); }
+  }
+  function uniqueClean(arr){ return Array.from(new Set((arr||[]).map(x=>String(x??'').trim()).filter(Boolean))); }
+  function defaultStatuses(){
+    return uniqueClean(['D','PS','PD','PO','PRIMAVERA 2005','PRIMAVERA 2006','PRIMAVERA 2007','PRIMAVERA 2008','PRIMAVERA 2009','PRIMAVERA 2010','PRIMAVERA 2011','Svincolato',...(players||[]).map(p=>p.status)]);
+  }
+  function defaultRoles(){
+    return uniqueClean(['Por','Dc','Dd','Ds','B','E','M','C','W','T','A','Pc','Dd;Dc','Ds;Dc','Dd;Ds;E','B;Dd;E','B;Ds;E','Ds;E','Dd;E','E;W','E;M','M;C','C;T','C;W','C;W;T','W;A','W;T','W;T;A','T;A','A;Pc',...(players||[]).map(p=>p.role)]);
+  }
+  function codePairsNow(){
+    const o={};
+    try{ Object.keys(PAIRED||{}).forEach(k=>o[String(k).toUpperCase()]=String(PAIRED[k]||'').toUpperCase()); }catch(e){}
+    return o;
+  }
+  function defaultCfg(){
+    return {
+      version:1,
+      statuses:defaultStatuses(),
+      roles:defaultRoles(),
+      pairings:codePairsNow(),
+      awards:Array.from(typeof INDIVIDUAL_AWARDS!=='undefined'?INDIVIDUAL_AWARDS:[]),
+      actionTypes:Array.from(typeof PRESIDENT_ACTION_TYPES!=='undefined'?PRESIDENT_ACTION_TYPES:[]).map(x=>({name:x.name,cost:Number(x.cost)||0,suspended:!!x.suspended})),
+      defaultCredits:500,
+      defaultHmcoin:100
+    };
+  }
+  function readCfg(){
+    const d=defaultCfg();
+    try{
+      const x=JSON.parse(localStorage.getItem(CFG_KEY)||'null');
+      if(!x||typeof x!=='object') return d;
+      return {
+        ...d,...x,
+        statuses:Array.isArray(x.statuses)?uniqueClean(x.statuses):d.statuses,
+        roles:Array.isArray(x.roles)?uniqueClean(x.roles):d.roles,
+        pairings:x.pairings&&typeof x.pairings==='object'?x.pairings:d.pairings,
+        awards:Array.isArray(x.awards)?uniqueClean(x.awards):d.awards,
+        actionTypes:Array.isArray(x.actionTypes)?x.actionTypes:d.actionTypes
+      };
+    }catch(e){ return d; }
+  }
+  function writeCfg(cfg, mark=true){
+    localStorage.setItem(CFG_KEY,JSON.stringify(cfg));
+    applyCfg(cfg);
+    if(mark){
+      try{ HM_HAS_UNSAVED_CHANGES=true; if(typeof updateCloudBadge==='function') updateCloudBadge(); }catch(e){}
+    }
+  }
+  function applyCfg(cfg){
+    try{
+      if(typeof PAIRED==='object' && PAIRED && cfg.pairings){
+        Object.keys(PAIRED).forEach(k=>delete PAIRED[k]);
+        Object.entries(cfg.pairings).forEach(([k,v])=>{ if(k&&v) PAIRED[String(k).toUpperCase()]=String(v).toUpperCase(); });
+      }
+    }catch(e){console.warn('apply pairings',e);}
+    try{
+      if(Array.isArray(INDIVIDUAL_AWARDS) && Array.isArray(cfg.awards)) INDIVIDUAL_AWARDS.splice(0,INDIVIDUAL_AWARDS.length,...uniqueClean(cfg.awards));
+    }catch(e){console.warn('apply awards',e);}
+    try{
+      if(Array.isArray(PRESIDENT_ACTION_TYPES) && Array.isArray(cfg.actionTypes)){
+        const rows=cfg.actionTypes.map(x=>({name:String(x.name||'').trim(),cost:Number(x.cost)||0,suspended:!!x.suspended})).filter(x=>x.name);
+        if(rows.length) PRESIDENT_ACTION_TYPES.splice(0,PRESIDENT_ACTION_TYPES.length,...rows);
+      }
+    }catch(e){console.warn('apply action types',e);}
+  }
+
+  // Applica subito la configurazione locale senza toccare il core.
+  let HM_ADMIN_CFG = readCfg();
+  applyCfg(HM_ADMIN_CFG);
+
+  async function ensureAuthCfg(){
+    if(!window.firebase || !firebase.firestore) throw new Error('Firebase non disponibile');
+    if(firebase.auth){ const a=firebase.auth(); if(!a.currentUser) await a.signInAnonymously(); }
+    return true;
+  }
+  function cfgRef(){ return firebase.firestore().collection('hmleague').doc('main').collection('parts').doc(CFG_DOC_ID); }
+
+  window.hmAdminPublishConfig = async function(show=true){
+    if(!adm()){ if(show) alert('Solo Federico admin può pubblicare la configurazione.'); return false; }
+    try{
+      await ensureAuthCfg();
+      HM_ADMIN_CFG=readCfg();
+      await cfgRef().set({version:1,updatedAt:new Date().toISOString(),configJson:JSON.stringify(HM_ADMIN_CFG)},{merge:false});
+      if(show) alert('Configurazione Admin pubblicata online. Il salvataggio generale non è stato modificato.');
+      return true;
+    }catch(e){
+      console.error(e);
+      if(window.HM_ADMIN_RUNTIME_ERRORS) window.HM_ADMIN_RUNTIME_ERRORS.unshift({time:new Date().toLocaleString('it-IT'),kind:'Config Admin cloud',msg:String(e.code||e.message||e)});
+      if(show) alert('Errore SOLO nella configurazione Admin: '+String(e.code||e.message||e)+'\nIl salvataggio generale resta indipendente.');
+      return false;
+    }
+  };
+  window.hmAdminLoadConfig = async function(show=false){
+    try{
+      await ensureAuthCfg();
+      const snap=await cfgRef().get();
+      if(!snap.exists){ if(show) alert('Nessuna configurazione Admin online trovata.'); return false; }
+      const d=snap.data()||{};
+      const cfg=typeof d.configJson==='string'?JSON.parse(d.configJson):null;
+      if(!cfg||typeof cfg!=='object') throw new Error('Configurazione Admin online non valida');
+      HM_ADMIN_CFG={...defaultCfg(),...cfg};
+      writeCfg(HM_ADMIN_CFG,false);
+      enhancePlayerEditorControls();
+      if(show) alert('Configurazione Admin caricata.');
+      try{ renderAdminSafe(); }catch(e){}
+      return true;
+    }catch(e){
+      console.warn('Config admin load',e);
+      if(show) alert('Impossibile caricare la configurazione Admin: '+String(e.code||e.message||e));
+      return false;
+    }
+  };
+
+  function selectOptions(values,selected,emptyLabel){
+    const arr=uniqueClean(values); let h='';
+    if(emptyLabel!==undefined) h+=`<option value="">${escV(emptyLabel)}</option>`;
+    arr.forEach(v=>h+=`<option value="${escV(v)}" ${String(v)===String(selected)?'selected':''}>${escV(v)}</option>`);
+    return h;
+  }
+  function enhancePlayerEditorControls(){
+    try{
+      HM_ADMIN_CFG=readCfg();
+      const st=$('hmPlStatus');
+      if(st){ const val=st.value; const vals=uniqueClean([...HM_ADMIN_CFG.statuses,val]); st.innerHTML=selectOptions(vals,val); }
+      const ro=$('hmPlRole');
+      if(ro){ const val=ro.value; const vals=uniqueClean([...HM_ADMIN_CFG.roles,val]); ro.innerHTML='<option value="">— Seleziona ruolo —</option>'+selectOptions(vals,val); }
+    }catch(e){console.warn(e);}
+  }
+  ['openPlayerEditor','openNewPlayerEditor','duplicatePlayerEditor'].forEach(name=>{
+    const old=window[name];
+    if(typeof old==='function') window[name]=function(){ const r=old.apply(this,arguments); setTimeout(enhancePlayerEditorControls,0); return r; };
+  });
+
+  function teamByCode(code){ return (teams||[]).find(t=>String(t.code)===String(code)); }
+  function realTeams(){ return (teams||[]).filter(t=>t.code!=='SVIN'); }
+  function teamOpts(selected,filterFn){ return realTeams().filter(filterFn||(()=>true)).map(t=>`<option value="${escV(t.code)}" ${t.code===selected?'selected':''}>${escV(t.code)} · ${escV(t.name)}</option>`).join(''); }
+  function statusPrimavera(){ return readCfg().statuses.filter(s=>String(s).toUpperCase().startsWith('PRIMAVERA ')); }
+
+  window.hmAdminOpenTeam = function(){ const c=$('admTeamSel')?.value; if(c&&typeof openTeam==='function') openTeam(c); };
+  window.hmAdminLoadTeamForm = function(){
+    const c=$('admTeamSel')?.value; const t=teamByCode(c); if(!t) return;
+    [['admTName',t.name],['admTDivision',t.division],['admTCredits',t.credits??0],['admTHmcoin',t.hmcoin??0],['admTPrimary',t.primary||'#334155'],['admTSecondary',t.secondary||'#111827'],['admTText',t.text||'#ffffff'],['admTJersey',t.jerseyStyle||'diagonal']].forEach(([id,v])=>{const e=$(id);if(e)e.value=v;});
+  };
+  window.hmAdminSaveTeamQuick = function(){
+    if(!adm()) return false;
+    const c=$('admTeamSel')?.value,t=teamByCode(c); if(!t) return false;
+    t.name=String($('admTName')?.value||t.name).trim()||t.name;
+    t.division=String($('admTDivision')?.value||t.division).trim()||t.division;
+    t.credits=Number($('admTCredits')?.value??t.credits)||0;
+    t.hmcoin=Number($('admTHmcoin')?.value??t.hmcoin)||0;
+    t.primary=$('admTPrimary')?.value||t.primary; t.secondary=$('admTSecondary')?.value||t.secondary; t.text=$('admTText')?.value||t.text; t.jerseyStyle=$('admTJersey')?.value||t.jerseyStyle;
+    markUnsaved(); alert('Società aggiornata localmente. Premi Salva online quando vuoi pubblicare.'); renderAdminSafe(); return true;
+  };
+
+  window.hmAdminSaveRulesLocal = function(){
+    if(!adm()) return false;
+    const cfg=readCfg();
+    cfg.statuses=uniqueClean(String($('admStatuses')?.value||'').split(/\n+/));
+    cfg.roles=uniqueClean(String($('admRoles')?.value||'').split(/\n+/));
+    cfg.awards=uniqueClean(String($('admAwards')?.value||'').split(/\n+/));
+    cfg.defaultCredits=Number($('admDefCredits')?.value||500);
+    cfg.defaultHmcoin=Number($('admDefHmcoin')?.value||100);
+
+    const aTeams=realTeams().filter(t=>String(t.division||'').toLowerCase().includes('serie a'));
+    const pairings={}; const usedB=new Set(); let bad='';
+    aTeams.forEach(t=>{
+      const v=String($('admPair_'+t.code)?.value||'').trim().toUpperCase();
+      if(!v) return;
+      if(usedB.has(v)) bad='La squadra '+v+' è stata abbinata a più società.';
+      usedB.add(v); pairings[t.code]=v; pairings[v]=t.code;
+    });
+    if(bad){alert(bad);return false;}
+    if(Object.keys(pairings).length) cfg.pairings=pairings;
+
+    const actionLines=String($('admActions')?.value||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    const actionTypes=[];
+    for(const line of actionLines){
+      const p=line.split('|');
+      if(!p[0]?.trim()) continue;
+      actionTypes.push({name:p[0].trim(),cost:Number(String(p[1]??'0').replace(',','.'))||0,suspended:['1','si','sì','true','yes'].includes(String(p[2]||'').trim().toLowerCase())});
+    }
+    if(actionTypes.length) cfg.actionTypes=actionTypes;
+    HM_ADMIN_CFG=cfg; writeCfg(cfg,true); enhancePlayerEditorControls();
+    alert('Regole salvate localmente. Per condividerle con tutti usa “Pubblica configurazione”.');
+    renderAdminSafe(); return true;
+  };
+
+  window.hmAdminPlayerSearch = function(){
+    const box=$('admPlayerResults'); if(!box) return;
+    const s=String($('admPlayerSearch')?.value||'').trim().toLowerCase();
+    if(s.length<2){box.innerHTML='<div class="muted">Scrivi almeno 2 caratteri.</div>';return;}
+    const list=(players||[]).filter(p=>[p.name,p.role,p.current,p.owner,p.status].join(' ').toLowerCase().includes(s)).slice(0,50);
+    box.innerHTML=list.length?list.map(p=>`<div class="playerRow"><div style="grid-column:1/3"><b>${escV(p.name)}</b><div class="muted">${escV(p.role||'-')} · attuale ${escV(p.current||'-')} · prop. ${escV(p.owner||'-')} · ${escV(p.status||'-')}</div></div><button class="btn primary" onclick="openPlayerEditor('${escV(p.id)}')">Modifica</button></div>`).join(''):'<div class="muted">Nessun calciatore trovato.</div>';
+  };
+
+  window.hmAdminPrimaveraSearch = function(){
+    const box=$('admPrimResults'); if(!box) return;
+    const s=String($('admPrimSearch')?.value||'').trim().toLowerCase();
+    if(s.length<2){box.innerHTML='<div class="muted">Scrivi almeno 2 caratteri per cercare i calciatori da selezionare.</div>';return;}
+    const list=(players||[]).filter(p=>[p.name,p.role,p.current,p.owner,p.status].join(' ').toLowerCase().includes(s)).slice(0,80);
+    box.innerHTML=list.length?list.map(p=>`<label class="playerRow" style="cursor:pointer"><input type="checkbox" class="admPrimChk" value="${escV(p.id)}"><div><b>${escV(p.name)}</b><div class="muted">${escV(p.role||'-')} · ${escV(p.current||'-')} · ${escV(p.owner||'-')} · ${escV(p.status||'-')}</div></div><span class="badge">Seleziona</span></label>`).join(''):'<div class="muted">Nessun calciatore trovato.</div>';
+  };
+  window.hmAdminApplyPrimaveraBulk = function(){
+    if(!adm()) return false;
+    const main=String($('admPrimTeam')?.value||'').toUpperCase(); const status=String($('admPrimStatus')?.value||'').trim(); const pair=String((PAIRED||{})[main]||'').toUpperCase();
+    if(!main||!pair){alert('Abbinamento Primavera non valido per la squadra scelta.');return false;}
+    if(!status.toUpperCase().startsWith('PRIMAVERA ')){alert('Seleziona uno Stato Primavera.');return false;}
+    const ids=Array.from(document.querySelectorAll('.admPrimChk:checked')).map(x=>x.value);
+    if(!ids.length){alert('Seleziona almeno un calciatore.');return false;}
+    const chosen=(players||[]).filter(p=>ids.includes(String(p.id)));
+    if(!confirm(`Portare ${chosen.length} calciatori in Primavera ${main} / ${pair} con stato ${status}?\n\nVerranno impostati Proprietario = SVIN e Squadra attuale = ${main} ${pair}.`)) return false;
+    try{ if(typeof rememberBackupSnapshot==='function') rememberBackupSnapshot('prima Primavera massiva'); }catch(e){}
+    chosen.forEach(p=>{p.current=main+' '+pair;p.owner='SVIN';p.status=status;});
+    markUnsaved(); alert(chosen.length+' calciatori aggiornati localmente.'); renderAdminSafe(); return true;
+  };
+
+  window.hmAdminOpenFormation = function(){ const c=$('admFormTeam')?.value; if(c&&typeof openTeam==='function'){openTeam(c);setTimeout(()=>{const btn=Array.from(document.querySelectorAll('#view-teamDetail .tab')).find(b=>String(b.getAttribute('onclick')||'').includes("teamSub('formazione'"));if(btn)btn.click();},50);} };
+  window.hmAdminResetFormation = function(){
+    if(!adm()) return false; const c=$('admFormTeam')?.value; if(!c) return false;
+    if(!confirm('Svuotare completamente la formazione salvata di '+c+'?')) return false;
+    try{ if(typeof rememberBackupSnapshot==='function') rememberBackupSnapshot('prima reset formazione '+c); }catch(e){}
+    savedFormations[c]={module:(savedFormations[c]?.module||'343'),slots:{}}; markUnsaved(); alert('Formazione '+c+' svuotata.'); renderAdminSafe(); return true;
+  };
+  window.hmAdminRepairFormationRefs = function(){
+    if(!adm()) return false;
+    const ids=new Set((players||[]).map(p=>String(p.id))); let n=0;
+    Object.values(savedFormations||{}).forEach(f=>Object.keys(f?.slots||{}).forEach(k=>{const pid=f.slots[k];if(pid&&!ids.has(String(pid))){f.slots[k]='';n++;}}));
+    if(!n){alert('Nessun riferimento formazione rotto da riparare.');return true;}
+    if(!confirm('Trovati '+n+' slot collegati a calciatori inesistenti. Svuotare SOLO questi slot?')) return false;
+    try{ if(typeof rememberBackupSnapshot==='function') rememberBackupSnapshot('prima riparazione formazioni'); }catch(e){}
+    markUnsaved(); alert(n+' riferimenti formazione riparati.'); renderAdminSafe(); return true;
+  };
+
+  window.hmAdminAuctionReset = function(){ if(!adm())return false; if(!confirm('Annullare l’asta attualmente in corso e azzerare le offerte correnti?'))return false; if(typeof resetAuction==='function')resetAuction(); renderAdminSafe(); return true; };
+  window.hmAdminAuctionUndoLast = function(){
+    if(!adm())return false; if(!auctionState?.history?.length){alert('Nessuna aggiudicazione da annullare.');return false;}
+    const h=auctionState.history[0]; if(!confirm(`Annullare l’ultima aggiudicazione di ${h.playerName||'calciatore'} a ${h.team||''} per ${h.amount||0} crediti?`))return false;
+    if(typeof undoAuctionOperation==='function')undoAuctionOperation(0); renderAdminSafe(); return true;
+  };
+
+  function diagnostics(){
+    const out=[]; const teamCodes=new Set(); const pids=new Set(); const mods=new Set();
+    realTeams().forEach(t=>{const c=String(t.code||'').toUpperCase();if(!c)out.push('SQUADRE · società senza sigla');else if(teamCodes.has(c))out.push('SQUADRE · sigla duplicata '+c);else teamCodes.add(c);if(t.credits===undefined||t.credits===null||Number.isNaN(Number(t.credits)))out.push('SQUADRE · '+c+' crediti mancanti/non validi');if(t.hmcoin===undefined||t.hmcoin===null||Number.isNaN(Number(t.hmcoin)))out.push('SQUADRE · '+c+' HM Coin mancanti/non validi');});
+    try{Object.keys(JSON.parse(localStorage.getItem('hm_module_roles_v1')||'{}')||{}).forEach(x=>mods.add(x));}catch(e){}
+    (players||[]).forEach(p=>{
+      const id=String(p.id||''); if(!id)out.push('CALCIATORI · '+(p.name||'?')+' senza ID'); else if(pids.has(id))out.push('CALCIATORI · ID duplicato '+id+' ('+(p.name||'?')+')'); else pids.add(id);
+      const own=String(p.owner||'').toUpperCase(); if(own&&own!=='SVIN'&&!teamCodes.has(own))out.push('CALCIATORI · '+p.name+' proprietario inesistente '+own);
+      const curr=String(p.current||'').toUpperCase().split(/\s+/).filter(Boolean); curr.forEach(c=>{if(c!=='SVIN'&&!teamCodes.has(c))out.push('CALCIATORI · '+p.name+' squadra attuale inesistente '+c);});
+      const prim=String(p.status||'').toUpperCase().startsWith('PRIMAVERA'); if(prim&&curr.length<2)out.push('PRIMAVERA · '+p.name+' ha stato Primavera ma non due squadre attuali'); if(prim&&own!=='SVIN')out.push('PRIMAVERA · '+p.name+' dovrebbe avere proprietario SVIN');
+    });
+    Object.entries(savedFormations||{}).forEach(([c,f])=>{if(!teamCodes.has(String(c).toUpperCase()))out.push('FORMAZIONI · squadra inesistente '+c);if(f?.module&&mods.size&& !mods.has(String(f.module)))out.push('FORMAZIONI · '+c+' usa modulo locale mancante '+f.module);Object.entries(f?.slots||{}).forEach(([k,pid])=>{if(pid&&!pids.has(String(pid)))out.push('FORMAZIONI · '+c+' '+k+' punta a giocatore inesistente '+pid);});});
+    try{Object.entries(PAIRED||{}).forEach(([a,b])=>{if(!teamCodes.has(a)||!teamCodes.has(String(b)))out.push('ABBINAMENTI · '+a+' ↔ '+b+' usa sigla inesistente');else if(PAIRED[b]!==a)out.push('ABBINAMENTI · '+a+' → '+b+' non è reciproco');});}catch(e){}
+    if(auctionState?.playerId && !pids.has(String(auctionState.playerId)))out.push('ASTA · playerId corrente non esiste: '+auctionState.playerId);
+    (auctionState?.bids||[]).forEach(b=>{if(!teamCodes.has(String(b.team)))out.push('ASTA · offerta di squadra inesistente '+b.team);});
+    return out;
+  }
+  window.hmAdminCheckV5 = function(){
+    const out=diagnostics(),box=$('hmAdminDiagV5'); if(!box)return out;
+    box.innerHTML=out.length?`<div class="stat"><div class="n">${out.length}</div><div>anomalie / avvisi trovati</div></div>${out.slice(0,250).map(x=>`<div class="card" style="padding:9px;margin:6px 0">⚠️ ${escV(x)}</div>`).join('')}`:'<div class="stat"><div class="n">0</div><div>✅ Nessuna anomalia nei controlli disponibili</div></div>';
+    return out;
+  };
+  window.hmAdminRepairSafeV5 = function(){
+    if(!adm())return false; const cfg=readCfg(); let n=0;
+    const ids=new Set((players||[]).map(p=>String(p.id)));
+    Object.values(savedFormations||{}).forEach(f=>Object.keys(f?.slots||{}).forEach(k=>{if(f.slots[k]&&!ids.has(String(f.slots[k]))){f.slots[k]='';n++;}}));
+    realTeams().forEach(t=>{if(t.credits===undefined||t.credits===null||Number.isNaN(Number(t.credits))){t.credits=Number(cfg.defaultCredits)||500;n++;}if(t.hmcoin===undefined||t.hmcoin===null||Number.isNaN(Number(t.hmcoin))){t.hmcoin=Number(cfg.defaultHmcoin)||100;n++;}});
+    if(!n){alert('Nessuna correzione sicura necessaria.');return true;}
+    if(!confirm('Applicare '+n+' correzioni SICURE?\n- svuota solo slot formazione che puntano a giocatori inesistenti\n- ripristina solo budget mancanti/non numerici\nNon elimina calciatori, aste, scambi o storico.'))return false;
+    try{if(typeof rememberBackupSnapshot==='function')rememberBackupSnapshot('prima riparazione sicura Admin');}catch(e){}
+    markUnsaved();alert(n+' correzioni applicate localmente.');renderAdminSafe();return true;
+  };
+  window.hmAdminDownloadReport = function(){
+    const issues=diagnostics(); const errs=window.HM_ADMIN_RUNTIME_ERRORS||[];
+    const text=['HM LEAGUE - REPORT DIAGNOSTICO',new Date().toLocaleString('it-IT'),'','Calciatori: '+(players||[]).length,'Squadre: '+realTeams().length,'Formazioni salvate: '+Object.keys(savedFormations||{}).length,'Asta corrente: '+(auctionState?.playerId||'nessuna'),'','ANOMALIE ('+issues.length+')',...issues,'','ERRORI RUNTIME ('+errs.length+')',...errs.map(x=>`${x.time} | ${x.kind} | ${x.msg}`)].join('\n');
+    const blob=new Blob([text],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='HM_Diagnostica_'+new Date().toISOString().slice(0,10)+'.txt';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+  };
+
+  function currentAuctionHtml(){
+    const p=(players||[]).find(x=>String(x.id)===String(auctionState?.playerId||'')); const bid=(auctionState?.bids||[]).slice(-1)[0]; const last=auctionState?.history?.[0];
+    return `<div class="grid grid3"><div class="stat"><div class="muted">Asta corrente</div><div style="font-size:18px;font-weight:900;margin-top:7px">${p?escV(p.name):'Nessuna'}</div></div><div class="stat"><div class="muted">Offerta più alta</div><div style="font-size:18px;font-weight:900;margin-top:7px">${bid?escV(bid.amount)+' · '+escV(bid.team):'—'}</div></div><div class="stat"><div class="muted">Ultima aggiudicazione</div><div style="font-size:16px;font-weight:900;margin-top:7px">${last?escV(last.playerName)+' → '+escV(last.team):'—'}</div></div></div>`;
+  }
+  function rulesPairHtml(cfg){
+    const a=realTeams().filter(t=>String(t.division||'').toLowerCase().includes('serie a')); const b=realTeams().filter(t=>String(t.division||'').toLowerCase().includes('serie b'));
+    return a.map(t=>`<label>${escV(t.code)} · ${escV(t.name)}<select id="admPair_${escV(t.code)}" class="input"><option value="">— nessun abbinamento —</option>${b.map(x=>`<option value="${escV(x.code)}" ${String(cfg.pairings?.[t.code]||'')===x.code?'selected':''}>${escV(x.code)} · ${escV(x.name)}</option>`).join('')}</select></label>`).join('');
+  }
+  function actionText(cfg){return (cfg.actionTypes||[]).map(x=>`${x.name}|${x.cost}|${x.suspended?'si':'no'}`).join('\n');}
+  function errorsHtml(){const rows=window.HM_ADMIN_RUNTIME_ERRORS||[];return rows.length?rows.slice(0,25).map(x=>`<div class="card" style="padding:9px;margin:6px 0"><b>${escV(x.kind)}</b> · ${escV(x.time)}<br><span class="muted">${escV(x.msg)}</span></div>`).join(''):'<div class="muted">Nessun errore runtime registrato in questa sessione.</div>';}
+
+  window.renderAdminSafe = function(){
+    const root=$('view-admin'); if(!root)return;
+    if(!adm()){root.innerHTML='<h2>🛠️ Admin</h2><div class="card">Area riservata a Federico admin.</div>';return;}
+    const cfg=readCfg(); const first=realTeams()[0]||{}; const primavera=statusPrimavera();
+    root.innerHTML=`
+      <div class="between"><div><h2 style="margin:0 0 6px">🛠️ Centro di Controllo HML</h2><div class="muted">Le modifiche operative usano i dati già esistenti. Regole variabili e moduli hanno sincronizzazione cloud separata dal salvataggio generale.</div></div><span class="badge">CONTROL V5</span></div>
+      <div class="grid grid4" style="margin-top:16px"><div class="stat"><div class="muted">Calciatori</div><div class="n">${(players||[]).length}</div></div><div class="stat"><div class="muted">Squadre</div><div class="n">${realTeams().length}</div></div><div class="stat"><div class="muted">Formazioni</div><div class="n">${Object.keys(savedFormations||{}).length}</div></div><div class="stat"><div class="muted">Modifiche</div><div style="font-size:18px;font-weight:900;margin-top:8px">${typeof HM_HAS_UNSAVED_CHANGES!=='undefined'&&HM_HAS_UNSAVED_CHANGES?'⚠️ Da pubblicare':'✅ Nessuna modifica locale'}</div></div></div>
+
+      <div class="card" style="margin-top:16px"><h3>⚡ Azioni rapide</h3><div class="row"><button class="btn green" onclick="saveCloudNow(true)">💾 Salva tutto online</button><button class="btn" onclick="loadCloudData()">🔄 Ricarica dal cloud</button><button class="btn green" onclick="downloadFullBackup()">📦 Backup</button><button class="btn primary" onclick="hmAdminCheckV5()">🧪 Controlla problemi</button><button class="btn" onclick="hmAdminDownloadReport()">📄 Scarica report bug</button></div></div>
+
+      <details class="card" style="margin-top:14px" open><summary style="cursor:pointer;font-size:20px;font-weight:900">👥 Calciatori</summary>
+        <div class="row" style="margin-top:12px"><button class="btn primary" onclick="openNewPlayerEditor()">➕ Aggiungi calciatore</button><button class="btn" onclick="showView('players')">Apri database completo</button></div>
+        <div style="margin-top:14px"><label>Trova e modifica rapidamente<input id="admPlayerSearch" class="input" style="width:100%" placeholder="Nome, ruolo, squadra, stato..." oninput="hmAdminPlayerSearch()"></label><div id="admPlayerResults" style="margin-top:10px"></div></div>
+        <div class="card" style="margin-top:14px"><h3>🌱 Primavera massiva</h3><p class="muted">Utile dopo l'asta: cerca più calciatori, selezionali e assegnali insieme alla coppia Primavera. Proprietario diventa automaticamente SVIN.</p><div class="grid grid3"><label>Squadra principale<select id="admPrimTeam" class="input">${teamOpts('',t=>String(t.division||'').toLowerCase().includes('serie a'))}</select></label><label>Stato Primavera<select id="admPrimStatus" class="input">${selectOptions(primavera,primavera[0]||'')}</select></label><label>Cerca<input id="admPrimSearch" class="input" placeholder="almeno 2 caratteri" oninput="hmAdminPrimaveraSearch()"></label></div><div id="admPrimResults" style="margin-top:10px"></div><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn green" onclick="hmAdminApplyPrimaveraBulk()">Applica ai selezionati</button></div></div>
+      </details>
+
+      <details class="card" style="margin-top:14px" open><summary style="cursor:pointer;font-size:20px;font-weight:900">🏟️ Società, crediti e HM Coin</summary>
+        <div class="grid grid2" style="margin-top:12px"><label>Società<select id="admTeamSel" class="input" onchange="hmAdminLoadTeamForm()">${teamOpts(first.code)}</select></label><div class="row" style="align-items:end"><button class="btn" onclick="hmAdminOpenTeam()">Apri scheda società</button></div></div>
+        <div class="grid grid4" style="margin-top:12px"><label>Nome<input id="admTName" class="input"></label><label>Divisione<select id="admTDivision" class="input"><option>Serie A</option><option>Serie B</option><option>Extra</option></select></label><label>Crediti<input id="admTCredits" class="input" type="number"></label><label>HM Coin<input id="admTHmcoin" class="input" type="number"></label><label>Colore 1<input id="admTPrimary" class="input" type="color"></label><label>Colore 2<input id="admTSecondary" class="input" type="color"></label><label>Testo maglia<input id="admTText" class="input" type="color"></label><label>Maglia<select id="admTJersey" class="input"><option value="diagonal">diagonal</option><option value="solid">solid</option><option value="stripes">stripes</option><option value="halves">halves</option></select></label></div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmAdminSaveTeamQuick()">Salva modifiche società</button></div>
+      </details>
+
+      <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-size:20px;font-weight:900">⚙️ Regole modificabili senza index</summary>
+        <p class="muted" style="margin-top:12px">Qui puoi cambiare le cose che normalmente sarebbero scritte nel codice. Salva locale per provarle; Pubblica configurazione per condividerle sugli altri dispositivi.</p>
+        <h3>Abbinamenti Primavera</h3><div class="grid grid2">${rulesPairHtml(cfg)}</div>
+        <div class="grid grid2" style="margin-top:14px"><label>Stati calciatore · uno per riga<textarea id="admStatuses" class="input" style="width:100%;min-height:210px">${escV((cfg.statuses||[]).join('\n'))}</textarea></label><label>Ruoli disponibili · uno per riga<textarea id="admRoles" class="input" style="width:100%;min-height:210px">${escV((cfg.roles||[]).join('\n'))}</textarea></label><label>Premi individuali · uno per riga<textarea id="admAwards" class="input" style="width:100%;min-height:150px">${escV((cfg.awards||[]).join('\n'))}</textarea></label><label>Azioni Presidente · Nome|Costo|sospesa sì/no<textarea id="admActions" class="input" style="width:100%;min-height:150px">${escV(actionText(cfg))}</textarea></label></div>
+        <div class="grid grid2" style="margin-top:12px"><label>Crediti default per riparazioni<input id="admDefCredits" class="input" type="number" value="${escV(cfg.defaultCredits??500)}"></label><label>HM Coin default per riparazioni<input id="admDefHmcoin" class="input" type="number" value="${escV(cfg.defaultHmcoin??100)}"></label></div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmAdminSaveRulesLocal()">Salva regole localmente</button><button class="btn primary" onclick="hmAdminPublishConfig(true)">☁️ Pubblica configurazione</button><button class="btn" onclick="hmAdminLoadConfig(true)">⬇️ Carica configurazione online</button></div>
+      </details>
+
+      <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-size:20px;font-weight:900">⚽ Formazioni e moduli</summary>
+        <div class="row" style="margin-top:12px"><button class="btn primary" onclick="openModuleRolesEditor()">⚙️ Gestisci moduli</button><button class="btn green" onclick="hmPublishSharedModules(true)">☁️ Pubblica moduli</button><button class="btn" onclick="hmLoadSharedModules(true)">⬇️ Carica moduli online</button></div>
+        <div class="grid grid2" style="margin-top:14px"><label>Squadra<select id="admFormTeam" class="input">${teamOpts(first.code)}</select></label><div class="row" style="align-items:end"><button class="btn" onclick="hmAdminOpenFormation()">Apri formazione</button><button class="btn red" onclick="hmAdminResetFormation()">Svuota formazione</button></div></div>
+        <div class="row" style="margin-top:12px"><button class="btn yellow" onclick="hmAdminRepairFormationRefs()">Ripara riferimenti rotti</button></div>
+      </details>
+
+      <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-size:20px;font-weight:900">🔨 Asta · emergenza e correzioni</summary><div style="margin-top:12px">${currentAuctionHtml()}</div><div class="row" style="margin-top:12px"><button class="btn" onclick="showView('auction')">Apri asta</button><button class="btn red" onclick="hmAdminAuctionReset()">Reset asta corrente</button><button class="btn yellow" onclick="hmAdminAuctionUndoLast()">Annulla ultima aggiudicazione</button></div><p class="muted">Per correggere crediti dopo un problema usa anche la sezione Società qui sopra. L'annullamento aggiudicazione usa la funzione già esistente dell'asta e ripristina proprietario/current/crediti memorizzati nello storico.</p></details>
+
+      <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-size:20px;font-weight:900">📦 Sicurezza, cloud e recupero</summary><div class="row" style="margin-top:12px"><button class="btn green" onclick="saveCloudNow(true)">💾 Salva tutto online</button><button class="btn" onclick="loadCloudData()">🔄 Ricarica dal cloud</button><button class="btn green" onclick="downloadFullBackup()">📦 Scarica backup completo</button><button class="btn yellow" onclick="triggerRestoreBackup()">♻️ Ripristina backup</button></div><p class="muted">Il salvataggio generale rimane quello della SAFE V4. Configurazione Admin e moduli hanno documenti separati: un loro eventuale errore non deve bloccare calciatori, squadre, aste o storico.</p></details>
+
+      <details class="card" style="margin-top:14px" open><summary style="cursor:pointer;font-size:20px;font-weight:900">🧪 Diagnostica e riparazione bug</summary><div class="row" style="margin-top:12px"><button class="btn primary" onclick="hmAdminCheckV5()">Controlla tutto</button><button class="btn yellow" onclick="hmAdminRepairSafeV5()">Riparazione sicura</button><button class="btn" onclick="hmAdminDownloadReport()">Scarica report da mandarmi</button></div><div id="hmAdminDiagV5" style="margin-top:12px"></div><div class="card" style="margin-top:14px"><div class="between"><h3 style="margin:0">🐞 Errori runtime</h3><button class="btn" onclick="window.HM_ADMIN_RUNTIME_ERRORS=[];renderAdminSafe()">Pulisci elenco</button></div><div style="margin-top:10px">${errorsHtml()}</div></div></details>
+    `;
+    setTimeout(()=>{hmAdminLoadTeamForm();const r=$('view-admin');if(r)r.querySelectorAll('button,input,select,textarea').forEach(el=>{el.disabled=false;el.style.opacity='1';});},0);
+  };
+
+  // Carica le regole condivise in modo indipendente dal salvataggio core.
+  setTimeout(()=>hmAdminLoadConfig(false),1800);
 })();
 </script>
 

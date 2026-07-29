@@ -3473,6 +3473,15 @@ window.addEventListener("beforeunload", function(e){
       auctionState = Object.assign({}, auctionState || {}, {history:d.auctionState.history});
     }
     presidentActions=Array.isArray(d.presidentActions)?d.presidentActions:presidentActions; competitionsManager=d.competitionsManager??competitionsManager; coachesManager=d.coachesManager??coachesManager; regulationText=typeof d.regulationText==="string"?d.regulationText:regulationText;
+    // Applica i moduli condivisi PRIMA del render. È solo una stringa JSON, quindi non altera la struttura Firestore.
+    if(typeof d.moduleRolesJson==="string" && d.moduleRolesJson.trim()){
+      try{
+        const sharedModules=JSON.parse(d.moduleRolesJson);
+        if(sharedModules && typeof sharedModules==="object" && !Array.isArray(sharedModules)){
+          localStorage.setItem("hm_module_roles_v1", JSON.stringify(sharedModules));
+        }
+      }catch(e){ console.warn("Moduli condivisi non applicati",e); }
+    }
     ensureIds(trades,"trade"); ensureIds(news,"news");
     try{saveLocalOnly()}catch(e){}
     return true;
@@ -3496,7 +3505,11 @@ window.addEventListener("beforeunload", function(e){
       trades:{split:true,count:tradeIndex.length,updatedAt:new Date().toISOString()},
       news:{split:true,count:newsIndex.length,updatedAt:new Date().toISOString()},
       honors:{honors,individualTitles,positionHistory,seasonHistory},
-      managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base}
+      managers:{
+        savedFormations,competitionsManager,coachesManager,orgData:org.base,
+        // Moduli formazione condivisi: salvati come TESTO JSON per evitare array annidati Firestore.
+        moduleRolesJson:(()=>{try{return localStorage.getItem("hm_module_roles_v1")||"";}catch(e){return "";}})()
+      }
     };
     const assets=[...teamLogoRows(),...org.assets,...awardAssetRows()];
     return {docs,assets,tradeIndex,newsIndex};
@@ -3564,6 +3577,8 @@ window.addEventListener("beforeunload", function(e){
       competitionsManager:d.managers?.competitionsManager??null,
       coachesManager:d.managers?.coachesManager??null,
       orgData:d.managers?.orgData||{},
+      // Tutti gli account ricevono i moduli nello stesso caricamento cloud già usato dal gestionale.
+      moduleRolesJson:typeof d.managers?.moduleRolesJson==="string" ? d.managers.moduleRolesJson : "",
       awardImages:{}
     };
     const teamMap=Object.fromEntries(full.teams.map(t=>[t.code,t]));
@@ -6010,6 +6025,9 @@ window.addEventListener("beforeunload", function(e){
   function modulesDocRef(){
     return firebase.firestore().collection('hmleague').doc('main').collection('parts').doc(MODULE_DOC_ID);
   }
+  function modulesManagersRef(){
+    return firebase.firestore().collection('hmleague').doc('main').collection('parts').doc('managers');
+  }
 
   window.hmPublishSharedModules = async function(showMessage=true){
     if(!adminNow()){ if(showMessage) alert('Solo Federico admin può pubblicare i moduli.'); return false; }
@@ -6018,8 +6036,11 @@ window.addEventListener("beforeunload", function(e){
       const cfg=localModules();
       // Firestore non consente array annidati (i moduli sono righe -> slot -> ruoli).
       // Li serializziamo come JSON in un campo stringa: la struttura resta IDENTICA al caricamento.
-      await modulesDocRef().set({version:2,updatedAt:new Date().toISOString(),moduleRolesJson:JSON.stringify(cfg)},{merge:false});
-      if(showMessage) alert('Moduli pubblicati online. Il salvataggio generale non è stato toccato.');
+      const json=JSON.stringify(cfg);
+      // Copia separata di sicurezza + campo stringa nel documento managers già letto da TUTTI gli account.
+      await modulesDocRef().set({version:3,updatedAt:new Date().toISOString(),moduleRolesJson:json},{merge:false});
+      await modulesManagersRef().set({moduleRolesJson:json,moduleRolesUpdatedAt:new Date().toISOString()},{merge:true});
+      if(showMessage) alert('Moduli pubblicati online e condivisi con tutti gli account.');
       try{renderAdminSafe();}catch(e){}
       return true;
     }catch(e){
@@ -6033,9 +6054,18 @@ window.addEventListener("beforeunload", function(e){
   window.hmLoadSharedModules = async function(showMessage=false){
     try{
       await ensureFirebaseAuthSafe();
-      const snap=await modulesDocRef().get();
-      if(!snap.exists){ if(showMessage) alert('Nessuna configurazione moduli condivisa trovata online.'); return false; }
-      const d=snap.data()||{};
+      // Prima prova il documento managers, che è lo stesso già caricato da tutti gli account.
+      let snap=await modulesManagersRef().get();
+      let d=snap.exists ? (snap.data()||{}) : {};
+      // Compatibilità con V4/V5: se manca lì, usa il vecchio documento separato.
+      if(typeof d.moduleRolesJson!=="string" || !d.moduleRolesJson.trim()){
+        snap=await modulesDocRef().get();
+        d=snap.exists ? (snap.data()||{}) : {};
+      }
+      if(typeof d.moduleRolesJson!=="string" || !d.moduleRolesJson.trim()){
+        if(showMessage) alert('Nessuna configurazione moduli condivisa trovata online.');
+        return false;
+      }
       let sharedCfg=null;
       if(typeof d.moduleRolesJson==='string'){
         try{ sharedCfg=JSON.parse(d.moduleRolesJson); }catch(parseErr){ throw new Error('Configurazione moduli online JSON non valida'); }

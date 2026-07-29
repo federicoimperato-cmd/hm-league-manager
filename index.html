@@ -104,7 +104,7 @@ button{cursor:pointer}
       <button class="navbtn" data-view="coaches">👔 Allenatori</button>
       <button class="navbtn" data-view="compmanager">🏅 Competizioni</button>
       <button class="navbtn" data-view="competitions">🏆 Albo d'Oro</button>
-      <button class="navbtn" id="hmAdminNavBtn" data-view="admin">🛠️ Admin</button>
+      <button class="navbtn" id="hmAdminNavBtn" data-view="admin" style="display:none">🛠️ Admin</button>
       <button class="navbtn" data-view="style">🎨 Editor sito</button>
     </aside>
 
@@ -939,7 +939,7 @@ function showView(name){
   if(name==="coaches") renderCoaches();
   if(name==="compmanager") renderCompetitionManager();
   if(name==="competitions") renderCompetitions();
-  if(name==="admin") renderAdminTools();
+  if(name==="admin" && typeof renderAdminSafe==="function") renderAdminSafe();
   if(name==="style") renderStyle();
   setTimeout(applyPermissionsToVisibleView,0);
 }
@@ -1452,7 +1452,7 @@ function renderPitch(code){
         </div>`).join("")}
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
-      <button class="btn green" onclick="saveFormationKeepVisible('${code}')">Salva formazione</button>
+      <button class="btn green" onclick="hmSaveFormationStayVisible('${code}')">Salva formazione</button>
       <button class="btn red" onclick="clearFormation('${code}')">Svuota formazione</button>
     </div>`;
   saveAll();
@@ -3466,9 +3466,6 @@ window.addEventListener("beforeunload", function(e){
     teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news;
     honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages;
     rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations;
-    if(d.moduleRoles && typeof d.moduleRoles==="object" && Object.keys(d.moduleRoles).length){
-      try{ window.HM_MODULE_ROLES_SHARED=clonePlain(d.moduleRoles); localStorage.setItem("hm_module_roles_v1", JSON.stringify(d.moduleRoles)); }catch(e){ console.warn("Moduli condivisi non applicati",e); }
-    }
     // Asta live: NON sovrascrivere mai l'asta in corso caricando il gestionale generale.
     // Il documento realtime/auction è la fonte vera per playerId, bids, activeTeams e passedTeams.
     // Dal salvataggio generale recuperiamo solo lo storico aggiudicazioni.
@@ -3499,7 +3496,7 @@ window.addEventListener("beforeunload", function(e){
       trades:{split:true,count:tradeIndex.length,updatedAt:new Date().toISOString()},
       news:{split:true,count:newsIndex.length,updatedAt:new Date().toISOString()},
       honors:{honors,individualTitles,positionHistory,seasonHistory},
-      managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base,moduleRoles:(()=>{try{return JSON.parse(localStorage.getItem("hm_module_roles_v1")||"{}")||{}}catch(e){return {}}})()}
+      managers:{savedFormations,competitionsManager,coachesManager,orgData:org.base}
     };
     const assets=[...teamLogoRows(),...org.assets,...awardAssetRows()];
     return {docs,assets,tradeIndex,newsIndex};
@@ -3564,7 +3561,6 @@ window.addEventListener("beforeunload", function(e){
       presidentActions:d.core?.presidentActions||[],
       regulationText:d.core?.regulationText||"",
       savedFormations:d.managers?.savedFormations||{},
-      moduleRoles:d.managers?.moduleRoles||null,
       competitionsManager:d.managers?.competitionsManager??null,
       coachesManager:d.managers?.coachesManager??null,
       orgData:d.managers?.orgData||{},
@@ -4377,9 +4373,7 @@ window.addEventListener("beforeunload", function(e){
       if(!fdb) return true;
       const main = fdb.collection("hmleague").doc("main");
       const writes = [];
-      const managerPatch={savedFormations:clean(savedFormations||{})};
-      if(internalAdmin()) managerPatch.moduleRoles=clean((()=>{try{return JSON.parse(localStorage.getItem("hm_module_roles_v1")||"{}")||{}}catch(e){return {}}})());
-      writes.push(main.collection("parts").doc("managers").set(managerPatch,{merge:true}));
+      writes.push(main.collection("parts").doc("managers").set({savedFormations:clean(savedFormations||{})},{merge:true}));
       writes.push(main.collection("parts").doc("core").set({pendingTrades:clean(window.pendingTrades || pendingTrades || [])},{merge:true}));
       await Promise.all(writes);
       setStatus("✅ Online sincronizzato", false);
@@ -5798,16 +5792,14 @@ window.addEventListener("beforeunload", function(e){
   };
   function getModuleRoles(){
     try{
-      const shared=(window.HM_MODULE_ROLES_SHARED && typeof window.HM_MODULE_ROLES_SHARED==='object') ? window.HM_MODULE_ROLES_SHARED : null;
-      const saved=shared || JSON.parse(localStorage.getItem(HM_MODULE_ROLES_KEY)||'null');
+      const saved=JSON.parse(localStorage.getItem(HM_MODULE_ROLES_KEY)||'null');
       return saved && typeof saved==='object' ? Object.assign({}, DEFAULT_MODULE_ROWS, saved) : JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS));
     }catch(e){return JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS));}
   }
   function setModuleRoles(cfg){
-    try{ window.HM_MODULE_ROLES_SHARED=JSON.parse(JSON.stringify(cfg||{})); localStorage.setItem(HM_MODULE_ROLES_KEY, JSON.stringify(cfg||{})); }catch(e){}
+    try{localStorage.setItem(HM_MODULE_ROLES_KEY, JSON.stringify(cfg));}catch(e){}
   }
   function moduleCodes(){return Object.keys(getModuleRoles());}
-  window.hmGetModuleRoles = getModuleRoles;
   window.moduleRows = moduleRows = function(module){
     const cfg=getModuleRoles();
     return cfg[module] || cfg['343'] || DEFAULT_MODULE_ROWS['343'];
@@ -5816,7 +5808,6 @@ window.addEventListener("beforeunload", function(e){
   window.formationHtml = formationHtml = function(code){
     const mods=moduleCodes();
     const current=savedFormations[code]?.module || (mods[0]||'343');
-    if(current && !mods.includes(current)) mods.unshift(current);
     return `<div class="card">
       <div class="between">
         <div>
@@ -5886,7 +5877,6 @@ window.addEventListener("beforeunload", function(e){
     if(newCode && selected && selected!==code && cfg[selected]) delete cfg[selected];
     setModuleRoles(cfg);
     try{ if(typeof saveAll==='function') saveAll(); }catch(e){}
-    try{ if(typeof hmPresidentSaveAllowedOnline==='function') hmPresidentSaveAllowedOnline(); }catch(e){}
     try{ closeTradeModal(); }catch(e){}
     try{ if(selectedTeam) renderTeamDetail(); }catch(e){}
     return true;
@@ -5896,7 +5886,6 @@ window.addEventListener("beforeunload", function(e){
     if(!confirm('Ripristinare i moduli predefiniti?')) return false;
     setModuleRoles(JSON.parse(JSON.stringify(DEFAULT_MODULE_ROWS)));
     try{ if(typeof saveAll==='function') saveAll(); }catch(e){}
-    try{ if(typeof hmPresidentSaveAllowedOnline==='function') hmPresidentSaveAllowedOnline(); }catch(e){}
     try{ closeTradeModal(); }catch(e){}
     try{ if(selectedTeam) renderTeamDetail(); }catch(e){}
     return true;
@@ -5917,203 +5906,6 @@ window.addEventListener("beforeunload", function(e){
 </script>
 
 
-
-
-
-
-
-<script>
-/* =========================================================
-   HM ADMIN CENTER + FORMAZIONE STABILE
-   - Hub admin per diagnostica/manutenzione senza toccare dati automaticamente.
-   - I moduli formazione sono condivisi in Firebase.
-   - Il tasto Salva formazione mantiene il campo visibile e sincronizza solo i manager.
-   ========================================================= */
-(function(){
-  const $=id=>document.getElementById(id);
-  const escA=v=>String(v??"").replace(/[&<>\"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;"}[m]));
-  function adminOk(){
-    try{return (typeof internalAdmin==='function' && internalAdmin()) || (typeof isAdmin==='function' && isAdmin());}
-    catch(e){return false;}
-  }
-  function loggedOk(){
-    try{return (typeof internalLogged==='function' && internalLogged()) || (typeof isLoggedIn==='function' && isLoggedIn());}
-    catch(e){return false;}
-  }
-  function moduleCfg(){
-    try{
-      if(typeof window.hmGetModuleRoles==='function') return window.hmGetModuleRoles()||{};
-      return JSON.parse(localStorage.getItem('hm_module_roles_v1')||'{}')||{};
-    }catch(e){return {};}
-  }
-  function knownTeamSet(){ return new Set((Array.isArray(teams)?teams:[]).map(t=>String(t.code||'').trim().toUpperCase()).filter(Boolean)); }
-  function savedModuleSet(){ return new Set(Object.keys(moduleCfg())); }
-  function formationIssues(){
-    const out=[];
-    const ids=new Set((Array.isArray(players)?players:[]).map(p=>String(p.id)));
-    const mods=savedModuleSet();
-    Object.entries(savedFormations||{}).forEach(([teamCode,f])=>{
-      if(!knownTeamSet().has(String(teamCode).toUpperCase())) out.push(`Formazione associata a squadra inesistente: ${teamCode}`);
-      const m=String(f?.module||'');
-      if(m && !mods.has(m)) out.push(`Modulo ${m} usato da ${teamCode} ma non presente nella configurazione condivisa`);
-      Object.entries(f?.slots||{}).forEach(([slot,pid])=>{
-        if(pid && !ids.has(String(pid))) out.push(`${teamCode}: slot ${slot} punta a un calciatore non più presente (${pid})`);
-      });
-    });
-    return out;
-  }
-  function dataIssues(){
-    const out=[];
-    const teamSet=knownTeamSet();
-    const seen=new Set();
-    (Array.isArray(players)?players:[]).forEach(p=>{
-      const id=String(p?.id||'');
-      if(!id) out.push(`Calciatore senza ID: ${p?.name||'senza nome'}`);
-      else if(seen.has(id)) out.push(`ID calciatore duplicato: ${id}`);
-      else seen.add(id);
-      const owner=String(p?.owner||'').trim().toUpperCase();
-      if(owner && !teamSet.has(owner)) out.push(`${p?.name||id}: proprietario non riconosciuto ${owner}`);
-      const current=String(p?.current||'').trim().toUpperCase();
-      if(current){
-        current.split(/\s+/).filter(Boolean).forEach(c=>{ if(!teamSet.has(c)) out.push(`${p?.name||id}: squadra attuale non riconosciuta ${c}`); });
-      }
-    });
-    return out;
-  }
-  function diagnostics(){ return [...dataIssues(),...formationIssues()]; }
-
-  window.saveFormationKeepVisible = async function(code){
-    try{
-      const can=(typeof canEditTeam==='function') ? canEditTeam(code) : adminOk();
-      if(!can){ alert('Puoi salvare solo la formazione delle tue squadre.'); return false; }
-      savedFormations[code]=savedFormations[code] || {module:$('modulo')?.value||'343',slots:{}};
-      savedFormations[code].module=$('modulo')?.value || savedFormations[code].module || '343';
-      try{ if(typeof saveLocalOnly==='function') saveLocalOnly(); }catch(e){}
-      let online=true;
-      try{
-        if(typeof hmPresidentSaveAllowedOnline==='function') online=await hmPresidentSaveAllowedOnline();
-        else if(typeof saveAll==='function') saveAll();
-      }catch(e){ online=false; console.error(e); }
-      try{ if(typeof renderPitch==='function') renderPitch(code); }catch(e){console.error(e);}
-      const sub=$('teamSub-formazione'); if(sub) sub.classList.remove('hidden');
-      try{
-        document.querySelectorAll('#view-teamDetail .tabs .tab').forEach(b=>{
-          const on=String(b.getAttribute('onclick')||'');
-          b.classList.toggle('active',on.includes("teamSub('formazione'"));
-        });
-      }catch(e){}
-      alert(online===false ? 'Formazione salvata sul dispositivo. Sincronizzazione online non riuscita.' : 'Formazione salvata e sincronizzata.');
-      return true;
-    }catch(e){ console.error(e); alert('Errore salvataggio formazione: '+(e.message||e)); return false; }
-  };
-
-  window.hmAdminRunDiagnostics=function(){
-    const box=$('hmAdminDiagnostics'); if(!box) return false;
-    if(!adminOk()){box.innerHTML='<div class="muted">Area riservata admin.</div>';return false;}
-    const issues=diagnostics();
-    box.innerHTML=issues.length
-      ? `<div class="stat"><div class="n">${issues.length}</div><div>anomalie da controllare</div></div><div style="margin-top:12px;max-height:330px;overflow:auto">${issues.map(x=>`<div class="card" style="padding:10px;margin:7px 0">⚠️ ${escA(x)}</div>`).join('')}</div>`
-      : '<div class="stat"><div class="n">0</div><div>✅ Nessuna anomalia rilevata nei controlli automatici</div></div>';
-    return true;
-  };
-
-  window.hmAdminRepairFormationRefs=async function(){
-    if(!adminOk()){alert('Solo Federico admin.');return false;}
-    const ids=new Set((Array.isArray(players)?players:[]).map(p=>String(p.id)));
-    let removed=0;
-    Object.values(savedFormations||{}).forEach(f=>{
-      if(!f || typeof f!=='object' || !f.slots) return;
-      Object.keys(f.slots).forEach(k=>{ const pid=f.slots[k]; if(pid && !ids.has(String(pid))){ delete f.slots[k]; removed++; } });
-    });
-    if(!removed){alert('Nessun riferimento formazione rotto da riparare.');hmAdminRunDiagnostics();return true;}
-    if(!confirm(`Trovati ${removed} riferimenti a calciatori inesistenti. Rimuoverli dalle sole formazioni?`)){return false;}
-    try{ if(typeof saveLocalOnly==='function') saveLocalOnly(); }catch(e){}
-    try{ if(typeof hmPresidentSaveAllowedOnline==='function') await hmPresidentSaveAllowedOnline(); else if(typeof saveAll==='function') saveAll(); }catch(e){console.error(e);}
-    hmAdminRunDiagnostics();
-    alert(`Riparazione completata: rimossi ${removed} riferimenti non validi. Nessun calciatore è stato cancellato.`);
-    return true;
-  };
-
-  window.hmAdminReloadCloud=async function(){
-    if(!adminOk()){alert('Solo Federico admin.');return false;}
-    try{ if(window.HM_HAS_UNSAVED_CHANGES && !confirm('Ci sono modifiche locali non pubblicate. Ricaricando dal cloud potresti perderle. Continuare?')) return false; }catch(e){}
-    try{ if(typeof loadCloudData==='function'){await loadCloudData(); return true;} }catch(e){console.error(e);alert('Errore ricaricamento cloud: '+(e.message||e));}
-    return false;
-  };
-  window.hmAdminRerender=function(){
-    try{ if(typeof renderCurrentView==='function') renderCurrentView(); else if(typeof showView==='function') showView('dashboard'); return true; }catch(e){console.error(e);return false;}
-  };
-
-  window.renderAdminTools=function(){
-    const root=$('view-admin'); if(!root) return;
-    const nav=$('hmAdminNavBtn'); if(nav) nav.style.display=adminOk()?'flex':'none';
-    if(!adminOk()){
-      root.innerHTML='<h2>🛠️ Admin</h2><div class="card"><b>Area riservata.</b><p class="muted">Accedi come Federico admin per usare manutenzione e configurazione.</p></div>';
-      return;
-    }
-    const cfg=moduleCfg();
-    const forms=Object.keys(savedFormations||{}).length;
-    const assigned=Object.values(savedFormations||{}).reduce((n,f)=>n+Object.values(f?.slots||{}).filter(Boolean).length,0);
-    root.innerHTML=`
-      <div class="between">
-        <div><h2 style="margin-bottom:6px">🛠️ Centro Admin HML</h2><div class="muted">Configurazione, sincronizzazione, backup e controlli di integrità. Le riparazioni automatiche sono limitate alle operazioni sicure.</div></div>
-        <span class="badge">Solo Federico</span>
-      </div>
-      <div class="grid grid4" style="margin-top:16px">
-        <div class="stat"><div class="muted">Calciatori</div><div class="n">${(players||[]).length}</div></div>
-        <div class="stat"><div class="muted">Società</div><div class="n">${(teams||[]).filter(t=>t.code!=='SVIN').length}</div></div>
-        <div class="stat"><div class="muted">Moduli condivisi</div><div class="n">${Object.keys(cfg).length}</div></div>
-        <div class="stat"><div class="muted">Giocatori in formazioni</div><div class="n">${assigned}</div><div class="muted">${forms} squadre salvate</div></div>
-      </div>
-      <div class="grid grid2" style="margin-top:16px">
-        <div class="card">
-          <h3>⚽ Formazioni e moduli</h3>
-          <p class="muted">I moduli creati qui vengono ora condivisi online e non restano più legati al singolo dispositivo.</p>
-          <div class="row">
-            <button class="btn primary" onclick="openModuleRolesEditor()">⚙️ Gestisci moduli</button>
-            <button class="btn" onclick="hmAdminRunDiagnostics()">🔎 Controlla formazioni</button>
-            <button class="btn yellow" onclick="hmAdminRepairFormationRefs()">🩹 Ripara riferimenti rotti</button>
-          </div>
-        </div>
-        <div class="card">
-          <h3>☁️ Sincronizzazione</h3>
-          <p class="muted">Salva tutto sul cloud oppure ricarica l'ultima versione online. Il ricaricamento avvisa prima se hai modifiche locali non pubblicate.</p>
-          <div class="row">
-            <button class="btn green" onclick="saveCloudNow(true)">💾 Salva tutto online</button>
-            <button class="btn" onclick="hmAdminReloadCloud()">🔄 Ricarica dal cloud</button>
-            <button class="btn" onclick="hmAdminRerender()">🖥️ Ridisegna schermata</button>
-          </div>
-        </div>
-        <div class="card">
-          <h3>📦 Sicurezza dati</h3>
-          <p class="muted">Prima di interventi importanti crea sempre un backup completo.</p>
-          <div class="row">
-            <button class="btn green" onclick="downloadFullBackup()">📦 Scarica backup</button>
-            <button class="btn yellow" onclick="triggerRestoreBackup()">♻️ Ripristina backup</button>
-          </div>
-        </div>
-        <div class="card">
-          <h3>🧪 Diagnostica</h3>
-          <p class="muted">Controlla ID duplicati, squadre non riconosciute, moduli mancanti e formazioni che puntano a calciatori inesistenti. Non modifica nulla durante il controllo.</p>
-          <button class="btn primary" onclick="hmAdminRunDiagnostics()">Avvia controllo integrità</button>
-        </div>
-      </div>
-      <div id="hmAdminDiagnostics" style="margin-top:16px"></div>`;
-    setTimeout(()=>{try{hmAdminRunDiagnostics();}catch(e){}},0);
-  };
-
-  function syncAdminNav(){ const n=$('hmAdminNavBtn'); if(n) n.style.display=adminOk()?'flex':'none'; }
-  const oldApply=window.applyInternalPermissions || window.applyPermissionsToVisibleView;
-  window.applyInternalPermissions=window.applyPermissionsToVisibleView=function(){
-    const r=oldApply?oldApply.apply(this,arguments):undefined;
-    syncAdminNav();
-    if(typeof currentVisibleViewName==='function' && currentVisibleViewName()==='admin' && !adminOk()) try{showView('dashboard');}catch(e){}
-    return r;
-  };
-  document.addEventListener('DOMContentLoaded',()=>setTimeout(syncAdminNav,50));
-  setTimeout(syncAdminNav,50);
-})();
-</script>
 
 
 
@@ -6163,6 +5955,219 @@ window.addEventListener("beforeunload", function(e){
     return r;
   };
   setTimeout(unlockPlayerFiltersOnce, 0);
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   HM ADMIN SAFE V3
+   BASE: versione Primavera funzionante.
+   PRINCIPIO: NON modifica buildSplitDocs/fbSave/saveCloudNow.
+   La condivisione moduli usa un documento Firebase separato,
+   così un eventuale errore NON può bloccare il salvataggio generale.
+   ========================================================= */
+(function(){
+  if(window.HM_ADMIN_SAFE_V3) return;
+  window.HM_ADMIN_SAFE_V3=true;
+  const $=id=>document.getElementById(id);
+  const MODULE_KEY='hm_module_roles_v1';
+  const MODULE_DOC_ID='modulesConfig';
+  window.HM_ADMIN_RUNTIME_ERRORS = window.HM_ADMIN_RUNTIME_ERRORS || [];
+
+  function adminNow(){
+    return !!(window.currentUser ? window.currentUser.role==='admin' : (typeof currentUser!=='undefined' && currentUser && currentUser.role==='admin'));
+  }
+  function canTeamNow(code){
+    try{return typeof canEditTeam==='function' ? !!canEditTeam(code) : adminNow();}catch(e){return adminNow();}
+  }
+  function escA(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]||m));}
+  function pushErr(kind,err){
+    try{
+      const msg=(err && (err.message||err.reason?.message)) || String(err||'Errore sconosciuto');
+      window.HM_ADMIN_RUNTIME_ERRORS.unshift({time:new Date().toLocaleString('it-IT'),kind,msg});
+      window.HM_ADMIN_RUNTIME_ERRORS=window.HM_ADMIN_RUNTIME_ERRORS.slice(0,20);
+    }catch(e){}
+  }
+  window.addEventListener('error',e=>pushErr('JS',e.error||e.message));
+  window.addEventListener('unhandledrejection',e=>pushErr('Promise',e.reason));
+
+  function localModules(){
+    try{return JSON.parse(localStorage.getItem(MODULE_KEY)||'{}')||{};}catch(e){return {};}
+  }
+  function moduleCount(){return Object.keys(localModules()).length;}
+
+  async function ensureFirebaseAuthSafe(){
+    if(!window.firebase || !firebase.firestore) throw new Error('Firebase non disponibile');
+    if(firebase.auth){
+      const auth=firebase.auth();
+      if(!auth.currentUser){
+        await auth.signInAnonymously();
+      }
+    }
+    return true;
+  }
+  function modulesDocRef(){
+    return firebase.firestore().collection('hmleague').doc('main').collection('parts').doc(MODULE_DOC_ID);
+  }
+
+  window.hmPublishSharedModules = async function(showMessage=true){
+    if(!adminNow()){ if(showMessage) alert('Solo Federico admin può pubblicare i moduli.'); return false; }
+    try{
+      await ensureFirebaseAuthSafe();
+      const cfg=localModules();
+      await modulesDocRef().set({version:1,updatedAt:new Date().toISOString(),moduleRoles:cfg},{merge:false});
+      if(showMessage) alert('Moduli pubblicati online. Il salvataggio generale non è stato toccato.');
+      try{renderAdminSafe();}catch(e){}
+      return true;
+    }catch(e){
+      console.error('Pubblicazione moduli fallita',e); pushErr('Moduli cloud',e);
+      if(showMessage) alert('Errore SOLO nella pubblicazione moduli: '+(e.code||e.message||e)+'\nIl normale salvataggio del gestionale resta indipendente.');
+      try{renderAdminSafe();}catch(x){}
+      return false;
+    }
+  };
+
+  window.hmLoadSharedModules = async function(showMessage=false){
+    try{
+      await ensureFirebaseAuthSafe();
+      const snap=await modulesDocRef().get();
+      if(!snap.exists){ if(showMessage) alert('Nessuna configurazione moduli condivisa trovata online.'); return false; }
+      const d=snap.data()||{};
+      if(!d.moduleRoles || typeof d.moduleRoles!=='object') throw new Error('Configurazione moduli online non valida');
+      localStorage.setItem(MODULE_KEY,JSON.stringify(d.moduleRoles));
+      if(showMessage) alert('Moduli condivisi caricati su questo dispositivo.');
+      // Se una formazione è già aperta, aggiorna solo l'area formazione.
+      try{
+        if(typeof selectedTeam!=='undefined' && selectedTeam && $('teamSub-formazione') && !$('teamSub-formazione').classList.contains('hidden')){
+          const box=$('teamSub-formazione');
+          if(typeof formationHtml==='function'){
+            box.innerHTML=formationHtml(selectedTeam);
+            box.classList.remove('hidden');
+          }
+        }
+      }catch(e){console.warn(e);}
+      try{renderAdminSafe();}catch(e){}
+      return true;
+    }catch(e){
+      console.warn('Caricamento moduli condivisi fallito',e); pushErr('Moduli cloud',e);
+      if(showMessage) alert('Impossibile caricare i moduli condivisi: '+(e.code||e.message||e));
+      return false;
+    }
+  };
+
+  // Wrappa SOLO l'editor moduli: il salvataggio normale Firebase resta intatto.
+  const oldSaveModule=window.saveModuleRolesEditor;
+  if(typeof oldSaveModule==='function'){
+    window.saveModuleRolesEditor=function(){
+      const ok=oldSaveModule.apply(this,arguments);
+      if(ok) setTimeout(()=>hmPublishSharedModules(false),0);
+      return ok;
+    };
+  }
+  const oldResetModules=window.resetModuleRolesToDefault;
+  if(typeof oldResetModules==='function'){
+    window.resetModuleRolesToDefault=function(){
+      const ok=oldResetModules.apply(this,arguments);
+      if(ok) setTimeout(()=>hmPublishSharedModules(false),0);
+      return ok;
+    };
+  }
+
+  // Salva formazione senza cambiare schermata o tab.
+  window.hmSaveFormationStayVisible=function(code){
+    if(!canTeamNow(code)){alert('Puoi salvare solo la formazione delle tue squadre.');return false;}
+    try{
+      if(typeof saveAll==='function') saveAll();
+      if(typeof renderPitch==='function') renderPitch(code);
+      const sub=$('teamSub-formazione'); if(sub) sub.classList.remove('hidden');
+      document.querySelectorAll('#view-teamDetail .tabs .tab').forEach(btn=>{
+        const on=String(btn.getAttribute('onclick')||'');
+        btn.classList.toggle('active',on.includes("teamSub('formazione'"));
+      });
+      alert('Formazione salvata.');
+      return true;
+    }catch(e){console.error(e);pushErr('Formazione',e);alert('Errore salvataggio formazione: '+(e.message||e));return false;}
+  };
+
+  function formationDiagnostics(){
+    const issues=[];
+    const ids=new Set((Array.isArray(players)?players:[]).map(p=>String(p.id||'')));
+    const teamsSet=new Set((Array.isArray(teams)?teams:[]).map(t=>String(t.code||'').toUpperCase()));
+    const mods=new Set(Object.keys(localModules()));
+    Object.entries(savedFormations||{}).forEach(([code,f])=>{
+      if(!teamsSet.has(String(code).toUpperCase())) issues.push('Formazione legata a squadra inesistente: '+code);
+      const mod=String(f?.module||'');
+      if(mod && !mods.has(mod)) issues.push(code+': modulo '+mod+' non presente su questo dispositivo');
+      Object.entries(f?.slots||{}).forEach(([slot,pid])=>{if(pid && !ids.has(String(pid))) issues.push(code+': '+slot+' usa un calciatore inesistente ('+pid+')');});
+    });
+    return issues;
+  }
+  function playerDiagnostics(){
+    const issues=[]; const seen=new Set();
+    (Array.isArray(players)?players:[]).forEach(p=>{
+      const id=String(p?.id||'');
+      if(!id) issues.push('Calciatore senza ID: '+String(p?.name||'senza nome'));
+      else if(seen.has(id)) issues.push('ID duplicato: '+id);
+      else seen.add(id);
+    });
+    return issues;
+  }
+  function renderErrors(){
+    const rows=window.HM_ADMIN_RUNTIME_ERRORS||[];
+    return rows.length ? rows.map(x=>`<div class="card" style="padding:9px;margin:6px 0"><b>${escA(x.kind)}</b> · ${escA(x.time)}<br><span class="muted">${escA(x.msg)}</span></div>`).join('') : '<div class="muted">Nessun errore runtime registrato da quando hai aperto questa pagina.</div>';
+  }
+
+  window.hmAdminCheckSafe=function(){
+    const box=$('hmAdminDiagSafe'); if(!box) return false;
+    const issues=[...playerDiagnostics(),...formationDiagnostics()];
+    box.innerHTML=issues.length ? `<div class="stat"><div class="n">${issues.length}</div><div>anomalie trovate</div></div>${issues.map(x=>`<div class="card" style="padding:9px;margin:6px 0">⚠️ ${escA(x)}</div>`).join('')}` : '<div class="stat"><div class="n">0</div><div>✅ Nessuna anomalia nei controlli non distruttivi</div></div>';
+    return true;
+  };
+  window.hmAdminClearRuntimeErrors=function(){window.HM_ADMIN_RUNTIME_ERRORS=[];renderAdminSafe();};
+
+  window.renderAdminSafe=function(){
+    const root=$('view-admin'); if(!root) return;
+    if(!adminNow()){
+      root.innerHTML='<h2>🛠️ Admin</h2><div class="card">Area riservata a Federico admin.</div>';
+      return;
+    }
+    const unsaved=(typeof HM_HAS_UNSAVED_CHANGES!=='undefined' && HM_HAS_UNSAVED_CHANGES);
+    root.innerHTML=`
+      <div class="between"><div><h2 style="margin:0 0 6px">🛠️ Centro Admin HML</h2><div class="muted">Strumenti isolati: nessuna modifica automatica ai dati e nessuna alterazione del salvataggio generale.</div></div><span class="badge">SAFE V3</span></div>
+      <div class="grid grid4" style="margin-top:16px">
+        <div class="stat"><div class="muted">Calciatori</div><div class="n">${(players||[]).length}</div></div>
+        <div class="stat"><div class="muted">Squadre</div><div class="n">${(teams||[]).filter(t=>t.code!=='SVIN').length}</div></div>
+        <div class="stat"><div class="muted">Moduli locali</div><div class="n">${moduleCount()}</div></div>
+        <div class="stat"><div class="muted">Stato modifiche</div><div style="font-size:18px;font-weight:900;margin-top:8px">${unsaved?'⚠️ Da pubblicare':'✅ Allineato/localmente salvo'}</div></div>
+      </div>
+      <div class="grid grid2" style="margin-top:16px">
+        <div class="card"><h3>⚽ Moduli formazione</h3><p class="muted">L'editor resta quello già funzionante. La pubblicazione moduli è separata dal salvataggio generale.</p><div class="row"><button class="btn primary" onclick="openModuleRolesEditor()">⚙️ Gestisci moduli</button><button class="btn green" onclick="hmPublishSharedModules(true)">☁️ Pubblica moduli</button><button class="btn" onclick="hmLoadSharedModules(true)">⬇️ Carica moduli online</button></div></div>
+        <div class="card"><h3>💾 Salvataggio generale</h3><p class="muted">Usa ESATTAMENTE la funzione Firebase della versione Primavera: qui non viene aggiunto alcun campo.</p><div class="row"><button class="btn green" onclick="saveCloudNow(true)">💾 Salva online</button><button class="btn" onclick="loadCloudData()">🔄 Ricarica dati online</button></div></div>
+        <div class="card"><h3>📦 Sicurezza</h3><div class="row"><button class="btn green" onclick="downloadFullBackup()">📦 Backup</button><button class="btn yellow" onclick="triggerRestoreBackup()">♻️ Ripristina</button></div></div>
+        <div class="card"><h3>🧪 Diagnostica</h3><p class="muted">Controlli solo lettura: ID duplicati, moduli mancanti e riferimenti formazione rotti.</p><button class="btn primary" onclick="hmAdminCheckSafe()">Avvia controllo</button></div>
+      </div>
+      <div id="hmAdminDiagSafe" style="margin-top:16px"></div>
+      <div class="card" style="margin-top:16px"><div class="between"><h3 style="margin:0">🐞 Errori runtime</h3><button class="btn" onclick="hmAdminClearRuntimeErrors()">Pulisci elenco</button></div><div style="margin-top:10px">${renderErrors()}</div></div>`;
+    setTimeout(()=>{const r=$('view-admin'); if(r) r.querySelectorAll('button,input,select,textarea').forEach(el=>{el.disabled=false;el.style.opacity='1';});},0);
+  };
+
+  function syncAdminNav(){const n=$('hmAdminNavBtn'); if(n) n.style.display=adminNow()?'flex':'none';}
+  const oldPerm=window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  const safePerm=function(){
+    const r=typeof oldPerm==='function'?oldPerm.apply(this,arguments):undefined;
+    syncAdminNav();
+    if(adminNow() && typeof currentVisibleViewName==='function' && currentVisibleViewName()==='admin'){
+      const root=$('view-admin'); if(root) root.querySelectorAll('button,input,select,textarea').forEach(el=>{el.disabled=false;el.style.opacity='1';});
+    }
+    return r;
+  };
+  window.applyInternalPermissions=window.applyPermissionsToVisibleView=safePerm;
+
+  // Carica i moduli condivisi in modo indipendente. Un errore qui NON modifica stato/salvataggio generale.
+  setTimeout(()=>hmLoadSharedModules(false),1200);
+  setTimeout(syncAdminNav,100);
+  document.addEventListener('DOMContentLoaded',()=>{setTimeout(syncAdminNav,100);setTimeout(()=>hmLoadSharedModules(false),1200);});
 })();
 </script>
 

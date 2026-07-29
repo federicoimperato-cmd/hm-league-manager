@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>HM League Manager - Versione Completa Funzionante</title>
+<title>HM League Manager - Market Control V7</title>
 <style>
 :root {
   --bg:#07111f; --panel:#0d1b2f; --panel2:#12233b; --line:#28405f; --text:#f8fafc; --muted:#a8b3c7;
@@ -96,6 +96,7 @@ button{cursor:pointer}
       <button class="navbtn" data-view="teams">🏟️ Società</button>
       <button class="navbtn" data-view="players">👥 Calciatori</button>
       <button class="navbtn" data-view="trades">🔁 Registro Scambi</button>
+      <button class="navbtn" data-view="market">🔥 Mercato HML</button>
       <button class="navbtn" data-view="ranking">📊 Ranking</button>
       <button class="navbtn" data-view="history">📚 Storico campionati</button>
       <button class="navbtn" data-view="auction">🔨 Asta</button>
@@ -117,6 +118,7 @@ button{cursor:pointer}
       <section id="view-teamDetail" class="panel view hidden"></section>
       <section id="view-players" class="panel view hidden"></section>
       <section id="view-trades" class="panel view hidden"></section>
+      <section id="view-market" class="panel view hidden"></section>
       <section id="view-renewals" class="panel view hidden"></section>
       <section id="view-ranking" class="panel view hidden"></section>
       <section id="view-history" class="panel view hidden"></section>
@@ -6565,6 +6567,327 @@ window.addEventListener("beforeunload", function(e){
 
   // Carica le regole condivise in modo indipendente dal salvataggio core.
   setTimeout(()=>hmAdminLoadConfig(false),1800);
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   HM MARKET CONTROL V7
+   Modulo estivo separato dal salvataggio core.
+   Funzioni: bacheca, interessi pubblici, hot players,
+   watchlist privata UI, proposte rapide, controproposte,
+   cruscotto squadra, alert obiettivi, market heat e rumor.
+   Configurazione attivabile/disattivabile da Admin.
+   ========================================================= */
+(function(){
+  const $ = id => document.getElementById(id);
+  const escM = v => String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));
+  const nowIso = () => new Date().toISOString();
+  const ACTIVE_TEAM_KEY='hm_market_active_team_v1';
+  const TAB_KEY='hm_market_tab_v1';
+  const CONFIG_LOCAL='hm_market_config_v1';
+  const STATE_LOCAL='hm_market_state_v1';
+  const DEFAULT_CONFIG={
+    version:1,
+    enabled:true,
+    title:'Mercato HML',
+    seasonLabel:'Estate 2026',
+    board:true,
+    interest:true,
+    hot:true,
+    wishlist:true,
+    quickOffers:true,
+    counterOffers:true,
+    teamDashboard:true,
+    alerts:true,
+    heat:true,
+    rumors:true,
+    allowNewOffers:true,
+    hotMin:2,
+    rumorMin:2,
+    heatHours:72,
+    heatScale:1,
+    listingStatuses:['Cedibile','Valuto offerte','Prestito','Incedibile']
+  };
+  const EMPTY_STATE=()=>({version:1,listings:{},interests:{},watchlists:{},negotiations:[],activity:[],updatedAt:''});
+  let MARKET_CONFIG=loadLocal(CONFIG_LOCAL,DEFAULT_CONFIG);
+  let MARKET_STATE=normalizeState(loadLocal(STATE_LOCAL,EMPTY_STATE()));
+  let MARKET_BOARD_QUERY='';
+  let unsubCfg=null,unsubState=null,marketStarted=false;
+
+  function loadLocal(k,fb){try{const x=JSON.parse(localStorage.getItem(k)||'null');return x&&typeof x==='object'?x:JSON.parse(JSON.stringify(fb));}catch(e){return JSON.parse(JSON.stringify(fb));}}
+  function saveLocal(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){console.warn(e)}}
+  function normalizeConfig(c){return Object.assign({},DEFAULT_CONFIG,c||{}, {listingStatuses:Array.isArray(c?.listingStatuses)&&c.listingStatuses.length?c.listingStatuses:DEFAULT_CONFIG.listingStatuses});}
+  function normalizeState(st){
+    st=st&&typeof st==='object'?st:EMPTY_STATE();
+    return {version:1,listings:st.listings&&typeof st.listings==='object'?st.listings:{},interests:st.interests&&typeof st.interests==='object'?st.interests:{},watchlists:st.watchlists&&typeof st.watchlists==='object'?st.watchlists:{},negotiations:Array.isArray(st.negotiations)?st.negotiations:[],activity:Array.isArray(st.activity)?st.activity:[],updatedAt:st.updatedAt||''};
+  }
+  function marketDb(){try{return window.firebase&&firebase.firestore?firebase.firestore():null}catch(e){return null}}
+  function mainRef(){const d=marketDb();return d?d.collection('hmleague').doc('main'):null}
+  function cfgRef(){const m=mainRef();return m?m.collection('parts').doc('marketConfig'):null}
+  function stateRef(){const m=mainRef();return m?m.collection('parts').doc('marketState'):null}
+  function coreRef(){const m=mainRef();return m?m.collection('parts').doc('core'):null}
+  function logged(){try{return !!(currentUser&&currentUser.role&&currentUser.role!=='guest')}catch(e){return false}}
+  function adminM(){try{return !!(currentUser&&currentUser.role==='admin')}catch(e){return false}}
+  function myUser(){return String(currentUser?.username||'Ospite')}
+  function code(v){return String(v||'').trim().toUpperCase()}
+  function realTeamsM(){return (teams||[]).filter(t=>t&&t.code&&t.code!=='SVIN')}
+  function myTeams(){if(adminM())return realTeamsM().map(t=>t.code);try{return Array.isArray(currentUser?.teams)?currentUser.teams.map(code).filter(c=>c&&c!=='*'):[]}catch(e){return []}}
+  function activeTeam(){
+    const allowed=myTeams();
+    let c='';try{c=code(localStorage.getItem(ACTIVE_TEAM_KEY)||'')}catch(e){}
+    if(!allowed.includes(c)) c=allowed[0]||'';
+    if(c)try{localStorage.setItem(ACTIVE_TEAM_KEY,c)}catch(e){}
+    return c;
+  }
+  function setActiveTeam(c){c=code(c);if(myTeams().includes(c)){try{localStorage.setItem(ACTIVE_TEAM_KEY,c)}catch(e){};renderMarket();}}
+  function playerM(id){return (players||[]).find(p=>String(p.id)===String(id))||null}
+  function teamM(c){return (teams||[]).find(t=>t.code===c)||null}
+  function teamName(c){const t=teamM(c);return t?`${t.name} (${c})`:c}
+  function ownerTeam(p){return code(p?.owner||'')}
+  function ownedBy(c){return (players||[]).filter(p=>ownerTeam(p)===c)}
+  function canActTeam(c){return adminM()||myTeams().includes(code(c))}
+  function isOwnPlayer(p){return !!p&&myTeams().includes(ownerTeam(p))}
+  function currentTab(){try{return localStorage.getItem(TAB_KEY)||'hub'}catch(e){return 'hub'}}
+  function setTab(t){try{localStorage.setItem(TAB_KEY,t)}catch(e){};renderMarket()}
+  function fmtDate(v){try{return new Date(v).toLocaleString('it-IT')}catch(e){return ''}}
+  function uniq(arr){return [...new Set(arr)]}
+  function statusBadge(s){const x=String(s||'');let icon='⚪';if(/Cedibile/i.test(x))icon='🟢';else if(/Valuto/i.test(x))icon='🟡';else if(/Prestito/i.test(x))icon='🔵';else if(/Incedibile/i.test(x))icon='🔴';return `${icon} ${escM(x)}`}
+  function interestRows(pid){return Array.isArray(MARKET_STATE.interests?.[pid])?MARKET_STATE.interests[pid]:[]}
+  function interestTeams(pid){return uniq(interestRows(pid).map(x=>code(x.team)).filter(Boolean))}
+  function interestCount(pid){return interestTeams(pid).length}
+  function myInterest(pid,c=activeTeam()){return interestRows(pid).some(x=>code(x.team)===code(c))}
+  function watchKey(){return String(myUser()).toLowerCase().replace(/[^a-z0-9_-]/g,'_')||'guest'}
+  function myWatch(){const a=MARKET_STATE.watchlists?.[watchKey()];return Array.isArray(a)?a:[]}
+  function isWatched(pid){return myWatch().includes(String(pid))}
+  function listing(pid){return MARKET_STATE.listings?.[pid]||null}
+  function addActivity(st,type,opts={}){
+    st.activity=Array.isArray(st.activity)?st.activity:[];
+    st.activity.unshift({id:'A'+Date.now()+'_'+Math.floor(Math.random()*100000),type,playerId:String(opts.playerId||''),team:code(opts.team||''),user:opts.user||myUser(),at:nowIso(),negotiationId:opts.negotiationId||''});
+    st.activity=st.activity.slice(0,500);
+  }
+  function recentActivity(){const h=Math.max(1,Number(MARKET_CONFIG.heatHours)||72),cut=Date.now()-h*3600000;return (MARKET_STATE.activity||[]).filter(a=>new Date(a.at||0).getTime()>=cut)}
+  function heatScore(){
+    const w={interest:4,uninterest:0,listing:3,unlisting:0,offer:8,counter:7,accepted:12,rejected:2,cancelled:1};
+    const raw=recentActivity().reduce((n,a)=>n+(w[a.type]||0),0)*(Number(MARKET_CONFIG.heatScale)||1);
+    return Math.max(0,Math.min(100,Math.round(raw)));
+  }
+  function heatLabel(n){return n>=80?'🔥 BOLLENTE':n>=55?'🌡️ CALDO':n>=25?'☀️ TIEPIDO':'❄️ FREDDO'}
+  function hotPlayers(){return (players||[]).map(p=>({p,count:interestCount(String(p.id)),teams:interestTeams(String(p.id))})).filter(x=>x.count>=Math.max(1,Number(MARKET_CONFIG.hotMin)||2)).sort((a,b)=>b.count-a.count||String(a.p.name).localeCompare(String(b.p.name))).slice(0,20)}
+  function visibleNegotiations(){
+    const arr=MARKET_STATE.negotiations||[];
+    if(adminM())return arr;
+    const mt=myTeams();return arr.filter(n=>mt.includes(code(n.fromTeam))||mt.includes(code(n.toTeam)));
+  }
+  function openNegotiations(){return (MARKET_STATE.negotiations||[]).filter(n=>['pending','countered'].includes(n.status))}
+  function playerCardMini(p,extra=''){if(!p)return '';return `<div class="market-player"><div style="min-width:0"><b>${escM(p.name)}</b><div class="muted">${escM(p.role||'')} · ${escM(teamName(ownerTeam(p)))}</div></div>${extra}</div>`}
+
+  async function ensureAuth(){
+    if(!logged()){alert('Devi fare login per usare il mercato.');return false;}
+    try{
+      if(!window.firebase||!firebase.auth)return true;
+      const auth=firebase.auth();if(auth.currentUser)return true;
+      const keep=JSON.parse(JSON.stringify(currentUser||{}));
+      await auth.signInAnonymously();
+      currentUser=keep;
+      try{localStorage.setItem('hm_internal_user_v2',JSON.stringify(keep));safeSetStorage('hm_current_user_v1',keep)}catch(e){}
+      return true;
+    }catch(e){console.error(e);alert('Errore accesso Firebase mercato: '+(e.code||e.message||e));return false;}
+  }
+  async function mutateState(mutator){
+    if(!await ensureAuth())return false;
+    const db=marketDb(),ref=stateRef();if(!db||!ref){alert('Firebase mercato non disponibile.');return false;}
+    let finalState=null;
+    try{
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref);let st=EMPTY_STATE();
+        if(snap.exists){const d=snap.data()||{};try{st=normalizeState(JSON.parse(d.stateJson||'{}'))}catch(e){st=EMPTY_STATE()}}
+        await mutator(st);
+        st.updatedAt=nowIso();finalState=st;
+        tx.set(ref,{version:1,updatedAt:st.updatedAt,stateJson:JSON.stringify(st)},{merge:false});
+      });
+      if(finalState){MARKET_STATE=normalizeState(finalState);saveLocal(STATE_LOCAL,MARKET_STATE);renderMarketIfOpen();}
+      return true;
+    }catch(e){console.error('Market mutate',e);alert('Errore salvataggio Mercato HML: '+(e.code||e.message||e));return false;}
+  }
+  async function publishConfig(show=true){
+    if(!adminM()){if(show)alert('Solo Federico admin può modificare il Mercato HML.');return false;}
+    if(!await ensureAuth())return false;
+    const ref=cfgRef();if(!ref)return false;
+    try{MARKET_CONFIG=normalizeConfig(MARKET_CONFIG);await ref.set({version:1,updatedAt:nowIso(),configJson:JSON.stringify(MARKET_CONFIG)},{merge:false});saveLocal(CONFIG_LOCAL,MARKET_CONFIG);if(show)alert('Configurazione Mercato HML pubblicata.');return true}catch(e){console.error(e);if(show)alert('Errore pubblicazione configurazione mercato: '+(e.code||e.message||e));return false}
+  }
+  async function loadConfig(show=false){const ref=cfgRef();if(!ref)return false;try{const s=await ref.get();if(s.exists&&s.data()?.configJson){MARKET_CONFIG=normalizeConfig(JSON.parse(s.data().configJson));saveLocal(CONFIG_LOCAL,MARKET_CONFIG);updateMarketNav();renderMarketIfOpen();if(show)alert('Configurazione mercato caricata.');return true}return false}catch(e){console.warn(e);if(show)alert('Errore lettura configurazione mercato.');return false}}
+  async function loadState(show=false){const ref=stateRef();if(!ref)return false;try{const s=await ref.get();if(s.exists&&s.data()?.stateJson){MARKET_STATE=normalizeState(JSON.parse(s.data().stateJson));saveLocal(STATE_LOCAL,MARKET_STATE);renderMarketIfOpen();if(show)alert('Mercato aggiornato.');return true}return false}catch(e){console.warn(e);if(show)alert('Errore lettura Mercato HML.');return false}}
+  function startListeners(){
+    if(marketStarted||!window.firebase||!firebase.firestore)return;marketStarted=true;
+    const c=cfgRef(),st=stateRef();
+    if(c)unsubCfg=c.onSnapshot(s=>{if(s.exists&&s.data()?.configJson){try{MARKET_CONFIG=normalizeConfig(JSON.parse(s.data().configJson));saveLocal(CONFIG_LOCAL,MARKET_CONFIG);updateMarketNav();renderMarketIfOpen();appendMarketDashboard()}catch(e){console.warn(e)}}},e=>console.warn('market cfg listener',e));
+    if(st)unsubState=st.onSnapshot(s=>{if(s.exists&&s.data()?.stateJson){try{MARKET_STATE=normalizeState(JSON.parse(s.data().stateJson));saveLocal(STATE_LOCAL,MARKET_STATE);renderMarketIfOpen();appendMarketDashboard();if(adminM()&&typeof window.hmLoadPendingFromFirebase==='function'){window.hmLoadPendingFromFirebase().then(()=>{try{if(typeof currentVisibleViewName==='function'&&currentVisibleViewName()==='trades')renderTrades()}catch(e){}})}}catch(e){console.warn(e)}}},e=>console.warn('market state listener',e));
+  }
+  function updateMarketNav(){const b=document.querySelector('.navbtn[data-view="market"]');if(b)b.style.display=(MARKET_CONFIG.enabled||adminM())?'':'none'}
+  function renderMarketIfOpen(){try{if(typeof currentVisibleViewName==='function'&&currentVisibleViewName()==='market')renderMarket()}catch(e){}}
+
+  function teamSelectorHtml(){const arr=myTeams();if(!logged())return `<span class="badge">👁️ Accedi per partecipare</span>`;if(!arr.length)return `<span class="badge">Nessuna squadra</span>`;return `<label class="market-team-select">Agisci come <select id="marketActiveTeam" class="input" data-market-public="1" onchange="hmMarketSetTeam(this.value)">${arr.map(c=>`<option value="${escM(c)}" ${c===activeTeam()?'selected':''}>${escM(teamName(c))}</option>`).join('')}</select></label>`}
+  function tabsHtml(){const t=currentTab(),items=[['hub','🔥 HUB'],['board','🟢 Bacheca'],['watch','👀 Osservatorio'],['deals','🔁 Trattative']];return `<div class="tabs">${items.map(([k,l])=>`<button class="tab ${t===k?'active':''}" data-market-public="1" onclick="hmMarketTab('${k}')">${l}</button>`).join('')}</div>`}
+
+  function hubHtml(){
+    const heat=heatScore(),hots=hotPlayers(),act=activeTeam(),mine=ownedBy(act),ownInterest=mine.reduce((n,p)=>n+interestCount(String(p.id)),0),openMine=openNegotiations().filter(n=>n.fromTeam===act||n.toTeam===act).length,listed=mine.filter(p=>listing(String(p.id))).length;
+    const watched=myWatch().map(playerM).filter(Boolean);
+    const alerts=watched.map(p=>({p,others:interestTeams(String(p.id)).filter(c=>c!==act)})).filter(x=>x.others.length);
+    return `
+      ${MARKET_CONFIG.heat?`<div class="market-heat"><div><div class="muted">Indice mercato · ultime ${escM(MARKET_CONFIG.heatHours)} ore</div><div style="font-size:34px;font-weight:900">${heat}/100</div><b>${heatLabel(heat)}</b></div><div class="market-heatbar"><span style="width:${heat}%"></span></div></div>`:''}
+      ${MARKET_CONFIG.teamDashboard&&logged()?`<div class="grid grid4" style="margin-top:14px"><div class="stat"><div class="muted">Interessi sui tuoi giocatori</div><div class="n">${ownInterest}</div></div><div class="stat"><div class="muted">Tuoi giocatori in bacheca</div><div class="n">${listed}</div></div><div class="stat"><div class="muted">Trattative aperte</div><div class="n">${openMine}</div></div><div class="stat"><div class="muted">Obiettivi personali</div><div class="n">${watched.length}</div></div></div>`:''}
+      ${MARKET_CONFIG.alerts&&alerts.length?`<div class="card market-alert" style="margin-top:14px"><h3>🚨 I tuoi obiettivi si stanno scaldando</h3>${alerts.slice(0,8).map(x=>`<div class="playerRow"><div><b>${escM(x.p.name)}</b><div class="muted">Interessate: ${x.others.map(teamName).map(escM).join(', ')}</div></div><span class="badge">${x.others.length} altre</span></div>`).join('')}</div>`:''}
+      ${MARKET_CONFIG.hot?`<div class="card" style="margin-top:14px"><div class="between"><h3>🔥 Hot Players</h3><span class="badge">min. ${escM(MARKET_CONFIG.hotMin)} interessi</span></div>${hots.length?hots.slice(0,10).map((x,i)=>playerCardMini(x.p,`<div style="text-align:right"><b>#${i+1} · ${x.count}</b><div class="muted">${x.teams.map(teamName).map(escM).join(', ')}</div></div>`)).join(''):`<div class="muted">Ancora nessun giocatore caldo.</div>`}</div>`:''}
+      ${MARKET_CONFIG.rumors?rumorsHtml():''}
+    `;
+  }
+  function rumors(){
+    const out=[],min=Math.max(1,Number(MARKET_CONFIG.rumorMin)||2);
+    hotPlayers().filter(x=>x.count>=min).slice(0,5).forEach(x=>out.push(`👀 ${x.p.name} è seguito da ${x.teams.map(teamName).join(', ')}.`));
+    openNegotiations().filter(n=>(n.history||[]).length>=2).slice(0,5).forEach(n=>{const p=playerM(n.targetPlayerId);if(p)out.push(`🔥 Trattativa calda per ${p.name}: ${n.fromTeam} e ${n.toTeam} sono già a ${(n.history||[]).length} passaggi.`)});
+    Object.entries(MARKET_STATE.listings||{}).sort((a,b)=>String(b[1].updatedAt||'').localeCompare(String(a[1].updatedAt||''))).slice(0,4).forEach(([pid,l])=>{const p=playerM(pid);if(p&&l.status&&l.status!=='Incedibile')out.push(`📣 ${p.name} (${teamName(l.ownerTeam||ownerTeam(p))}) è ${String(l.status).toLowerCase()}.`)});
+    return uniq(out).slice(0,10);
+  }
+  function rumorsHtml(){const r=rumors();return `<div class="card" style="margin-top:14px"><h3>🕵️ Rumors automatici</h3>${r.length?r.map(x=>`<div class="market-rumor">${escM(x)}</div>`).join(''):`<div class="muted">Il mercato è ancora tranquillo.</div>`}</div>`}
+
+  function listingActions(p){
+    const pid=String(p.id),l=listing(pid),cnt=interestCount(pid),teamsI=interestTeams(pid),act=activeTeam(),own=ownerTeam(p)===act;
+    const publicBtns=logged()&&!own?`${MARKET_CONFIG.interest?`<button class="btn ${myInterest(pid,act)?'green':''}" data-market-action="1" onclick="hmMarketToggleInterest('${escM(pid)}')">${myInterest(pid,act)?'✅ Interessato':'👀 Mi interessa'}</button>`:''}${MARKET_CONFIG.wishlist?`<button class="btn ${isWatched(pid)?'yellow':''}" data-market-action="1" onclick="hmMarketToggleWatch('${escM(pid)}')">${isWatched(pid)?'⭐ Nei miei obiettivi':'☆ Obiettivo'}</button>`:''}${MARKET_CONFIG.quickOffers&&MARKET_CONFIG.allowNewOffers?`<button class="btn primary" data-market-action="1" onclick="hmMarketOpenOffer('${escM(pid)}')">🔁 Proponi</button>`:''}`:'';
+    return `<div class="market-actions">${cnt?`<span class="badge">👀 ${cnt}: ${teamsI.map(teamName).map(escM).join(', ')}</span>`:''}${publicBtns}</div>`;
+  }
+  function boardHtml(){
+    if(!MARKET_CONFIG.board)return `<div class="card"><h3>Bacheca disattivata</h3><p class="muted">Federico può riattivarla dall'Admin.</p></div>`;
+    const qv=String(MARKET_BOARD_QUERY||'').toLowerCase();
+    const items=Object.entries(MARKET_STATE.listings||{}).map(([pid,l])=>({p:playerM(pid),l})).filter(x=>x.p&&x.l&&x.l.status).filter(x=>!qv||[x.p.name,x.p.role,x.l.status,x.l.ownerTeam,x.l.note].join(' ').toLowerCase().includes(qv)).sort((a,b)=>interestCount(String(b.p.id))-interestCount(String(a.p.id))||String(b.l.updatedAt||'').localeCompare(String(a.l.updatedAt||'')));
+    const act=activeTeam(),mine=logged()?ownedBy(act):[];
+    return `<div class="card"><div class="between"><div><h3>🟢 Bacheca mercato</h3><p class="muted">Cedibili, prestiti, giocatori per cui si valutano offerte e incedibili dichiarati.</p></div><input id="marketBoardSearch" class="input" data-market-public="1" placeholder="Cerca..." value="${escM(MARKET_BOARD_QUERY)}" oninput="hmMarketBoardSearch(this.value)"></div>${items.length?items.map(({p,l})=>`<div class="market-listing"><div><b>${escM(p.name)}</b><div class="muted">${escM(p.role||'')} · ${escM(teamName(l.ownerTeam||ownerTeam(p)))}</div><div style="margin-top:6px"><span class="badge">${statusBadge(l.status)}</span>${l.price!==''&&l.price!==undefined?` <span class="badge">Richiesta ${escM(l.price)} cr</span>`:''}</div>${l.note?`<div class="muted" style="margin-top:6px">“${escM(l.note)}”</div>`:''}</div>${listingActions(p)}</div>`).join(''):`<div class="muted">Nessun giocatore in bacheca.</div>`}</div>
+      ${logged()?`<div class="card" style="margin-top:14px"><h3>Gestisci ${escM(teamName(act))}</h3><p class="muted">Queste informazioni sono separate dalla scheda calciatore e non modificano proprietario, contratto o stato.</p><div class="market-own-grid">${mine.map(p=>{const l=listing(String(p.id))||{};return `<div class="market-own"><b>${escM(p.name)}</b><div class="muted">${escM(p.role||'')}</div><select id="mls_${escM(p.id)}" class="input" data-market-action="1"><option value="">Nessuna indicazione</option>${MARKET_CONFIG.listingStatuses.map(s=>`<option ${l.status===s?'selected':''}>${escM(s)}</option>`).join('')}</select><input id="mlp_${escM(p.id)}" class="input" data-market-action="1" type="number" min="0" placeholder="Richiesta crediti" value="${escM(l.price??'')}"><input id="mln_${escM(p.id)}" class="input" data-market-action="1" placeholder="Nota facoltativa" value="${escM(l.note||'')}"><button class="btn green" data-market-action="1" onclick="hmMarketSaveListing('${escM(p.id)}')">Salva</button></div>`}).join('')}</div></div>`:''}`;
+  }
+
+  function watchHtml(){
+    const w=myWatch().map(playerM).filter(Boolean),allInterest=Object.entries(MARKET_STATE.interests||{}).map(([pid,rows])=>({p:playerM(pid),rows:Array.isArray(rows)?rows:[]})).filter(x=>x.p&&x.rows.length).sort((a,b)=>b.rows.length-a.rows.length);
+    return `${MARKET_CONFIG.wishlist?`<div class="card"><div class="between"><div><h3>⭐ I miei obiettivi</h3><p class="muted">Lista personale. Le altre squadre non la vedono nell'interfaccia.</p></div><button class="btn" data-market-public="1" onclick="hmMarketOpenWatchSearch()">➕ Aggiungi obiettivo</button></div>${w.length?w.map(p=>playerCardMini(p,`${listingActions(p)}<button class="btn red" data-market-action="1" onclick="hmMarketToggleWatch('${escM(p.id)}')">Rimuovi</button>`)).join(''):`<div class="muted">Nessun obiettivo salvato.</div>`}</div>`:''}
+    ${MARKET_CONFIG.interest?`<div class="card" style="margin-top:14px"><h3>👀 Interessi pubblici</h3><p class="muted">Qui si vede chiaramente chi segue chi.</p>${allInterest.length?allInterest.map(x=>playerCardMini(x.p,`<div>${x.rows.map(r=>`<span class="badge">${escM(teamName(r.team))} · ${escM(r.user||'')}</span>`).join(' ')}</div>`)).join(''):`<div class="muted">Nessun interesse dichiarato.</div>`}</div>`:''}`;
+  }
+
+  function negTerms(n){const p=playerM(n.targetPlayerId),ops=(n.offeredPlayerIds||[]).map(playerM).filter(Boolean);return `<div><b>${escM(n.fromTeam)} propone a ${escM(n.toTeam)}</b><div class="muted">Per <b>${escM(p?.name||n.targetPlayerId)}</b> offre ${ops.length?ops.map(x=>escM(x.name)).join(' + '):'nessun giocatore'}${Number(n.credits)>0?` + <b>${escM(n.credits)} crediti</b>`:''}</div></div>`}
+  function dealButtons(n){
+    if(!logged())return '';
+    const act=activeTeam(),mine=myTeams();if(!mine.includes(n.fromTeam)&&!mine.includes(n.toTeam)&&!adminM())return '';
+    if(!['pending','countered'].includes(n.status))return '';
+    if(n.turnTeam!==act&&!adminM())return `<span class="badge">In attesa di ${escM(teamName(n.turnTeam))}</span>`;
+    return `<div class="row">${MARKET_CONFIG.counterOffers?`<button class="btn yellow" data-market-action="1" onclick="hmMarketOpenCounter('${escM(n.id)}')">↩ Controproposta</button>`:''}<button class="btn green" data-market-action="1" onclick="hmMarketAccept('${escM(n.id)}')">✅ Accetta</button><button class="btn red" data-market-action="1" onclick="hmMarketReject('${escM(n.id)}')">❌ Rifiuta</button></div>`;
+  }
+  function dealsHtml(){
+    if(!MARKET_CONFIG.quickOffers)return `<div class="card"><h3>Trattative rapide disattivate</h3></div>`;
+    const arr=visibleNegotiations().sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
+    return `<div class="card"><div class="between"><div><h3>🔁 Trattative</h3><p class="muted">Quando una proposta viene accettata passa al Registro Scambi in attesa dell'approvazione finale di Federico.</p></div><span class="badge">${arr.filter(n=>['pending','countered'].includes(n.status)).length} aperte</span></div>${arr.length?arr.map(n=>`<div class="market-deal"><div class="between">${negTerms(n)}<span class="badge">${escM(n.status)}</span></div><div class="muted" style="margin-top:6px">Ultimo aggiornamento: ${escM(fmtDate(n.updatedAt||n.createdAt))}</div>${(n.history||[]).length?`<details style="margin-top:8px"><summary>Storico (${n.history.length})</summary>${n.history.map(h=>`<div class="muted" style="margin:6px 0">${escM(h.type)} · ${escM(h.byTeam)} · ${escM(h.credits||0)} cr · ${escM(fmtDate(h.at))}</div>`).join('')}</details>`:''}<div style="margin-top:10px">${dealButtons(n)}</div></div>`).join(''):`<div class="muted">Nessuna trattativa.</div>`}</div>`;
+  }
+
+  function renderMarket(){
+    const root=$('view-market');if(!root)return;
+    updateMarketNav();
+    if(!MARKET_CONFIG.enabled&&!adminM()){root.innerHTML=`<div class="card"><h2>🔥 Mercato HML</h2><p class="muted">Il mercato interattivo è momentaneamente chiuso.</p></div>`;return;}
+    const t=currentTab();
+    root.innerHTML=`<div class="between"><div><div class="kicker">${escM(MARKET_CONFIG.seasonLabel||'')}</div><h2 style="font-size:34px;margin:6px 0">🔥 ${escM(MARKET_CONFIG.title||'Mercato HML')}</h2><p class="muted">Bacheca, interessi pubblici e trattative tra presidenti.</p></div>${teamSelectorHtml()}</div>${tabsHtml()}<div id="marketTabBody">${t==='board'?boardHtml():t==='watch'?watchHtml():t==='deals'?dealsHtml():hubHtml()}</div>`;
+    setTimeout(applyMarketPermissions,100);
+  }
+  function applyMarketPermissions(){
+    const root=$('view-market');if(!root||root.classList.contains('hidden'))return;
+    root.querySelectorAll('button,input,select,textarea').forEach(el=>{
+      let ok=el.dataset.marketPublic==='1'||(el.dataset.marketAction==='1'&&logged());
+      if(el.id==='marketActiveTeam')ok=logged();
+      el.disabled=!ok;el.style.opacity=ok?'1':'.45';
+    });
+  }
+
+  async function saveListing(pid){const p=playerM(pid),act=activeTeam();if(!p||ownerTeam(p)!==act&&!adminM()){alert('Puoi gestire solo i giocatori della squadra con cui stai agendo.');return}const st=$('mls_'+pid)?.value||'',price=$('mlp_'+pid)?.value??'',note=String($('mln_'+pid)?.value||'').trim();await mutateState(s=>{if(!st){delete s.listings[pid];addActivity(s,'unlisting',{playerId:pid,team:act})}else{s.listings[pid]={status:st,price:price===''?'':Math.max(0,Number(price)||0),note,ownerTeam:ownerTeam(p),updatedAt:nowIso(),updatedBy:myUser()};addActivity(s,'listing',{playerId:pid,team:act})}})}
+  async function toggleInterest(pid){if(!MARKET_CONFIG.interest)return;const p=playerM(pid),act=activeTeam();if(!p||!act||ownerTeam(p)===act){alert('Non puoi dichiarare interesse per un tuo giocatore.');return}await mutateState(s=>{s.interests[pid]=Array.isArray(s.interests[pid])?s.interests[pid]:[];const i=s.interests[pid].findIndex(x=>code(x.team)===act);if(i>=0){s.interests[pid].splice(i,1);addActivity(s,'uninterest',{playerId:pid,team:act})}else{s.interests[pid].push({team:act,user:myUser(),at:nowIso()});addActivity(s,'interest',{playerId:pid,team:act})}if(!s.interests[pid].length)delete s.interests[pid]})}
+  async function toggleWatch(pid){if(!MARKET_CONFIG.wishlist)return;if(!logged()){alert('Devi fare login.');return}await mutateState(s=>{const k=watchKey();s.watchlists[k]=Array.isArray(s.watchlists[k])?s.watchlists[k]:[];const id=String(pid),i=s.watchlists[k].indexOf(id);if(i>=0)s.watchlists[k].splice(i,1);else s.watchlists[k].push(id)})}
+
+  function openWatchSearch(){
+    if(!logged())return alert('Devi fare login.');
+    const body=$('tradeModalBody'),modal=$('tradeModal');if(!body||!modal)return;
+    body.innerHTML=`<div class="between"><h2>Aggiungi obiettivo</h2><button class="btn" onclick="closeTradeModal()">Chiudi</button></div><input id="marketWatchSearch" class="input" style="width:100%" placeholder="Cerca calciatore..." oninput="hmMarketWatchResults()"><div id="marketWatchResults" style="margin-top:12px"></div>`;modal.style.display='flex';
+  }
+  function watchResults(){const box=$('marketWatchResults'),qv=String($('marketWatchSearch')?.value||'').trim().toLowerCase();if(!box)return;if(qv.length<2){box.innerHTML='<div class="muted">Scrivi almeno 2 caratteri.</div>';return}const act=activeTeam(),arr=(players||[]).filter(p=>ownerTeam(p)!==act&&[p.name,p.role,p.owner,p.current].join(' ').toLowerCase().includes(qv)).slice(0,30);box.innerHTML=arr.map(p=>playerCardMini(p,`<button class="btn ${isWatched(String(p.id))?'yellow':'green'}" onclick="hmMarketToggleWatch('${escM(p.id)}').then(()=>hmMarketWatchResults())">${isWatched(String(p.id))?'Rimuovi':'Aggiungi'}</button>`)).join('')||'<div class="muted">Nessun risultato.</div>'}
+
+  function offerModal(pid,negId=''){
+    const p=playerM(pid),act=activeTeam();if(!p||!act)return;
+    const to=ownerTeam(p);if(to===act)return alert('Il giocatore appartiene alla tua squadra.');
+    const existing=negId?(MARKET_STATE.negotiations||[]).find(n=>n.id===negId):null;
+    const offerTeam=existing?.fromTeam||act;
+    if(!canActTeam(existing?existing.turnTeam:offerTeam)&&!adminM())return alert('Non tocca a questa squadra.');
+    const candidates=ownedBy(offerTeam).filter(x=>String(x.id)!==String(pid));
+    const selected=new Set(existing?.offeredPlayerIds||[]),credits=existing?.credits||0;
+    const body=$('tradeModalBody'),modal=$('tradeModal');if(!body||!modal)return;
+    body.innerHTML=`<div class="between"><div><h2>${existing?'Controproposta':'Proposta rapida'}</h2><p class="muted">${escM(teamName(offerTeam))} → ${escM(teamName(to))}</p></div><button class="btn" onclick="closeTradeModal()">Chiudi</button></div><div class="card"><h3>Voglio ${escM(p.name)}</h3><p class="muted">I crediti indicati sono pagati da ${escM(teamName(offerTeam))} a ${escM(teamName(to))}.</p></div><div class="card" style="margin-top:12px"><h3>Giocatori offerti</h3><div style="max-height:280px;overflow:auto">${candidates.map(x=>`<label class="market-check"><input type="checkbox" class="marketOfferPlayer" value="${escM(x.id)}" ${selected.has(String(x.id))?'checked':''}> <b>${escM(x.name)}</b> <span class="muted">${escM(x.role||'')}</span></label>`).join('')||'<div class="muted">Nessun giocatore disponibile.</div>'}</div><label style="display:block;margin-top:12px">Crediti aggiunti<input id="marketOfferCredits" class="input" type="number" min="0" value="${escM(credits)}"></label></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="${existing?`hmMarketSendCounter('${escM(existing.id)}')`:`hmMarketSendOffer('${escM(pid)}')`}">${existing?'Invia controproposta':'Invia proposta'}</button></div>`;
+    modal.style.display='flex';
+  }
+  function selectedOfferPlayers(){return [...document.querySelectorAll('.marketOfferPlayer:checked')].map(x=>String(x.value))}
+  async function sendOffer(pid){if(!MARKET_CONFIG.quickOffers||!MARKET_CONFIG.allowNewOffers)return alert('Nuove offerte momentaneamente chiuse.');const p=playerM(pid),from=activeTeam(),to=ownerTeam(p),offered=selectedOfferPlayers(),credits=Math.max(0,Number($('marketOfferCredits')?.value)||0);if(!p||!from||!to)return;if(!offered.length&&!credits)return alert('Inserisci almeno un giocatore o dei crediti.');if(offered.some(id=>ownerTeam(playerM(id))!==from))return alert('Uno dei giocatori offerti non appartiene alla squadra selezionata.');await mutateState(s=>{const id='N'+Date.now()+'_'+Math.floor(Math.random()*10000),h={type:'offerta',byTeam:from,offeredPlayerIds:offered,credits,at:nowIso()};s.negotiations.unshift({id,targetPlayerId:String(pid),fromTeam:from,toTeam:to,offeredPlayerIds:offered,credits,status:'pending',turnTeam:to,createdBy:myUser(),createdAt:nowIso(),updatedAt:nowIso(),history:[h]});addActivity(s,'offer',{playerId:pid,team:from,negotiationId:id})});try{closeTradeModal()}catch(e){};setTab('deals')}
+  async function sendCounter(id){if(!MARKET_CONFIG.counterOffers)return;const n=(MARKET_STATE.negotiations||[]).find(x=>x.id===id);if(!n)return;const act=activeTeam();if(n.turnTeam!==act&&!adminM())return alert('Non tocca alla tua squadra.');const offered=selectedOfferPlayers(),credits=Math.max(0,Number($('marketOfferCredits')?.value)||0);if(!offered.length&&!credits)return alert('Inserisci almeno un giocatore o dei crediti.');if(offered.some(pid=>ownerTeam(playerM(pid))!==n.fromTeam))return alert('I giocatori offerti devono appartenere alla squadra proponente.');await mutateState(s=>{const x=s.negotiations.find(z=>z.id===id);if(!x)return;x.offeredPlayerIds=offered;x.credits=credits;x.status='countered';x.turnTeam=(act===x.toTeam?x.fromTeam:x.toTeam);x.updatedAt=nowIso();x.history=Array.isArray(x.history)?x.history:[];x.history.push({type:'controproposta',byTeam:act,offeredPlayerIds:offered,credits,at:nowIso()});addActivity(s,'counter',{playerId:x.targetPlayerId,team:act,negotiationId:id})});try{closeTradeModal()}catch(e){};renderMarket()}
+  async function createPendingTrade(n){
+    if(!await ensureAuth())return false;const db=marketDb(),ref=coreRef();if(!db||!ref)return false;
+    const pending={id:'MKT_'+n.id,from:n.fromTeam,to:n.toTeam,offer:(n.offeredPlayerIds||[]).map(id=>({id,type:'D',cost:0,bonus:'',ransom:''})),request:[{id:n.targetPlayerId,type:'D',cost:Math.max(0,Number(n.credits)||0),bonus:'',ransom:''}],createdBy:n.createdBy||myUser(),createdRole:'presidente',date:new Date().toLocaleString('it-IT'),sourceMarketNegotiationId:n.id};
+    try{
+      await db.runTransaction(async tx=>{const snap=await tx.get(ref),d=snap.exists?(snap.data()||{}):{},arr=Array.isArray(d.pendingTrades)?d.pendingTrades:[];if(!arr.some(x=>x.sourceMarketNegotiationId===n.id||x.id===pending.id)){arr=[pending,...arr];tx.set(ref,{pendingTrades:arr},{merge:true})}});
+      window.pendingTrades=Array.isArray(window.pendingTrades)?window.pendingTrades:[];if(!window.pendingTrades.some(x=>x.sourceMarketNegotiationId===n.id)){window.pendingTrades.unshift(pending);try{localStorage.setItem('hm_pending_trades_v1',JSON.stringify(window.pendingTrades))}catch(e){}}
+      return true;
+    }catch(e){console.error(e);alert('Non sono riuscito a creare lo scambio in attesa: '+(e.code||e.message||e));return false;}
+  }
+  async function acceptDeal(id){const n=(MARKET_STATE.negotiations||[]).find(x=>x.id===id);if(!n||!['pending','countered'].includes(n.status))return;const act=activeTeam();if(n.turnTeam!==act&&!adminM())return alert('Non tocca alla tua squadra.');if(!confirm('Accettare questa proposta? Verrà inviata a Federico nel Registro Scambi per l’approvazione finale.'))return;if(!await createPendingTrade(n))return;await mutateState(s=>{const x=s.negotiations.find(z=>z.id===id);if(!x)return;x.status='accepted';x.turnTeam='';x.updatedAt=nowIso();x.acceptedBy=act;x.history=(x.history||[]);x.history.push({type:'accettata',byTeam:act,credits:x.credits,at:nowIso()});addActivity(s,'accepted',{playerId:x.targetPlayerId,team:act,negotiationId:id})});alert('Proposta accettata e inviata a Federico per l’approvazione finale.')}
+  async function rejectDeal(id){const n=(MARKET_STATE.negotiations||[]).find(x=>x.id===id);if(!n)return;const act=activeTeam();if(n.turnTeam!==act&&!adminM())return alert('Non tocca alla tua squadra.');if(!confirm('Rifiutare la proposta?'))return;await mutateState(s=>{const x=s.negotiations.find(z=>z.id===id);if(!x)return;x.status='rejected';x.turnTeam='';x.updatedAt=nowIso();x.history=(x.history||[]);x.history.push({type:'rifiutata',byTeam:act,credits:x.credits,at:nowIso()});addActivity(s,'rejected',{playerId:x.targetPlayerId,team:act,negotiationId:id})})}
+
+  function adminPanel(){
+    if(!adminM())return;
+    const root=$('view-admin');if(!root||$('hmMarketAdminPanel'))return;
+    const c=MARKET_CONFIG,box=document.createElement('details');box.id='hmMarketAdminPanel';box.className='card';box.style.marginTop='14px';box.open=true;
+    const ck=(k,l)=>`<label class="market-toggle"><input id="mca_${k}" type="checkbox" ${c[k]?'checked':''}> <b>${l}</b></label>`;
+    box.innerHTML=`<summary style="cursor:pointer;font-size:20px;font-weight:900">🔥 Mercato HML · controllo completo</summary><div style="margin-top:12px"><div class="grid grid2"><label>Titolo<input id="mca_title" class="input" value="${escM(c.title)}"></label><label>Etichetta stagione<input id="mca_season" class="input" value="${escM(c.seasonLabel)}"></label></div><div class="market-toggle-grid" style="margin-top:12px">${ck('enabled','Mercato HML attivo')}${ck('board','Bacheca cedibili')}${ck('interest','Interessi pubblici')}${ck('hot','Hot Players')}${ck('wishlist','Lista obiettivi')}${ck('quickOffers','Proposte rapide')}${ck('counterOffers','Controproposte')}${ck('teamDashboard','Cruscotto squadra')}${ck('alerts','Alert obiettivi')}${ck('heat','Indice di calore')}${ck('rumors','Rumors automatici')}${ck('allowNewOffers','Consenti nuove offerte')}</div><div class="grid grid4" style="margin-top:12px"><label>Min. interessi Hot<input id="mca_hotMin" class="input" type="number" min="1" value="${escM(c.hotMin)}"></label><label>Min. interessi Rumor<input id="mca_rumorMin" class="input" type="number" min="1" value="${escM(c.rumorMin)}"></label><label>Ore Market Heat<input id="mca_heatHours" class="input" type="number" min="1" value="${escM(c.heatHours)}"></label><label>Moltiplicatore Heat<input id="mca_heatScale" class="input" type="number" step="0.1" min="0.1" value="${escM(c.heatScale)}"></label></div><label style="display:block;margin-top:12px">Stati bacheca · uno per riga<textarea id="mca_statuses" class="input" style="width:100%;min-height:110px">${escM((c.listingStatuses||[]).join('\n'))}</textarea></label><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmMarketAdminSaveConfig()">☁️ Salva e pubblica</button><button class="btn" onclick="hmMarketAdminReload()">⬇️ Ricarica configurazione</button></div><div class="grid grid4" style="margin-top:14px"><div class="stat"><div class="muted">In bacheca</div><div class="n">${Object.keys(MARKET_STATE.listings||{}).length}</div></div><div class="stat"><div class="muted">Interessi</div><div class="n">${Object.values(MARKET_STATE.interests||{}).reduce((n,a)=>n+(Array.isArray(a)?a.length:0),0)}</div></div><div class="stat"><div class="muted">Trattative aperte</div><div class="n">${openNegotiations().length}</div></div><div class="stat"><div class="muted">Heat</div><div class="n">${heatScore()}</div></div></div><div class="card" style="margin-top:14px"><h3>🧹 Manutenzione mercato</h3><div class="row"><button class="btn yellow" onclick="hmMarketAdminClear('interests')">Azzera interessi</button><button class="btn yellow" onclick="hmMarketAdminClear('closed')">Archivia trattative chiuse</button><button class="btn red" onclick="hmMarketAdminClear('all')">AZZERA TUTTO IL MERCATO</button></div><p class="muted">Questi reset riguardano solo il modulo Mercato HML. Non toccano calciatori, squadre, crediti, storico, asta o scambi ufficiali.</p></div></div>`;
+    root.appendChild(box);setTimeout(()=>box.querySelectorAll('button,input,textarea,select').forEach(el=>{el.disabled=false;el.style.opacity='1'}),0);
+  }
+  async function adminSaveConfig(){if(!adminM())return;const statuses=String($('mca_statuses')?.value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const keys=['enabled','board','interest','hot','wishlist','quickOffers','counterOffers','teamDashboard','alerts','heat','rumors','allowNewOffers'];keys.forEach(k=>MARKET_CONFIG[k]=!!$('mca_'+k)?.checked);MARKET_CONFIG.title=String($('mca_title')?.value||'Mercato HML').trim()||'Mercato HML';MARKET_CONFIG.seasonLabel=String($('mca_season')?.value||'').trim();MARKET_CONFIG.hotMin=Math.max(1,Number($('mca_hotMin')?.value)||2);MARKET_CONFIG.rumorMin=Math.max(1,Number($('mca_rumorMin')?.value)||2);MARKET_CONFIG.heatHours=Math.max(1,Number($('mca_heatHours')?.value)||72);MARKET_CONFIG.heatScale=Math.max(.1,Number($('mca_heatScale')?.value)||1);MARKET_CONFIG.listingStatuses=statuses.length?statuses:DEFAULT_CONFIG.listingStatuses;await publishConfig(true);updateMarketNav();try{renderAdminSafe()}catch(e){};renderMarketIfOpen()}
+  async function adminClear(kind){if(!adminM())return;if(kind==='all'&&!confirm('ATTENZIONE: azzerare bacheca, interessi, obiettivi, trattative e attività del Mercato HML?'))return;if(kind==='interests'&&!confirm('Azzera tutti gli interessi pubblici?'))return;if(kind==='closed'&&!confirm('Rimuovere dallo storico mercato le trattative accettate/rifiutate?'))return;await mutateState(s=>{if(kind==='all'){Object.assign(s,EMPTY_STATE())}else if(kind==='interests'){s.interests={}}else if(kind==='closed'){s.negotiations=(s.negotiations||[]).filter(n=>['pending','countered'].includes(n.status))}});try{renderAdminSafe()}catch(e){}}
+
+  function dashboardSnippet(){
+    if(!MARKET_CONFIG.enabled)return '';
+    const hot=hotPlayers().slice(0,3),heat=heatScore(),open=openNegotiations().length;
+    return `<div id="hmMarketDashboardCard" class="card" style="margin-top:14px"><div class="between"><div><div class="kicker">${escM(MARKET_CONFIG.seasonLabel||'')}</div><h3 style="margin:5px 0">🔥 ${escM(MARKET_CONFIG.title)}</h3></div><button class="btn primary" onclick="showView('market')">Entra nel mercato</button></div><div class="grid grid3" style="margin-top:12px"><div class="stat"><div class="muted">Market Heat</div><div class="n">${heat}</div><b>${heatLabel(heat)}</b></div><div class="stat"><div class="muted">Trattative aperte</div><div class="n">${open}</div></div><div class="stat"><div class="muted">Giocatori caldi</div><div class="n">${hotPlayers().length}</div></div></div>${hot.length?`<div style="margin-top:12px"><b>🔥 Ora si parla di:</b> ${hot.map(x=>`${escM(x.p.name)} (${x.count})`).join(' · ')}</div>`:''}</div>`;
+  }
+  function appendMarketDashboard(){const root=$('view-dashboard');if(!root||root.classList.contains('hidden'))return;const old=$('hmMarketDashboardCard');if(old)old.remove();const commTitle=[...root.querySelectorAll('h3')].find(h=>h.textContent.trim()==='Comunicati ufficiali');const commBlock=commTitle?.closest('.between');if(commBlock)commBlock.insertAdjacentHTML('beforebegin',dashboardSnippet());else root.insertAdjacentHTML('beforeend',dashboardSnippet())}
+
+  // Esposizione funzioni UI
+  window.renderMarket=renderMarket;window.hmMarketRender=renderMarket;window.hmMarketTab=setTab;window.hmMarketSetTeam=setActiveTeam;window.hmMarketBoardSearch=function(v){MARKET_BOARD_QUERY=String(v||'');renderMarket();setTimeout(()=>{const e=$('marketBoardSearch');if(e){e.focus();try{e.setSelectionRange(e.value.length,e.value.length)}catch(x){}}},0)};
+  window.hmMarketSaveListing=saveListing;window.hmMarketToggleInterest=toggleInterest;window.hmMarketToggleWatch=toggleWatch;window.hmMarketOpenWatchSearch=openWatchSearch;window.hmMarketWatchResults=watchResults;
+  window.hmMarketOpenOffer=(pid)=>offerModal(pid);window.hmMarketSendOffer=sendOffer;window.hmMarketOpenCounter=(id)=>{const n=(MARKET_STATE.negotiations||[]).find(x=>x.id===id);if(n)offerModal(n.targetPlayerId,id)};window.hmMarketSendCounter=sendCounter;window.hmMarketAccept=acceptDeal;window.hmMarketReject=rejectDeal;
+  window.hmMarketAdminSaveConfig=adminSaveConfig;window.hmMarketAdminReload=async()=>{await loadConfig(true);try{renderAdminSafe()}catch(e){}};window.hmMarketAdminClear=adminClear;window.hmMarketPublishConfig=publishConfig;window.hmMarketLoadState=loadState;
+
+  // Patch minimale vista: il vecchio showView resta il motore, aggiungiamo solo il render mercato.
+  const oldShowView=window.showView;
+  window.showView=showView=function(name){const r=oldShowView(name);if(name==='market')renderMarket();if(name==='admin')setTimeout(adminPanel,10);if(name==='dashboard')setTimeout(appendMarketDashboard,20);return r};
+
+  // Estende l'Admin esistente senza sostituirlo.
+  const oldAdmin=window.renderAdminSafe;
+  if(typeof oldAdmin==='function')window.renderAdminSafe=renderAdminSafe=function(){const r=oldAdmin.apply(this,arguments);setTimeout(adminPanel,10);return r};
+
+  // Estende dashboard senza toccare il suo contenuto originale.
+  const oldDash=window.renderDashboard;
+  if(typeof oldDash==='function')window.renderDashboard=renderDashboard=function(){const r=oldDash.apply(this,arguments);setTimeout(appendMarketDashboard,20);return r};
+
+  // I permessi interni storici non conoscono la nuova vista: riabilita solo i controlli mercato corretti.
+  document.addEventListener('click',()=>setTimeout(applyMarketPermissions,110),true);
+  document.addEventListener('change',()=>setTimeout(applyMarketPermissions,110),true);
+  document.addEventListener('input',()=>setTimeout(applyMarketPermissions,110),true);
+
+  function injectStyle(){if($('hmMarketStyle'))return;const st=document.createElement('style');st.id='hmMarketStyle';st.textContent=`
+    .market-team-select{display:flex;align-items:center;gap:8px;font-weight:900}.market-heat{display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:center;background:linear-gradient(135deg,rgba(249,115,22,.16),rgba(239,68,68,.12));border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:16px}.market-heatbar{height:22px;background:#07111f;border:1px solid #334155;border-radius:999px;overflow:hidden}.market-heatbar span{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#facc15,#ef4444);border-radius:999px}.market-player,.market-listing{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#0b1627;border:1px solid #233955;border-radius:16px;padding:12px;margin:8px 0}.market-listing{align-items:flex-start}.market-actions{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap}.market-own-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.market-own{display:grid;grid-template-columns:1.2fr 1fr .8fr 1.4fr auto;gap:8px;align-items:center;background:#0b1627;border:1px solid #233955;border-radius:16px;padding:10px}.market-check{display:block;padding:8px;border-bottom:1px solid #233955}.market-deal{background:#0b1627;border:1px solid #233955;border-radius:18px;padding:14px;margin:10px 0}.market-rumor{padding:10px 12px;margin:7px 0;background:#0b1627;border-left:3px solid #facc15;border-radius:10px}.market-alert{border-color:#f59e0b}.market-toggle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.market-toggle{background:#0b1627;border:1px solid #233955;border-radius:12px;padding:10px;display:flex;gap:8px;align-items:center}@media(max-width:1000px){.market-own-grid,.market-toggle-grid{grid-template-columns:1fr}.market-own{grid-template-columns:1fr}.market-heat{grid-template-columns:1fr}.market-listing,.market-player{flex-direction:column;align-items:stretch}.market-actions{justify-content:flex-start}}
+  `;document.head.appendChild(st)}
+
+  function boot(){injectStyle();updateMarketNav();startListeners();loadConfig(false);loadState(false);setTimeout(()=>{updateMarketNav();appendMarketDashboard();if(typeof currentVisibleViewName==='function'&&currentVisibleViewName()==='admin')adminPanel()},1200)}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,800));else setTimeout(boot,800);
 })();
 </script>
 

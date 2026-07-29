@@ -6878,6 +6878,19 @@ window.addEventListener("beforeunload", function(e){
   if(typeof oldDash==='function')window.renderDashboard=renderDashboard=function(){const r=oldDash.apply(this,arguments);setTimeout(appendMarketDashboard,20);return r};
 
   // I permessi interni storici non conoscono la nuova vista: riabilita solo i controlli mercato corretti.
+  // PRESIDENTI: possono usare il Mercato esclusivamente con le proprie due squadre.
+  // ADMIN: può agire con tutte le squadre.
+  // Nessun'altra vista o permesso del gestionale viene modificato.
+  const oldMarketPermissions = window.applyInternalPermissions || window.applyPermissionsToVisibleView;
+  window.applyInternalPermissions = window.applyPermissionsToVisibleView = function(){
+    const r = typeof oldMarketPermissions === 'function' ? oldMarketPermissions.apply(this, arguments) : undefined;
+    try{
+      if(typeof currentVisibleViewName === 'function' && currentVisibleViewName() === 'market'){
+        setTimeout(applyMarketPermissions, 0);
+      }
+    }catch(e){}
+    return r;
+  };
   document.addEventListener('click',()=>setTimeout(applyMarketPermissions,110),true);
   document.addEventListener('change',()=>setTimeout(applyMarketPermissions,110),true);
   document.addEventListener('input',()=>setTimeout(applyMarketPermissions,110),true);

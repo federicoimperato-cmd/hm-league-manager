@@ -7146,5 +7146,77 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+<script>
+/* ============================================================
+   FIX POSIZIONE LISTE
+   Conserva lo scroll durante:
+   - modifica massiva Ruolo/Stipendio;
+   - salvataggio dalla lista generale Calciatori.
+   Non modifica dati o logiche di salvataggio.
+   ============================================================ */
+(function(){
+  function restoreScroll(pageY, innerY, focusId, selectionStart, selectionEnd){
+    const apply=function(){
+      try{ window.scrollTo(0, pageY); }catch(e){}
+      try{
+        const panel=document.getElementById('hmBulkRoleContract');
+        const scroller=panel ? [...panel.querySelectorAll('div')].find(d=>{
+          const s=String(d.getAttribute('style')||'').replace(/\s/g,'').toLowerCase();
+          return s.includes('max-height:650px')&&s.includes('overflow:auto');
+        }) : null;
+        if(scroller && Number.isFinite(innerY)) scroller.scrollTop=innerY;
+      }catch(e){}
+      try{
+        if(focusId){
+          const el=document.getElementById(focusId);
+          if(el){
+            el.focus({preventScroll:true});
+            if(typeof el.setSelectionRange==='function' && Number.isFinite(selectionStart)){
+              el.setSelectionRange(selectionStart, Number.isFinite(selectionEnd)?selectionEnd:selectionStart);
+            }
+          }
+        }
+      }catch(e){}
+    };
+    apply();
+    requestAnimationFrame(apply);
+    setTimeout(apply,40);
+  }
+
+  const originalBulkEdit=window.hmBulkEdit;
+  if(typeof originalBulkEdit==='function'){
+    window.hmBulkEdit=function(id,field,value,doRender=true){
+      if(doRender===false) return originalBulkEdit.apply(this,arguments);
+      const pageY=window.scrollY||document.documentElement.scrollTop||0;
+      const panel=document.getElementById('hmBulkRoleContract');
+      const scroller=panel ? [...panel.querySelectorAll('div')].find(d=>{
+        const s=String(d.getAttribute('style')||'').replace(/\s/g,'').toLowerCase();
+        return s.includes('max-height:650px')&&s.includes('overflow:auto');
+      }) : null;
+      const innerY=scroller?scroller.scrollTop:0;
+      const active=document.activeElement;
+      const focusId=active&&active.id?active.id:'';
+      const ss=active&&typeof active.selectionStart==='number'?active.selectionStart:null;
+      const se=active&&typeof active.selectionEnd==='number'?active.selectionEnd:null;
+      const result=originalBulkEdit.apply(this,arguments);
+      restoreScroll(pageY,innerY,focusId,ss,se);
+      return result;
+    };
+  }
+
+  const originalSavePlayerEditor=window.savePlayerEditor;
+  if(typeof originalSavePlayerEditor==='function'){
+    window.savePlayerEditor=function(){
+      const pageY=window.scrollY||document.documentElement.scrollTop||0;
+      const result=originalSavePlayerEditor.apply(this,arguments);
+      if(result!==false) restoreScroll(pageY,NaN,'',null,null);
+      return result;
+    };
+    try{ savePlayerEditor=window.savePlayerEditor; }catch(e){}
+  }
+})();
+</script>
+
 </body>
 </html>

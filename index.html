@@ -7120,14 +7120,24 @@ window.addEventListener("beforeunload", function(e){
     const snap=changes.map(d=>({id:d.id,role:d.origRole,contract:d.origContract,at:new Date().toISOString()}));
     try{localStorage.setItem(SNAP_KEY,JSON.stringify(snap))}catch(x){}
     changes.forEach(d=>{const p=getP(d.id);if(p){p.role=d.role;p.contract=d.contract;d.origRole=d.role;d.origContract=d.contract}});
+    try{if(typeof safeSetStorage==='function')safeSetStorage('hm_players_v1',players);else localStorage.setItem('hm_players_v1',JSON.stringify(players))}catch(x){console.warn('Salvataggio diretto calciatori non riuscito',x)}
     if(typeof saveAll==='function'&&saveAll()===false)return;
+    try{if(typeof renderPlayers==='function')renderPlayers()}catch(x){}
+    try{if(typeof renderTeams==='function')renderTeams()}catch(x){}
+    try{if(typeof selectedTeam!=='undefined'&&selectedTeam&&typeof renderTeamDetail==='function')renderTeamDetail()}catch(x){}
     try{if(typeof rememberBackupSnapshot==='function')rememberBackupSnapshot('dopo aggiornamento massivo ruoli e stipendi')}catch(x){}
-    alert(`${changes.length} calciatori aggiornati localmente.\n\nOra premi Salva online per pubblicare le modifiche nel cloud.`);rerenderPanel();
+    alert(`${changes.length} calciatori aggiornati correttamente anche nelle Rose/Società.\n\nOra premi Salva online per pubblicare le modifiche nel cloud.`);rerenderPanel();
   };
   window.hmBulkUndoLast=()=>{
     if(!isAdm())return;let snap=[];try{snap=JSON.parse(localStorage.getItem(SNAP_KEY)||'[]')}catch(x){}if(!snap.length)return alert('Nessun aggiornamento massivo da annullare.');
     if(!confirm(`Ripristinare Ruolo e Stipendio di ${snap.length} calciatori allo stato precedente all'ultimo massivo?`))return;
-    snap.forEach(s=>{const p=getP(s.id);if(p){p.role=s.role;p.contract=s.contract;draft.delete(String(s.id))}});if(typeof saveAll==='function')saveAll();localStorage.removeItem(SNAP_KEY);alert('Ultimo aggiornamento massivo annullato localmente. Premi Salva online per pubblicare il ripristino.');rerenderPanel();
+    snap.forEach(s=>{const p=getP(s.id);if(p){p.role=s.role;p.contract=s.contract;draft.delete(String(s.id))}});
+    try{if(typeof safeSetStorage==='function')safeSetStorage('hm_players_v1',players);else localStorage.setItem('hm_players_v1',JSON.stringify(players))}catch(x){}
+    if(typeof saveAll==='function')saveAll();
+    try{if(typeof renderPlayers==='function')renderPlayers()}catch(x){}
+    try{if(typeof renderTeams==='function')renderTeams()}catch(x){}
+    try{if(typeof selectedTeam!=='undefined'&&selectedTeam&&typeof renderTeamDetail==='function')renderTeamDetail()}catch(x){}
+    localStorage.removeItem(SNAP_KEY);alert('Ultimo aggiornamento massivo annullato anche nelle Rose/Società. Premi Salva online per pubblicare il ripristino.');rerenderPanel();
   };
   const old=window.renderAdminSafe;
   if(typeof old==='function')window.renderAdminSafe=function(){const r=old.apply(this,arguments);setTimeout(inject,30);return r};

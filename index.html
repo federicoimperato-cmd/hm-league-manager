@@ -97,6 +97,7 @@ button{cursor:pointer}
       <button class="navbtn" data-view="players">👥 Calciatori</button>
       <button class="navbtn" data-view="trades">🔁 Registro Scambi</button>
       <button class="navbtn" data-view="market">🔥 Mercato HML</button>
+      <button class="navbtn" data-view="game">🎮 HML Game Lab</button>
       <button class="navbtn" data-view="ranking">📊 Ranking</button>
       <button class="navbtn" data-view="history">📚 Storico campionati</button>
       <button class="navbtn" data-view="auction">🔨 Asta</button>
@@ -119,6 +120,7 @@ button{cursor:pointer}
       <section id="view-players" class="panel view hidden"></section>
       <section id="view-trades" class="panel view hidden"></section>
       <section id="view-market" class="panel view hidden"></section>
+      <section id="view-game" class="panel view hidden"></section>
       <section id="view-renewals" class="panel view hidden"></section>
       <section id="view-ranking" class="panel view hidden"></section>
       <section id="view-history" class="panel view hidden"></section>
@@ -4532,6 +4534,13 @@ window.addEventListener("beforeunload", function(e){
       if(el.dataset && (el.dataset.marketPublic === "1" || el.dataset.marketAction === "1")) return true;
       return false;
     }
+    // HML Game Lab: modulo sperimentale separato. Presidenti solo sulle proprie squadre;
+    // i controlli esplicitamente Admin restano riservati a Federico.
+    if(view === "game"){
+      if(!internalLogged()) return !!(el.dataset && el.dataset.gamePublic === "1");
+      if(el.dataset && el.dataset.gameAdmin === "1") return internalAdmin();
+      return true;
+    }
     if(!internalLogged()) return false;
     if(view === "teamDetail" && internalCanTeam(selectedTeam)){
       const form = el.closest && (el.closest("#teamSub-formazione") || el.closest("#pitchBox"));
@@ -6917,6 +6926,213 @@ window.addEventListener("beforeunload", function(e){
 
   function boot(){injectStyle();updateMarketNav();startListeners();loadConfig(false);loadState(false);setTimeout(()=>{updateMarketNav();appendMarketDashboard();if(typeof currentVisibleViewName==='function'&&currentVisibleViewName()==='admin')adminPanel()},1200)}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,800));else setTimeout(boot,800);
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   HML GAME LAB V1
+   Modulo sperimentale ISOLATO: legge giocatori/squadre/login del
+   gestionale, ma salva esclusivamente in hm_game_lab_v1 locale.
+   Nessuna scrittura nei dati ufficiali / Firebase del core.
+   ============================================================ */
+(function(){
+  const GAME_KEY='hm_game_lab_v1';
+  const EXEDO=['Por','Dc','Dd','Ds','E','M','C','T','F','A'];
+  const DEFAULT_MODULES={
+    '3-4-2-1':[['Por'],['Dc','Dd','Ds'],['Dc'],['Dc'],['E'],['M'],['M'],['E'],['T','F'],['T','F'],['A']],
+    '3-4-3':[['Por'],['Dc','Dd','Ds'],['Dc'],['Dc'],['E'],['M'],['M'],['E'],['T','F','A'],['A'],['T','F','A']],
+    '3-5-2':[['Por'],['Dc','Dd','Ds'],['Dc'],['Dc'],['E'],['M'],['C'],['M'],['E'],['A'],['A']],
+    '4-2-4':[['Por'],['Ds'],['Dc'],['Dc'],['Dd'],['M'],['M'],['E','T'],['A'],['A'],['T','E']],
+    '4-4-2':[['Por'],['Ds'],['Dc'],['Dc'],['Dd'],['E'],['M'],['M'],['E'],['A'],['A']],
+    '4-3-3':[['Por'],['Ds'],['Dc'],['Dc'],['Dd'],['M'],['C'],['C'],['T','F'],['A'],['T','F']],
+    '4-3-2-1':[['Por'],['Ds'],['Dc'],['Dc'],['Dd'],['M'],['C'],['C'],['T','F'],['T','F'],['A']],
+    '4-2-3-1':[['Por'],['Ds'],['Dc'],['Dc'],['Dd'],['M'],['M'],['T'],['C','F'],['T'],['A']],
+    '4-3-1-2':[['Por'],['Ds'],['Dc'],['Dc'],['Dd'],['M'],['M','C'],['M','C'],['C'],['A'],['A']]
+  };
+  const DEFAULT_RULES={
+    eventBonuses:{Gf:3,Ass:1,Amm:-0.5,Esp:-1,Au:-2,Rp:3,Rs:-3,Gs:-1,Rf:3},
+    score:{firstGoal:66,step:6,homeBonus:0,maxSubs:5},
+    defense:{enabled:true,minDef:4,includeGk:true,bands:[{min:6.00,bonus:1},{min:6.25,bonus:3},{min:6.50,bonus:6}]},
+    midfield:{enabled:false,minMid:3,bands:[{min:6.20,bonus:1},{min:6.50,bonus:2}]},
+    extras:{cleanSheetEnabled:false,cleanSheetBonus:1,captainEnabled:false,captainBonus:0.5}
+  };
+  const clone=x=>JSON.parse(JSON.stringify(x));
+  const escG=v=>String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  function defaultState(){return {version:1,roleMap:{},modules:clone(DEFAULT_MODULES),rules:clone(DEFAULT_RULES),competitions:[],formations:{},votes:{},aliases:{},updatedAt:''}}
+  function norm(st){
+    st=st&&typeof st==='object'?st:defaultState();
+    st.roleMap=st.roleMap||{};st.modules=st.modules||clone(DEFAULT_MODULES);st.rules=st.rules||clone(DEFAULT_RULES);st.competitions=Array.isArray(st.competitions)?st.competitions:[];st.formations=st.formations||{};st.votes=st.votes||{};st.aliases=st.aliases||{};return st;
+  }
+  let G=norm((()=>{try{return JSON.parse(localStorage.getItem(GAME_KEY)||'null')}catch(e){return null}})());
+  let TAB='home', TEAM='', ROLE_QUERY='';
+  function save(){G.updatedAt=new Date().toISOString();localStorage.setItem(GAME_KEY,JSON.stringify(G));render();}
+  function logged(){return typeof isLoggedIn==='function'&&isLoggedIn()}
+  function admin(){return typeof isAdmin==='function'&&isAdmin()}
+  function allowedTeams(){if(admin())return (teams||[]).map(t=>String(t.code));return typeof userTeams==='function'?userTeams().filter(x=>x!=='*'):[]}
+  function tObj(c){return (teams||[]).find(t=>String(t.code)===String(c))||{code:c,name:c}}
+  function tName(c){const t=tObj(c);return t.name||t.team||c}
+  function teamOptions(sel,arr=allowedTeams()){return arr.map(c=>`<option value="${escG(c)}" ${c===sel?'selected':''}>${escG(tName(c))} (${escG(c)})</option>`).join('')}
+  function ownRoster(c){return (players||[]).filter(p=>String(p.current||'').trim()===c && !String(p.status||'').toUpperCase().includes('PRIMAVERA'))}
+  function pById(id){return (players||[]).find(p=>String(p.id)===String(id))}
+  function parseSuggestion(role){
+    const toks=String(role||'').split(/[;,/ ]+/).map(x=>x.trim()).filter(Boolean), out=[];
+    for(const r of toks){if(EXEDO.includes(r)&&!out.includes(r))out.push(r);else if(r==='Pc'&&!out.includes('A'))out.push('A');else if(r==='W'&&!out.includes('T'))out.push('T');else if(r==='B'&&!out.includes('Dc'))out.push('Dc');}
+    return out;
+  }
+  function rolesFor(p){const id=String(p.id);return Array.isArray(G.roleMap[id])?G.roleMap[id]:parseSuggestion(p.role)}
+  function roleChips(p){const rr=rolesFor(p);return rr.length?rr.map(r=>`<span class="badge">${escG(r)}</span>`).join(' '):'<span class="badge" style="border-color:#7f1d1d;color:#fecaca">DA ASSEGNARE</span>'}
+  function currentTeam(){const a=allowedTeams();if(!TEAM||!a.includes(TEAM))TEAM=a[0]||'';return TEAM}
+  function formationKey(comp,round,team){return `${comp||'FREE'}|${round||1}|${team}`}
+  function compById(id){return G.competitions.find(c=>c.id===id)}
+  function navHtml(){const tabs=[['home','🏠 Home'],['formation','📋 Formazioni'],['roles','🎯 Ruoli EXEDO'],['comps','🏆 Competizioni'],['scores','📥 Voti & risultati'],['rules','⚙️ Regole'],['admin','🛠️ Game Admin']];return `<div class="tabs">${tabs.filter(x=>x[0]!=='admin'||admin()).map(([k,l])=>`<button class="tab ${TAB===k?'active':''}" data-game-action="1" onclick="hmGameTab('${k}')">${l}</button>`).join('')}</div>`}
+  function teamSelectHtml(){if(!logged())return '<span class="badge">🔐 Accedi per operare</span>';return `<label style="min-width:240px">Agisci come<select id="hmGameTeam" class="input" data-game-action="1" onchange="hmGameTeam(this.value)">${teamOptions(currentTeam())}</select></label>`}
+  function header(){return `<div class="between"><div><div class="kicker">LABORATORIO LOCALE · NON TOCCA I DATI UFFICIALI</div><h2 style="margin:5px 0">🎮 HML Game Platform</h2><p class="muted">Database e accessi sono quelli della V7.3. Ruoli EXEDO, competizioni, formazioni e regole sono salvati in uno spazio separato.</p></div>${teamSelectHtml()}</div>${navHtml()}`}
+  function home(){const rt=Object.keys(G.roleMap).length,fs=Object.keys(G.formations).length;return `<div class="grid grid4"><div class="stat"><div class="muted">Calciatori database</div><div class="n">${players.length}</div></div><div class="stat"><div class="muted">Ruoli EXEDO personalizzati</div><div class="n">${rt}</div></div><div class="stat"><div class="muted">Formazioni salvate</div><div class="n">${fs}</div></div><div class="stat"><div class="muted">Competizioni Game</div><div class="n">${G.competitions.length}</div></div></div><div class="card" style="margin-top:14px"><h3>🔒 Isolamento</h3><p>Questa demo <b>legge</b> rose, squadre e account dal gestionale, ma non modifica i campi dei calciatori, non aggiorna crediti, non tocca mercato, asta, ranking, storico o Registro Scambi.</p><p class="muted">Quando il motore sarà approvato, decideremo quali dati rendere ufficiali e quali continuare a tenere separati.</p></div><div class="card"><h3>🚀 Flusso previsto</h3><div class="grid grid3"><div class="stat"><b>1 · Ruoli EXEDO</b><div class="muted">Assegna i tuoi ruoli, indipendenti da Fantacalcio.</div></div><div class="stat"><b>2 · Formazioni</b><div class="muted">Ogni presidente consegna soltanto le sue 2 squadre.</div></div><div class="stat"><b>3 · Competizioni</b><div class="muted">Calendari a scontri diretti o tabelloni.</div></div><div class="stat"><b>4 · Voti</b><div class="muted">Import XLSX per redazione; il ruolo esterno viene ignorato.</div></div><div class="stat"><b>5 · Motore</b><div class="muted">Sostituzioni EXEDO, bonus e modificatori.</div></div><div class="stat"><b>6 · Ufficializza</b><div class="muted">Anteprima prima di classifica e storico.</div></div></div></div>`}
+  function modulesOptions(sel){return Object.keys(G.modules).sort().map(m=>`<option ${m===sel?'selected':''}>${escG(m)}</option>`).join('')}
+  function compOptions(sel){return `<option value="">Amichevole / prova libera</option>`+G.competitions.map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${escG(c.name)}</option>`).join('')}
+  function playerOption(p,sel,slotRoles){const rr=rolesFor(p),ok=rr.some(r=>slotRoles.includes(r));return `<option value="${escG(p.id)}" ${String(p.id)===String(sel)?'selected':''} ${ok?'':'disabled'}>${escG(p.name)} · ${escG(rr.join('/'))}${ok?'':' · non compatibile'}</option>`}
+  function formation(){if(!logged())return `<div class="card"><h3>📋 Formazioni</h3><p>Accedi con un account del gestionale per provare.</p></div>`;const team=currentTeam(),comp=G.__formationComp||'',round=G.__formationRound||1,mod=G.__formationModule||Object.keys(G.modules)[0],slots=G.modules[mod]||[],key=formationKey(comp,round,team),saved=G.formations[key]||{starters:[],bench:[],status:'bozza'},roster=ownRoster(team);return `<div class="card"><div class="between"><div><h3>📋 Formazione ${escG(tName(team))}</h3><p class="muted">Solo le squadre associate al tuo account sono selezionabili.</p></div><span class="badge">${escG(saved.status||'bozza')}</span></div><div class="grid grid4"><label>Competizione<select id="gFormComp" class="input" data-game-action="1" onchange="hmGameFormContext()">${compOptions(comp)}</select></label><label>Giornata / turno<input id="gFormRound" class="input" data-game-action="1" type="number" min="1" value="${round}" onchange="hmGameFormContext()"></label><label>Modulo EXEDO<select id="gFormModule" class="input" data-game-action="1" onchange="hmGameFormContext()">${modulesOptions(mod)}</select></label><label>Squadra<input class="input" value="${escG(tName(team))}" disabled></label></div></div><div class="grid grid2"><div class="card"><h3>XI titolare</h3>${slots.map((sr,i)=>`<div class="playerRow" style="grid-template-columns:80px 1fr"><div><b>${i+1}</b><div class="muted">${escG(sr.join('/'))}</div></div><select id="gslot_${i}" class="input" data-game-action="1"><option value="">— scegli —</option>${roster.map(p=>playerOption(p,saved.starters[i],sr)).join('')}</select></div>`).join('')}<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-game-action="1" onclick="hmGameValidateFormation(false)">🧪 Verifica</button><button class="btn green" data-game-action="1" onclick="hmGameSaveFormation(false)">💾 Salva bozza</button><button class="btn primary" data-game-action="1" onclick="hmGameSaveFormation(true)">✅ Consegna</button></div><div id="gFormCheck" style="margin-top:10px"></div></div><div class="card"><h3>Panchina ordinata</h3><p class="muted">Il motore futuro proverà le riserve in questo ordine, cercando sempre una configurazione EXEDO valida.</p>${Array.from({length:12},(_,i)=>`<label>${i+1}ª riserva<select id="gbench_${i}" class="input" data-game-action="1"><option value="">— vuoto —</option>${roster.map(p=>`<option value="${escG(p.id)}" ${String(saved.bench[i]||'')===String(p.id)?'selected':''}>${escG(p.name)} · ${escG(rolesFor(p).join('/'))}</option>`).join('')}</select></label>`).join('')}</div></div>`}
+  function getFormInput(){const mod=document.getElementById('gFormModule')?.value||G.__formationModule||'',slots=G.modules[mod]||[];return {mod,slots,starters:slots.map((_,i)=>document.getElementById('gslot_'+i)?.value||''),bench:Array.from({length:12},(_,i)=>document.getElementById('gbench_'+i)?.value||'').filter(Boolean)}}
+  function validateData(fd){const errs=[],ids=fd.starters.filter(Boolean);if(fd.starters.length!==11)errs.push('Il modulo deve avere 11 slot.');if(ids.length!==11)errs.push('Devi scegliere tutti gli 11 titolari.');if(new Set(ids).size!==ids.length)errs.push('Un calciatore è stato usato più di una volta.');fd.starters.forEach((id,i)=>{if(!id)return;const p=pById(id),rr=rolesFor(p),allowed=fd.slots[i]||[];if(!rr.some(r=>allowed.includes(r)))errs.push(`${p?.name||id} non può occupare lo slot ${i+1} (${allowed.join('/')}).`)});const all=[...ids,...fd.bench];if(new Set(all).size!==all.length)errs.push('Un calciatore compare sia tra titolari/panchina o più volte.');return errs}
+  function roles(){if(!admin())return `<div class="card"><h3>🎯 Ruoli EXEDO</h3><p>La modifica dei ruoli è riservata all'Admin. I presidenti possono comunque vedere i ruoli assegnati nelle formazioni.</p></div>`;const q=ROLE_QUERY.toLowerCase(),list=(players||[]).filter(p=>!q||[p.name,p.role,p.current,p.owner].join(' ').toLowerCase().includes(q)).slice(0,120);return `<div class="card"><div class="between"><div><h3>🎯 Editor ruoli EXEDO</h3><p class="muted">Non modifica <b>p.role</b> del gestionale. Questa mappa è separata e può essere corretta quando vuoi.</p></div><div class="row"><button class="btn" data-game-admin="1" onclick="hmGameExport()">⬇️ Esporta Game Lab</button><button class="btn" data-game-admin="1" onclick="hmGameOpenImport()">⬆️ Importa Game Lab</button></div></div><label>Cerca<input id="gRoleSearch" class="input" data-game-admin="1" placeholder="Nome, ruolo attuale, squadra..." value="${escG(ROLE_QUERY)}" oninput="hmGameRoleSearch(this.value)"></label><div style="margin-top:12px">${list.map(p=>`<div class="playerRow" style="grid-template-columns:1fr 1.8fr"><div><b>${escG(p.name)}</b><div class="muted">Ruolo attuale: ${escG(p.role||'-')} · ${escG(p.current||'-')}</div><div>${roleChips(p)}</div></div><div class="row">${EXEDO.map(r=>`<label class="badge"><input type="checkbox" data-game-admin="1" ${rolesFor(p).includes(r)?'checked':''} onchange="hmGameSetRole('${escG(p.id)}','${r}',this.checked)"> ${r}</label>`).join('')}<button class="btn" data-game-admin="1" onclick="hmGameClearRole('${escG(p.id)}')">Azzera</button></div></div>`).join('')}</div><p class="muted">Mostrati massimo 120 risultati per ricerca.</p></div>`}
+  function roundRobin(arr,doubleLeg){let a=[...arr];if(a.length%2)a.push(null);const n=a.length,rounds=[];for(let r=0;r<n-1;r++){const ms=[];for(let i=0;i<n/2;i++){let h=a[i],v=a[n-1-i];if(h&&v){if(r%2)[h,v]=[v,h];ms.push({home:h,away:v,hs:null,as:null})}}rounds.push(ms);a=[a[0],a[n-1],...a.slice(1,n-1)]}if(doubleLeg){const ret=rounds.map(ms=>ms.map(m=>({home:m.away,away:m.home,hs:null,as:null})));return [...rounds,...ret]}return rounds}
+  function bracket(arr){let a=[...arr],n=1;while(n<a.length)n*=2;while(a.length<n)a.push(null);const rounds=[];let count=n;while(count>1){rounds.push(Array.from({length:count/2},(_,i)=>({home:i*2<a.length?a[i*2]:null,away:i*2+1<a.length?a[i*2+1]:null,hs:null,as:null})));count/=2}return rounds}
+  function comps(){if(!admin())return `<div class="card"><h3>🏆 Competizioni</h3><p class="muted">Calendari e tabelloni sono configurati dall'Admin.</p>${G.competitions.map(c=>`<div class="stat"><b>${escG(c.name)}</b><div class="muted">${c.type==='league'?'Scontri diretti':'Tabellone'} · ${c.teams.length} squadre · ${c.rounds?.length||0} turni</div></div>`).join('')}</div>`;return `<div class="card"><div class="between"><div><h3>🏆 Competizioni Game</h3><p class="muted">Sono separate dalle competizioni ufficiali della V7.3.</p></div><button class="btn primary" data-game-admin="1" onclick="hmGameNewComp()">➕ Nuova competizione</button></div></div>${G.competitions.map(c=>`<div class="card"><div class="between"><div><h3>${escG(c.name)}</h3><span class="badge">${c.type==='league'?'Scontri diretti':'Tabellone'}</span> <span class="badge">${c.teams.length} squadre</span>${c.doubleLeg?` <span class="badge">Andata/Ritorno</span>`:''}</div><div class="row"><button class="btn" data-game-admin="1" onclick="hmGameGenerateComp('${c.id}')">🎲 Genera</button><button class="btn" data-game-admin="1" onclick="hmGameEditComp('${c.id}')">✏️ Modifica</button><button class="btn red" data-game-admin="1" onclick="hmGameDeleteComp('${c.id}')">Elimina</button></div></div>${scheduleHtml(c)}</div>`).join('')||'<div class="card muted">Nessuna competizione creata.</div>'}`}
+  function scheduleHtml(c){if(!c.rounds?.length)return '<p class="muted">Calendario/tabellone non ancora generato.</p>';if(c.type==='league')return c.rounds.map((r,i)=>`<details ${i===0?'open':''}><summary><b>Giornata ${i+1}</b></summary>${r.map(m=>`<div class="playerRow" style="grid-template-columns:1fr 80px 1fr"><b style="text-align:right">${escG(tName(m.home))}</b><span class="badge" style="justify-content:center">${m.hs??'-'} : ${m.as??'-'}</span><b>${escG(tName(m.away))}</b></div>`).join('')}</details>`).join('');return `<div class="grid grid3">${c.rounds.map((r,i)=>`<div><h4>${i===c.rounds.length-1?'Finale':'Turno '+(i+1)}</h4>${r.map(m=>`<div class="stat"><b>${escG(m.home?tName(m.home):'Da definire')}</b><div class="muted">vs</div><b>${escG(m.away?tName(m.away):'Da definire')}</b></div>`).join('')}</div>`).join('')}</div>`}
+  function scores(){return `<div class="card"><h3>📥 Voti Fantacalcio → HML</h3><p>Il ruolo presente nel file voti verrà <b>ignorato</b>. L'associazione userà nome e, dopo il primo collegamento, il codice Fantacalcio.</p><div class="grid grid3"><label>Giornata<input class="input" type="number" min="1" value="1"></label><label>Redazione<select class="input"><option>Fantacalcio</option><option>Statistico</option><option>Italia</option></select></label><label>File XLSX<input class="input" type="file" accept=".xlsx,.xls"></label></div><div class="row" style="margin-top:12px"><button class="btn primary" data-game-action="1" onclick="alert('Parser XLSX: prossimo step. La struttura del motore è già isolata e pronta per ricevere Voto/Gf/Gs/Rp/Rs/Rf/Au/Amm/Esp/Ass.')">📥 Analizza XLSX</button></div></div><div class="card"><h3>🧮 Pipeline risultato</h3><p class="muted">Voto → bonus/malus → modificatori → sostituzioni EXEDO → totale squadra → gol → anteprima → ufficializzazione Admin.</p></div>`}
+  function rules(){const r=G.rules,dis=!admin();const da=dis?'disabled':'';return `<div class="card"><div class="between"><div><h3>⚙️ Regole Game</h3><p class="muted">Tutto in configurazione separata.</p></div>${admin()?'<button class="btn green" data-game-admin="1" onclick="hmGameSaveRules()">💾 Salva regole</button>':'<span class="badge">Solo Admin modifica</span>'}</div></div><div class="grid grid2"><div class="card"><h3>Bonus / malus eventi</h3>${Object.entries(r.eventBonuses).map(([k,v])=>`<label>${k}<input id="gr_ev_${k}" class="input" data-game-admin="1" type="number" step="0.5" value="${v}" ${da}></label>`).join('')}</div><div class="card"><h3>Soglie e sostituzioni</h3><label>Prima soglia gol<input id="gr_first" class="input" data-game-admin="1" type="number" step="0.5" value="${r.score.firstGoal}" ${da}></label><label>Intervallo gol<input id="gr_step" class="input" data-game-admin="1" type="number" step="0.5" value="${r.score.step}" ${da}></label><label>Bonus casa<input id="gr_home" class="input" data-game-admin="1" type="number" step="0.5" value="${r.score.homeBonus}" ${da}></label><label>Max sostituzioni<input id="gr_subs" class="input" data-game-admin="1" type="number" value="${r.score.maxSubs}" ${da}></label></div></div><div class="grid grid2"><div class="card"><h3>🛡️ Modificatore difesa</h3><label><input id="gr_defon" data-game-admin="1" type="checkbox" ${r.defense.enabled?'checked':''} ${da}> Attivo</label><label>Minimo difensori<input id="gr_defmin" class="input" data-game-admin="1" type="number" value="${r.defense.minDef}" ${da}></label><label><input id="gr_defgk" data-game-admin="1" type="checkbox" ${r.defense.includeGk?'checked':''} ${da}> Includi portiere nella media</label>${r.defense.bands.map((b,i)=>`<div class="grid grid2"><label>Media minima<input id="gr_dm_${i}" class="input" data-game-admin="1" type="number" step="0.05" value="${b.min}" ${da}></label><label>Bonus<input id="gr_db_${i}" class="input" data-game-admin="1" type="number" step="0.5" value="${b.bonus}" ${da}></label></div>`).join('')}</div><div class="card"><h3>🧠 Altri modificatori</h3><label><input id="gr_midon" data-game-admin="1" type="checkbox" ${r.midfield.enabled?'checked':''} ${da}> Modificatore centrocampo</label><label><input id="gr_clean" data-game-admin="1" type="checkbox" ${r.extras.cleanSheetEnabled?'checked':''} ${da}> Bonus porta inviolata</label><label>Valore porta inviolata<input id="gr_cleanv" class="input" data-game-admin="1" type="number" step="0.5" value="${r.extras.cleanSheetBonus}" ${da}></label><label><input id="gr_cap" data-game-admin="1" type="checkbox" ${r.extras.captainEnabled?'checked':''} ${da}> Bonus capitano</label><label>Valore capitano<input id="gr_capv" class="input" data-game-admin="1" type="number" step="0.5" value="${r.extras.captainBonus}" ${da}></label><p class="muted">La struttura è pronta per aggiungere altri modificatori senza cambiare il database ufficiale.</p></div></div>`}
+  function gameAdmin(){if(!admin())return '';return `<div class="card"><h3>🛠️ Game Admin</h3><div class="grid grid4"><div class="stat"><div class="muted">Ruoli custom</div><div class="n">${Object.keys(G.roleMap).length}</div></div><div class="stat"><div class="muted">Moduli</div><div class="n">${Object.keys(G.modules).length}</div></div><div class="stat"><div class="muted">Competizioni</div><div class="n">${G.competitions.length}</div></div><div class="stat"><div class="muted">Formazioni</div><div class="n">${Object.keys(G.formations).length}</div></div></div></div><div class="card"><h3>🧩 Moduli EXEDO modificabili</h3><p class="muted">Formato: un modulo per riga JSON. Ogni slot è un array di ruoli ammessi. Cambiando qui non tocchi i moduli formazione della V7.3.</p><textarea id="gModulesJson" class="input" data-game-admin="1" style="min-height:300px">${escG(JSON.stringify(G.modules,null,2))}</textarea><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" data-game-admin="1" onclick="hmGameResetModules()">Ripristina EXEDO demo</button><button class="btn green" data-game-admin="1" onclick="hmGameSaveModules()">Salva moduli Game</button></div></div><div class="card"><h3>💾 Backup solo Game Lab</h3><div class="row"><button class="btn" data-game-admin="1" onclick="hmGameExport()">Esporta JSON</button><button class="btn" data-game-admin="1" onclick="hmGameOpenImport()">Importa JSON</button><button class="btn red" data-game-admin="1" onclick="hmGameResetAll()">Azzera SOLO Game Lab</button></div></div>`}
+  function render(){const root=document.getElementById('view-game');if(!root)return;root.innerHTML=header()+({home,formation,roles,comps,scores,rules,admin:gameAdmin}[TAB]||home)();setTimeout(()=>{try{applyInternalPermissions()}catch(e){}},0)}
+  window.hmGameRender=render;
+  window.hmGameTab=k=>{TAB=k;render()};window.hmGameTeam=c=>{if(!allowedTeams().includes(c)&&!admin())return alert('Puoi operare solo con le tue squadre.');TEAM=c;render()};
+  window.hmGameFormContext=()=>{G.__formationComp=document.getElementById('gFormComp')?.value||'';G.__formationRound=Number(document.getElementById('gFormRound')?.value)||1;G.__formationModule=document.getElementById('gFormModule')?.value||'';render()};
+  window.hmGameValidateFormation=()=>{const fd=getFormInput(),errs=validateData(fd),box=document.getElementById('gFormCheck');if(box)box.innerHTML=errs.length?`<div style="color:#fecaca">❌ ${errs.map(escG).join('<br>')}</div>`:'<div style="color:#bbf7d0">✅ Formazione EXEDO valida.</div>';return !errs.length};
+  window.hmGameSaveFormation=delivered=>{if(!logged())return alert('Devi fare login.');const team=currentTeam();if(!admin()&&!allowedTeams().includes(team))return alert('Puoi salvare solo le tue squadre.');const fd=getFormInput(),errs=validateData(fd);if(errs.length){alert('Formazione non valida:\n'+errs.join('\n'));return}const comp=document.getElementById('gFormComp')?.value||'',round=Number(document.getElementById('gFormRound')?.value)||1,key=formationKey(comp,round,team);G.formations[key]={team,competitionId:comp,round,module:fd.mod,starters:fd.starters,bench:fd.bench,status:delivered?'consegnata':'bozza',updatedAt:new Date().toISOString(),by:currentUser?.username||''};save();alert(delivered?'Formazione consegnata nella demo.':'Bozza salvata nella demo.')};
+  window.hmGameRoleSearch=v=>{ROLE_QUERY=String(v||'');render();setTimeout(()=>{const e=document.getElementById('gRoleSearch');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},0)};
+  window.hmGameSetRole=(id,r,on)=>{if(!admin())return;const p=pById(id),arr=Array.isArray(G.roleMap[id])?[...G.roleMap[id]]:parseSuggestion(p?.role);if(on&&!arr.includes(r))arr.push(r);if(!on){const i=arr.indexOf(r);if(i>=0)arr.splice(i,1)}G.roleMap[id]=arr;localStorage.setItem(GAME_KEY,JSON.stringify(G));render()};window.hmGameClearRole=id=>{if(!admin())return;G.roleMap[id]=[];save()};
+  window.hmGameNewComp=()=>hmGameEditComp('');window.hmGameEditComp=id=>{if(!admin())return;const c=compById(id)||{id:'',name:'Nuova competizione',type:'league',teams:(teams||[]).map(t=>t.code),doubleLeg:false};const body=document.getElementById('tradeModalBody'),modal=document.getElementById('tradeModal');body.innerHTML=`<h3>${id?'Modifica':'Nuova'} competizione Game</h3><div class="grid grid2"><label>Nome<input id="gc_name" class="input" value="${escG(c.name)}"></label><label>Formato<select id="gc_type" class="input"><option value="league" ${c.type==='league'?'selected':''}>Scontri diretti</option><option value="bracket" ${c.type==='bracket'?'selected':''}>Tabellone</option></select></label></div><label><input id="gc_double" type="checkbox" ${c.doubleLeg?'checked':''}> Andata/Ritorno (per scontri diretti)</label><h4>Squadre partecipanti</h4><div class="grid grid4">${(teams||[]).map(t=>`<label class="badge"><input type="checkbox" class="gcTeam" value="${escG(t.code)}" ${c.teams.includes(t.code)?'checked':''}> ${escG(t.name||t.code)}</label>`).join('')}</div><div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" onclick="closeTradeModal()">Annulla</button><button class="btn green" onclick="hmGameSaveComp('${escG(id)}')">Salva</button></div>`;modal.style.display='flex'};
+  window.hmGameSaveComp=id=>{if(!admin())return;const name=document.getElementById('gc_name').value.trim()||'Competizione',type=document.getElementById('gc_type').value,doubleLeg=document.getElementById('gc_double').checked,ts=[...document.querySelectorAll('.gcTeam:checked')].map(x=>x.value);if(ts.length<2)return alert('Servono almeno 2 squadre.');if(id){const c=compById(id);Object.assign(c,{name,type,doubleLeg,teams:ts,rounds:[]})}else G.competitions.push({id:'GC'+Date.now(),name,type,doubleLeg,teams:ts,rounds:[]});closeTradeModal();save()};
+  window.hmGameGenerateComp=id=>{if(!admin())return;const c=compById(id);if(!c)return;c.rounds=c.type==='league'?roundRobin(c.teams,c.doubleLeg):bracket(c.teams);save()};window.hmGameDeleteComp=id=>{if(admin()&&confirm('Eliminare questa competizione SOLO dal Game Lab?')){G.competitions=G.competitions.filter(c=>c.id!==id);save()}};
+  window.hmGameSaveRules=()=>{if(!admin())return;Object.keys(G.rules.eventBonuses).forEach(k=>G.rules.eventBonuses[k]=Number(document.getElementById('gr_ev_'+k).value)||0);G.rules.score.firstGoal=Number(document.getElementById('gr_first').value)||66;G.rules.score.step=Number(document.getElementById('gr_step').value)||6;G.rules.score.homeBonus=Number(document.getElementById('gr_home').value)||0;G.rules.score.maxSubs=Number(document.getElementById('gr_subs').value)||5;G.rules.defense.enabled=document.getElementById('gr_defon').checked;G.rules.defense.minDef=Number(document.getElementById('gr_defmin').value)||4;G.rules.defense.includeGk=document.getElementById('gr_defgk').checked;G.rules.defense.bands.forEach((b,i)=>{b.min=Number(document.getElementById('gr_dm_'+i).value);b.bonus=Number(document.getElementById('gr_db_'+i).value)});G.rules.midfield.enabled=document.getElementById('gr_midon').checked;G.rules.extras.cleanSheetEnabled=document.getElementById('gr_clean').checked;G.rules.extras.cleanSheetBonus=Number(document.getElementById('gr_cleanv').value)||0;G.rules.extras.captainEnabled=document.getElementById('gr_cap').checked;G.rules.extras.captainBonus=Number(document.getElementById('gr_capv').value)||0;save();alert('Regole Game Lab salvate.')};
+  window.hmGameSaveModules=()=>{if(!admin())return;try{const v=JSON.parse(document.getElementById('gModulesJson').value);for(const [k,slots] of Object.entries(v)){if(!Array.isArray(slots)||slots.length!==11)throw new Error(`${k}: servono 11 slot`);slots.flat().forEach(r=>{if(!EXEDO.includes(r))throw new Error(`${k}: ruolo non valido ${r}`)})}G.modules=v;save();alert('Moduli Game salvati.')}catch(e){alert('JSON moduli non valido: '+e.message)}};window.hmGameResetModules=()=>{if(admin()&&confirm('Ripristinare i moduli EXEDO demo?')){G.modules=clone(DEFAULT_MODULES);save()}};
+  window.hmGameExport=()=>{const blob=new Blob([JSON.stringify(G,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='HML_GAME_LAB_BACKUP.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+  window.hmGameOpenImport=()=>{if(!admin())return;const inp=document.createElement('input');inp.type='file';inp.accept='.json';inp.onchange=()=>{const f=inp.files[0],r=new FileReader();r.onload=()=>{try{G=norm(JSON.parse(r.result));save();alert('Backup Game Lab importato.')}catch(e){alert('File non valido.')}};r.readAsText(f)};inp.click()};window.hmGameResetAll=()=>{if(admin()&&confirm('AZZERARE solo HML Game Lab? Il gestionale V7.3 non verrà toccato.')){G=defaultState();save()}};
+  // Hook minimo alla navigazione esistente.
+  const OLD_SHOW=showView;
+  showView=function(name){OLD_SHOW(name);if(name==='game')render()};window.showView=showView;
+  // Riaggancia i nav per includere il pulsante inserito dopo il binding originario.
+  document.querySelectorAll('.navbtn').forEach(b=>{if(b.dataset.view==='game')b.onclick=()=>showView('game')});
+})();
+</script>
+
+<script>
+/* ============================================================
+   AGGIORNAMENTO MASSIVO RUOLI + STIPENDI
+   Modulo chirurgico: aggiorna ESCLUSIVAMENTE player.role e
+   player.contract. Nessun altro campo viene modificato.
+   ============================================================ */
+(function(){
+  const SNAP_KEY='hm_bulk_role_contract_last_snapshot_v1';
+  let draft=new Map(), query='', teamFilter='', statusFilter='', onlyChanged=false;
+  const e=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const norm=v=>String(v??'').trim();
+  function isAdm(){try{return typeof isAdmin==='function'&&isAdmin()}catch(x){return false}}
+  function getP(id){return (Array.isArray(players)?players:[]).find(p=>String(p.id)===String(id))}
+  function entry(p){
+    const id=String(p.id); if(!draft.has(id)) draft.set(id,{id,role:norm(p.role),contract:norm(p.contract),origRole:norm(p.role),origContract:norm(p.contract)});
+    return draft.get(id);
+  }
+  function changed(d){return d.role!==d.origRole||d.contract!==d.origContract}
+  function countChanged(){let n=0;draft.forEach(d=>{if(changed(d))n++});return n}
+  function availableTeams(){const set=new Set();(players||[]).forEach(p=>{if(p.owner)set.add(String(p.owner));if(p.current&&!String(p.current).includes(' '))set.add(String(p.current))});return [...set].filter(Boolean).sort()}
+  function filtered(){
+    const q=query.toLowerCase();
+    return (players||[]).filter(p=>{
+      const d=entry(p);
+      if(onlyChanged&&!changed(d))return false;
+      if(teamFilter&&String(p.owner)!==teamFilter&&String(p.current)!==teamFilter)return false;
+      if(statusFilter&&String(p.status)!==statusFilter)return false;
+      if(q&&!([p.name,p.role,p.current,p.owner,p.status,p.contract].join(' ').toLowerCase().includes(q)))return false;
+      return true;
+    }).sort((a,b)=>String(a.name).localeCompare(String(b.name),'it'));
+  }
+  function panelHtml(){
+    if(!isAdm())return '';
+    const rows=filtered();
+    const statuses=[...new Set((players||[]).map(p=>String(p.status||'')).filter(Boolean))].sort();
+    const teamsOpt=availableTeams().map(c=>`<option value="${e(c)}" ${teamFilter===c?'selected':''}>${e(c)}</option>`).join('');
+    const statOpt=statuses.map(s=>`<option value="${e(s)}" ${statusFilter===s?'selected':''}>${e(s)}</option>`).join('');
+    return `<details id="hmBulkRoleContract" class="card" style="margin-top:14px" open>
+      <summary style="cursor:pointer;font-size:20px;font-weight:900">✏️ Aggiornamento massivo ruoli e stipendi</summary>
+      <p class="muted">Modifica molti calciatori e salva una sola volta. Questa funzione aggiorna <b>soltanto Ruolo e Contratto/Stipendio</b>: proprietario, squadra, stato, bonus e scadenza restano invariati.</p>
+      <div class="grid grid4">
+        <label>Cerca<input id="hmBulkSearch" class="input" value="${e(query)}" placeholder="Nome, squadra, ruolo..." oninput="hmBulkSetSearch(this.value)"></label>
+        <label>Squadra<select id="hmBulkTeam" class="input" onchange="hmBulkSetTeam(this.value)"><option value="">Tutte</option>${teamsOpt}</select></label>
+        <label>Stato<select id="hmBulkStatus" class="input" onchange="hmBulkSetStatus(this.value)"><option value="">Tutti</option>${statOpt}</select></label>
+        <label style="display:flex;align-items:center;gap:8px;padding-top:24px"><input type="checkbox" ${onlyChanged?'checked':''} onchange="hmBulkOnlyChanged(this.checked)"> Solo modificati</label>
+      </div>
+      <div class="between" style="margin-top:12px">
+        <div class="row"><span class="badge">Visibili: ${rows.length}</span><span class="badge" id="hmBulkDirtyBadge">Modificati: ${countChanged()}</span></div>
+        <div class="row">
+          <button class="btn" onclick="hmBulkExportCsv()">⬇️ Esporta CSV per Excel</button>
+          <button class="btn" onclick="hmBulkImportCsv()">⬆️ Importa CSV</button>
+          <button class="btn yellow" onclick="hmBulkUndoLast()">↩️ Annulla ultimo massivo</button>
+          <button class="btn green" onclick="hmBulkApply()">💾 Salva tutte le modifiche</button>
+        </div>
+      </div>
+      <div style="overflow:auto;max-height:650px;margin-top:12px;border:1px solid #233955;border-radius:14px">
+        <table class="table" style="min-width:980px;margin:0"><thead><tr><th>Nome</th><th>Attuale</th><th>Proprietario</th><th>Stato</th><th>Ruolo</th><th>Stipendio</th><th>Esito</th></tr></thead><tbody>
+        ${rows.map(p=>{const d=entry(p),c=changed(d);return `<tr id="hmBulkRow_${e(p.id)}" style="${c?'background:rgba(250,204,21,.08)':''}"><td><b>${e(p.name)}</b><div class="muted">ID: ${e(p.id)}</div></td><td>${e(p.current||'-')}</td><td>${e(p.owner||'-')}</td><td>${e(p.status||'-')}</td><td><input class="input" style="min-width:160px" value="${e(d.role)}" onchange="hmBulkEdit('${e(p.id)}','role',this.value)" oninput="hmBulkEdit('${e(p.id)}','role',this.value,false)"></td><td><input class="input" style="width:110px" value="${e(d.contract)}" onchange="hmBulkEdit('${e(p.id)}','contract',this.value)" oninput="hmBulkEdit('${e(p.id)}','contract',this.value,false)"></td><td>${c?'<span style="color:#fde68a">● Modificato</span>':'<span class="muted">—</span>'}</td></tr>`}).join('')}
+        </tbody></table>
+      </div>
+      <p class="muted" style="margin-top:10px">Il CSV usa l'ID HML come chiave. Aprilo con Excel, modifica solo le colonne <b>Nuovo Ruolo</b> e <b>Nuovo Stipendio</b>, poi reimportalo. Prima dell'applicazione viene sempre mostrato un riepilogo.</p>
+    </details>`;
+  }
+  function inject(){const root=document.getElementById('view-admin');if(!root||!isAdm()||document.getElementById('hmBulkRoleContract'))return;const cards=[...root.querySelectorAll('.card')];const prim=cards.find(x=>x.textContent.includes('Primavera massiva'));const wrap=document.createElement('div');wrap.innerHTML=panelHtml();const node=wrap.firstElementChild;if(prim&&prim.parentNode)prim.parentNode.insertBefore(node,prim.nextSibling);else root.appendChild(node)}
+  function rerenderPanel(){const old=document.getElementById('hmBulkRoleContract');if(!old)return inject();const wrap=document.createElement('div');wrap.innerHTML=panelHtml();old.replaceWith(wrap.firstElementChild)}
+  function updateBadge(){const b=document.getElementById('hmBulkDirtyBadge');if(b)b.textContent='Modificati: '+countChanged()}
+  window.hmBulkSetSearch=v=>{query=String(v||'');rerenderPanel();setTimeout(()=>{const x=document.getElementById('hmBulkSearch');if(x){x.focus();x.setSelectionRange(x.value.length,x.value.length)}},0)};
+  window.hmBulkSetTeam=v=>{teamFilter=String(v||'');rerenderPanel()};
+  window.hmBulkSetStatus=v=>{statusFilter=String(v||'');rerenderPanel()};
+  window.hmBulkOnlyChanged=v=>{onlyChanged=!!v;rerenderPanel()};
+  window.hmBulkEdit=(id,field,value,doRender=true)=>{const p=getP(id);if(!p)return;const d=entry(p);d[field]=norm(value);updateBadge();if(doRender)rerenderPanel()};
+  function csvCell(v){const s=String(v??'');return '"'+s.replace(/"/g,'""')+'"'}
+  window.hmBulkExportCsv=()=>{
+    if(!isAdm())return;
+    const list=filtered();
+    const lines=[['ID HML','Nome','Squadra attuale','Proprietario','Stato','Ruolo attuale','Nuovo Ruolo','Stipendio attuale','Nuovo Stipendio'].map(csvCell).join(';')];
+    list.forEach(p=>{const d=entry(p);lines.push([p.id,p.name,p.current,p.owner,p.status,d.origRole,d.role,d.origContract,d.contract].map(csvCell).join(';'))});
+    const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='HML_AGGIORNAMENTO_RUOLI_STIPENDI.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  };
+  function parseCsv(txt){
+    const rows=[];let row=[],cell='',q=false;
+    for(let i=0;i<txt.length;i++){const ch=txt[i];if(q){if(ch==='"'&&txt[i+1]==='"'){cell+='"';i++}else if(ch==='"')q=false;else cell+=ch}else{if(ch==='"')q=true;else if(ch===';'){row.push(cell);cell=''}else if(ch==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell=''}else cell+=ch}}
+    if(cell||row.length){row.push(cell);rows.push(row)}return rows;
+  }
+  window.hmBulkImportCsv=()=>{if(!isAdm())return;const inp=document.createElement('input');inp.type='file';inp.accept='.csv,text/csv';inp.onchange=()=>{const f=inp.files&&inp.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const rows=parseCsv(String(r.result||'').replace(/^\ufeff/,''));if(rows.length<2)throw new Error('File vuoto');const h=rows[0].map(x=>x.trim().toLowerCase());const ix={id:h.indexOf('id hml'),role:h.indexOf('nuovo ruolo'),contract:h.indexOf('nuovo stipendio')};if(ix.id<0||ix.role<0||ix.contract<0)throw new Error('Colonne richieste mancanti');let ok=0,miss=0;rows.slice(1).forEach(a=>{const id=norm(a[ix.id]);if(!id)return;const p=getP(id);if(!p){miss++;return}const d=entry(p);d.role=norm(a[ix.role]);d.contract=norm(a[ix.contract]);ok++});alert(`CSV letto.\nRighe associate: ${ok}\nID non trovati: ${miss}\nModifiche pronte: ${countChanged()}\n\nPremi Salva tutte le modifiche per applicarle.`);rerenderPanel()}catch(err){alert('Importazione non riuscita: '+err.message)}};r.readAsText(f,'utf-8')};inp.click()};
+  window.hmBulkApply=()=>{
+    if(!isAdm())return alert('Solo Federico admin può applicare modifiche massive.');
+    const changes=[...draft.values()].filter(changed);if(!changes.length)return alert('Non ci sono modifiche da salvare.');
+    const bad=changes.filter(d=>!d.role);if(bad.length&&!confirm(`${bad.length} calciatori avranno il ruolo vuoto. Continuare?`))return;
+    if(!confirm(`Applicare ${changes.length} modifiche?\n\nSaranno aggiornati esclusivamente Ruolo e Stipendio/Contratto.`))return;
+    const snap=changes.map(d=>({id:d.id,role:d.origRole,contract:d.origContract,at:new Date().toISOString()}));
+    try{localStorage.setItem(SNAP_KEY,JSON.stringify(snap))}catch(x){}
+    changes.forEach(d=>{const p=getP(d.id);if(p){p.role=d.role;p.contract=d.contract;d.origRole=d.role;d.origContract=d.contract}});
+    if(typeof saveAll==='function'&&saveAll()===false)return;
+    try{if(typeof rememberBackupSnapshot==='function')rememberBackupSnapshot('dopo aggiornamento massivo ruoli e stipendi')}catch(x){}
+    alert(`${changes.length} calciatori aggiornati localmente.\n\nOra premi Salva online per pubblicare le modifiche nel cloud.`);rerenderPanel();
+  };
+  window.hmBulkUndoLast=()=>{
+    if(!isAdm())return;let snap=[];try{snap=JSON.parse(localStorage.getItem(SNAP_KEY)||'[]')}catch(x){}if(!snap.length)return alert('Nessun aggiornamento massivo da annullare.');
+    if(!confirm(`Ripristinare Ruolo e Stipendio di ${snap.length} calciatori allo stato precedente all'ultimo massivo?`))return;
+    snap.forEach(s=>{const p=getP(s.id);if(p){p.role=s.role;p.contract=s.contract;draft.delete(String(s.id))}});if(typeof saveAll==='function')saveAll();localStorage.removeItem(SNAP_KEY);alert('Ultimo aggiornamento massivo annullato localmente. Premi Salva online per pubblicare il ripristino.');rerenderPanel();
+  };
+  const old=window.renderAdminSafe;
+  if(typeof old==='function')window.renderAdminSafe=function(){const r=old.apply(this,arguments);setTimeout(inject,30);return r};
+  document.addEventListener('click',()=>{try{if(typeof currentVisibleViewName==='function'&&currentVisibleViewName()==='admin')setTimeout(inject,80)}catch(x){}},true);
+  setTimeout(inject,1500);
 })();
 </script>
 

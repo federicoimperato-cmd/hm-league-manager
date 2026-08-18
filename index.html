@@ -47,7 +47,17 @@ button{cursor:pointer}
 .jersey{width:54px;height:58px;position:relative;flex:0 0 auto;filter:drop-shadow(0 8px 10px rgba(0,0,0,.35))}
 .jersey svg{width:100%;height:100%}
 .playerRow{display:grid;grid-template-columns:60px 1fr auto;gap:10px;align-items:center;background:#0b1627;border:1px solid #233955;border-radius:18px;padding:9px}
+
 .playerRow:hover{border-color:#8b5cf6}
+.hm-role-wrap{display:inline-flex;gap:5px;flex-wrap:wrap;vertical-align:middle;margin-left:4px}
+.hm-role-badge{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:23px;padding:0 7px;border-radius:7px;border:2px solid rgba(255,255,255,.72);font-size:11px;font-weight:900;line-height:1;color:#fff;box-shadow:0 2px 7px rgba(0,0,0,.18)}
+.hm-role-por{background:#f5b333}
+.hm-role-ds,.hm-role-dc,.hm-role-dd,.hm-role-b{background:#64b543}
+.hm-role-e,.hm-role-m,.hm-role-c{background:#3d83ea}
+.hm-role-w,.hm-role-t{background:#d842e1}
+.hm-role-a,.hm-role-pc{background:#d93636}
+.hm-roster-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:12px 14px;background:#0b1627;border:1px solid #28405f;border-radius:18px}
+
 .table{width:100%;border-collapse:separate;border-spacing:0 8px}
 .table th{color:#a8b3c7;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.08em;padding:0 8px}
 .table td{background:#0b1627;border-top:1px solid #233955;border-bottom:1px solid #233955;padding:10px 8px}
@@ -1256,24 +1266,117 @@ function openTeam(code){
   renderTeamDetail();
 }
 
-function roleSection(title, list){
-  return `<div class="card"><div class="between"><h3>${title}</h3><span class="badge">${list.length}</span></div><div class="grid">${list.length?list.map(p=>playerRow(p)).join(""):'<div class="muted">Nessun calciatore</div>'}</div></div>`;
+
+/* =========================================================
+   ROSA SOCIETÀ - visualizzazione unica per reparto
+   Ogni calciatore compare UNA SOLA VOLTA nel reparto
+   più difensivo compatibile con i suoi ruoli Mantra.
+   ========================================================= */
+
+function hmRosterRoleTokens(p){
+  return String(p?.role||"")
+    .replace(/,/g,";")
+    .split(";")
+    .map(x=>x.trim())
+    .filter(Boolean);
 }
 
+function hmRosterPrimaryGroup(p){
+  const rr = hmRosterRoleTokens(p);
+
+  // Priorità reparto dal più difensivo al più offensivo.
+  if(rr.includes("Por")) return "Portieri";
+
+  // Se possiede almeno un ruolo difensivo, resta in Difesa
+  // anche quando ha anche E/M/C/W/T/A.
+  if(rr.some(r=>["B","Ds","Dc","Dd"].includes(r))) return "Difensori";
+
+  // E/M/C/W/T sono considerati reparto di centrocampo.
+  // Quindi W;A e T;A compaiono qui, non anche in Attacco.
+  if(rr.some(r=>["E","M","C","W","T"].includes(r))) return "Centrocampisti";
+
+  if(rr.some(r=>["A","Pc"].includes(r))) return "Attaccanti";
+
+  return "Altro";
+}
+
+function hmRosterSections(list){
+  const out={
+    "Portieri":[],
+    "Difensori":[],
+    "Centrocampisti":[],
+    "Attaccanti":[],
+    "Altro":[]
+  };
+  (list||[]).forEach(p=>{
+    const g=hmRosterPrimaryGroup(p);
+    (out[g]||out.Altro).push(p);
+  });
+  return out;
+}
+
+function hmRosterHasExactRole(p, role){
+  if(!role) return true;
+  return hmRosterRoleTokens(p).includes(role);
+}
+
+function hmRoleBadgesHtml(roleString){
+  const roles = String(roleString||"")
+    .replace(/,/g,";")
+    .split(";")
+    .map(r=>r.trim())
+    .filter(Boolean);
+
+  if(!roles.length) return '<span class="muted">—</span>';
+
+  return `<span class="hm-role-wrap">${roles.map(r=>{
+    const key=String(r).toLowerCase();
+    const css = key==="por" ? "hm-role-por" : "hm-role-"+key;
+    return `<span class="hm-role-badge ${css}">${esc(r)}</span>`;
+  }).join("")}</span>`;
+}
+
+function hmRosterPlayerRow(p){
+  return `<div class="playerRow">
+    ${jersey(p.owner||"SVIN")}
+    <div>
+      <b>${esc(p.name)}</b>
+      <div class="muted">Ruolo: ${hmRoleBadgesHtml(p.role)} · Squadra attuale: <b>${esc(p.current)}</b> · Proprietario: <b>${esc(p.owner)}</b></div>
+      <div class="muted">Stato: ${esc(p.status)} · Contratto: <b>${esc(p.contract||"0")}</b> · Scadenza: ${esc(p.deadline)}</div>
+    </div>
+    <button class="btn" onclick="openPlayerEditor('${p.id}')">Modifica</button>
+  </div>`;
+}
+
+function roleSection(title, list){
+  return `<div class="card"><div class="between"><h3>${title}</h3><span class="badge">${list.length}</span></div><div class="grid">${list.length?list.map(p=>hmRosterPlayerRow(p)).join(""):'<div class="muted">Nessun calciatore</div>'}</div></div>`;
+}
+
+function hmRosterRoleFilterHtml(){
+  const opts=["Por","Ds","Dc","Dd","B","E","M","C","W","T","A","Pc"];
+  return `<div class="hm-roster-filter">
+    <b>Filtra rosa per ruolo:</b>
+    <select id="teamRosterRoleFilter" class="input" onchange="filterTeamRoster('${selectedTeam}')">
+      <option value="">Tutti i ruoli</option>
+      ${opts.map(r=>`<option value="${r}">${r}</option>`).join("")}
+    </select>
+    <span class="muted">Il filtro considera tutti i ruoli Mantra del calciatore.</span>
+  </div>`;
+}
 
 function filterTeamRoster(code){
-  const roster=currentRoster(code).filter(p=>matchesAdvancedFilters(p,"tm"));
-  const sections = {
-    "Portieri": roster.filter(p=>hasRole(p,roles.goal)),
-    "Difensori": roster.filter(p=>hasRole(p,roles.def)),
-    "Centrocampisti": roster.filter(p=>hasRole(p,roles.mid)),
-    "Attaccanti": roster.filter(p=>hasRole(p,roles.att)),
-    "Altro": roster.filter(p=>groupRole(p)==="Altro")
-  };
-  const loans=loansOut(code).filter(p=>matchesAdvancedFilters(p,"tm"));
-  const prim=primaveraFor(code).filter(p=>matchesAdvancedFilters(p,"tm"));
+  const selectedRole = q("teamRosterRoleFilter")?.value || "";
+
+  // Filtro solo visuale: NON modifica i dati.
+  const roster = currentRoster(code).filter(p=>hmRosterHasExactRole(p,selectedRole));
+  const sections = hmRosterSections(roster);
+
+  const loans = loansOut(code).filter(p=>hmRosterHasExactRole(p,selectedRole));
+  const prim = primaveraFor(code).filter(p=>hmRosterHasExactRole(p,selectedRole));
+
   const box=q("teamRosterFiltered");
   if(!box) return;
+
   box.innerHTML = `<div class="grid">
     ${roleSection("Portieri",sections.Portieri)}
     ${roleSection("Difensori",sections.Difensori)}
@@ -1288,16 +1391,14 @@ function filterTeamRoster(code){
 function renderTeamDetail(){
   const t=team(selectedTeam);
   const roster=currentRoster(selectedTeam);
-  const movement=roster.filter(p=>!hasRole(p,roles.goal));
-  const sections = {
-    "Portieri": roster.filter(p=>hasRole(p,roles.goal)),
-    "Difensori": roster.filter(p=>hasRole(p,roles.def)),
-    "Centrocampisti": roster.filter(p=>hasRole(p,roles.mid)),
-    "Attaccanti": roster.filter(p=>hasRole(p,roles.att)),
-    "Altro": roster.filter(p=>groupRole(p)==="Altro")
-  };
+  const movement=roster.filter(p=>!hmRosterRoleTokens(p).includes("Por"));
+
+  // Una sola assegnazione per calciatore.
+  const sections = hmRosterSections(roster);
+
   const loans=loansOut(selectedTeam);
   const prim=primaveraFor(selectedTeam);
+
   q("view-teamDetail").innerHTML = `
     <button class="btn" onclick="showView('teams')">← Torna alle società</button>
     <div class="hero" style="margin-top:12px;background:linear-gradient(135deg,${t.primary}99,${t.secondary}66),rgba(13,27,47,.9)">
@@ -1323,7 +1424,20 @@ function renderTeamDetail(){
         <div class="stat"><div class="muted">Giocatori movimento</div><div class="n">${movement.length}</div></div>
         <div class="stat"><div class="muted">Dati in prestito</div><div class="n">${loans.length}</div></div>
       </div>
-      <div class="grid">${roleSection("Portieri",sections.Portieri)}${roleSection("Difensori",sections.Difensori)}${roleSection("Centrocampisti",sections.Centrocampisti)}${roleSection("Attaccanti",sections.Attaccanti)}${sections.Altro.length?roleSection("Altro",sections.Altro):""}${roleSection("DATI IN PRESTITO",loans)}${roleSection("PRIMAVERA",prim)}</div>
+
+      ${hmRosterRoleFilterHtml()}
+
+      <div id="teamRosterFiltered">
+        <div class="grid">
+          ${roleSection("Portieri",sections.Portieri)}
+          ${roleSection("Difensori",sections.Difensori)}
+          ${roleSection("Centrocampisti",sections.Centrocampisti)}
+          ${roleSection("Attaccanti",sections.Attaccanti)}
+          ${sections.Altro.length?roleSection("Altro",sections.Altro):""}
+          ${roleSection("DATI IN PRESTITO",loans)}
+          ${roleSection("PRIMAVERA",prim)}
+        </div>
+      </div>
     </div>
     <div id="teamSub-formazione" class="hidden">${formationHtml(selectedTeam)}</div>
     <div id="teamSub-rinnovi" class="hidden">${renewalsHtml(selectedTeam)}</div>
@@ -4551,6 +4665,16 @@ window.addEventListener("beforeunload", function(e){
       const form = el.closest && (el.closest("#teamSub-formazione") || el.closest("#pitchBox"));
       if(form) return true;
       if(on.includes("renderPitch(") || on.includes("saveFormationSlot(") || on.includes("clearFormation(") || on.includes("Salva formazione")) return true;
+
+      // RINNOVI: ogni presidente può operare SOLO sulle proprie due squadre.
+      // La funzione renewSelected(code) è già protetta da requireTeam(code);
+      // qui riabilitiamo soltanto checkbox e pulsanti della scheda Rinnovi.
+      const renewals = el.closest && el.closest("#teamSub-rinnovi");
+      if(renewals){
+        if(el.classList && el.classList.contains("renChk")) return true;
+        if(on.includes("selectAllRenewals(") || on.includes("renewSelected(") || on.includes("calcRenewals(")) return true;
+        if(el.tagName === "INPUT" && el.type === "checkbox") return true;
+      }
     }
     if(view === "trades"){
       if(on.includes("changeTradeTeam(") || on.includes("toggleTradePlayer(") || on.includes("openTradeReview(") || on.includes("resetTradeForm")) return true;

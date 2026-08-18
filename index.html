@@ -1844,10 +1844,21 @@ function renderTrades(){
     </div>
     <div class="card" style="margin-top:14px">
       <div class="between"><h3>Scambi confermati</h3><button class="btn red" onclick="clearTradeSeasonLog()">Azzera stagione</button></div>
-      <div id="confirmedTrades"></div>
+      <div id="confirmedTrades"><div class="muted">Caricamento registro...</div></div>
     </div>`;
-  renderTradeLists();
-  renderConfirmedTrades();
+
+  // PERFORMANCE: prima lasciamo al browser il tempo di mostrare la pagina.
+  // Poi costruiamo le liste giocatori e, subito dopo, lo storico.
+  // La logica e i dati restano identici.
+  requestAnimationFrame(()=>{
+    try{ renderTradeLists(); }catch(e){ console.error("renderTradeLists",e); }
+    setTimeout(()=>{
+      try{ renderConfirmedTrades(); }catch(e){ console.error("renderConfirmedTrades",e); }
+      try{
+        if(typeof applyPermissionsToVisibleView==="function") applyPermissionsToVisibleView();
+      }catch(e){}
+    },40);
+  });
 }
 
 function changeTradeTeam(side,value){
@@ -1857,7 +1868,20 @@ function changeTradeTeam(side,value){
     if(side==="from") tradeState.to=other.code; else tradeState.from=other.code;
   }
   tradeState.offer=[]; tradeState.request=[];
-  renderTrades();
+
+  // PERFORMANCE: cambiare squadra non richiede di ricostruire
+  // l'intero Registro Scambi né lo storico confermato.
+  const fromSel=q("tradeFrom");
+  const toSel=q("tradeTo");
+  if(fromSel) fromSel.value=tradeState.from;
+  if(toSel) toSel.value=tradeState.to;
+
+  renderTradeLists();
+  renderDraftSummary();
+
+  try{
+    if(typeof applyPermissionsToVisibleView==="function") applyPermissionsToVisibleView();
+  }catch(e){}
 }
 
 function createLineItem(player, side){
@@ -5085,7 +5109,12 @@ window.addEventListener("beforeunload", function(e){
     const changed = filterDeletedTrades();
     if(changed){
       lastCleanRun = Date.now();
-      saveAfterTradeAdminChange().then(()=>{try{if(typeof renderTrades==="function")renderTrades();}catch(e){}});
+      saveAfterTradeAdminChange().then(()=>{
+        try{
+          const open = (typeof currentVisibleViewName==="function" && currentVisibleViewName()==="trades");
+          if(open && typeof renderTrades==="function") renderTrades();
+        }catch(e){}
+      });
     }
   }, 2000);
 })();

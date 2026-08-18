@@ -619,8 +619,13 @@ function saveLocalOnly(){
 
 function buildBackupSnapshot(label="manuale"){
   const data = buildCloudPayload();
-  // Evita backup dentro backup: mantiene il file leggero e pulito.
+  // Evita backup dentro backup.
   delete data.backupArchive;
+  // Il payload normale contiene già teams, players, scambi, immagini, storico ecc.
+  // localMirror è una SECONDA copia serializzata degli stessi dati: utile per il cloud,
+  // ma inutile nel file backup e molto pesante soprattutto con immagini Base64.
+  // Lo togliamo SOLO dal backup: il salvataggio cloud resta invariato.
+  delete data.localMirror;
   return {
     backupType: "HM_LEAGUE_MANAGER_BACKUP",
     backupVersion: 1,
@@ -652,7 +657,7 @@ function rememberBackupSnapshot(label="automatico"){
 function downloadFullBackup(){
   // Scarica SEMPRE un backup completo dello stato attuale caricato in app, senza dipendere dall'archivio backup.
   const snap = buildBackupSnapshot("download manuale completo");
-  const blob = new Blob([JSON.stringify(snap, null, 2)], {type:"application/json"});
+  const blob = new Blob([JSON.stringify(snap)], {type:"application/json"});
   const a = document.createElement("a");
   const d = new Date();
   const pad = n => String(n).padStart(2,"0");
@@ -7214,6 +7219,376 @@ window.addEventListener("beforeunload", function(e){
       return result;
     };
     try{ savePlayerEditor=window.savePlayerEditor; }catch(e){}
+  }
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   HM IMPORT ASTA DA APP HML - PATCH ISOLATA
+   Formato accettato: HML_AUCTION_EXPORT_V1
+   NON modifica le funzioni asta/scambi/Firebase esistenti.
+   Aggiunge soltanto:
+   - bottone "Importa file asta" nella vista Asta
+   - anteprima
+   - backup prima del commit
+   - update giocatori esistenti / inserimento nuovi
+   - owner=current=squadra, contract=prezzo
+   - crediti squadra importati come valore assoluto finale
+   ========================================================= */
+(function(){
+  const HM_AUCTION_IMPORT_INPUT_ID = "hmAuctionImportFileV1";
+  let hmAuctionImportPreview = null;
+
+  function hmAIQ(id){ return document.getElementById(id); }
+  function hmAIEsc(v){
+    try{
+      if(typeof esc === "function") return esc(v);
+    }catch(e){}
+    return String(v??"").replace(/[&<>"']/g,m=>({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+  function hmAINormName(v){
+    return String(v||"")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .toLowerCase()
+      .replace(/[’‘`´]/g,"'")
+      .replace(/[^a-z0-9']/g,"")
+      .trim();
+  }
+  function hmAIIsAdmin(){
+    try { return typeof isAdmin === "function" ? isAdmin() : currentUser?.role==="admin"; }
+    catch(e){ return false; }
+  }
+  function hmAITeamExists(code){
+    const c=String(code||"").trim().toUpperCase();
+    return Array.isArray(teams) && teams.some(t=>String(t.code).toUpperCase()===c && c!=="SVIN");
+  }
+  function hmAITeamName(code){
+    try { return typeof teamLabel==="function" ? teamLabel(code) : code; }
+    catch(e){ return code; }
+  }
+
+  function hmAIFindExisting(row){
+    const rawId=String(row?.id||"");
+    if(rawId && !rawId.startsWith("auction_")){
+      const byId=(players||[]).find(p=>String(p.id)===rawId);
+      if(byId) return {status:"match", player:byId, reason:"id"};
+    }
+
+    const nn=hmAINormName(row?.name);
+    if(!nn) return {status:"invalid", reason:"nome vuoto"};
+
+    const matches=(players||[]).filter(p=>hmAINormName(p.name)===nn);
+    if(matches.length===1) return {status:"match",player:matches[0],reason:"nome"};
+
+    if(matches.length>1){
+      // Preferenza sicura: se esiste un solo record svincolato/libero,
+      // è normalmente quello corretto da assegnare in asta.
+      const free=matches.filter(p=>
+        String(p.owner||"").toUpperCase()==="SVIN" ||
+        (!String(p.owner||"").trim() && !String(p.current||"").trim())
+      );
+      if(free.length===1) return {status:"match",player:free[0],reason:"nome + unico svincolato"};
+      return {status:"ambiguous",matches,reason:"più giocatori con stesso nome"};
+    }
+    return {status:"new",reason:"non presente"};
+  }
+
+  function hmAIAnalyze(data){
+    if(!data || data.format!=="HML_AUCTION_EXPORT_V1" || !Array.isArray(data.players)){
+      throw new Error("File non riconosciuto. Serve il file ESPORTA PER HML MANAGER prodotto dall'app asta.");
+    }
+
+    const rows=[];
+    let matched=0, created=0, ambiguous=0, invalid=0;
+
+    data.players.forEach((r,idx)=>{
+      const teamCode=String(r.owner||r.current||"").trim().toUpperCase();
+      const contract=String(r.contract??"").trim();
+      const base={
+        index:idx,
+        row:r,
+        teamCode,
+        validTeam:hmAITeamExists(teamCode),
+        validContract:contract!=="" && Number.isFinite(Number(contract)) && Number(contract)>=0,
+        match:null
+      };
+
+      if(!r?.name || !base.validTeam || !base.validContract){
+        base.kind="invalid";
+        base.problem=!r?.name ? "nome mancante" : !base.validTeam ? "squadra non valida" : "prezzo/contratto non valido";
+        invalid++;
+      }else{
+        const found=hmAIFindExisting(r);
+        base.match=found;
+        base.kind=found.status;
+        if(found.status==="match") matched++;
+        else if(found.status==="new") created++;
+        else if(found.status==="ambiguous") ambiguous++;
+        else invalid++;
+      }
+      rows.push(base);
+    });
+
+    const credits=[];
+    if(data.teamCredits && typeof data.teamCredits==="object"){
+      Object.entries(data.teamCredits).forEach(([code,value])=>{
+        const c=String(code||"").toUpperCase();
+        if(!hmAITeamExists(c)) return;
+        const n=Number(value);
+        if(Number.isFinite(n)) credits.push({code:c,value:n});
+      });
+    }
+
+    return {
+      source:data,
+      rows,
+      matched,created,ambiguous,invalid,
+      credits,
+      canApply: ambiguous===0 && invalid===0 && rows.length>0
+    };
+  }
+
+  function hmAIRenderPreview(preview){
+    const body=hmAIQ("tradeModalBody");
+    const modal=hmAIQ("tradeModal");
+    if(!body||!modal) return;
+
+    const bad=preview.ambiguous+preview.invalid;
+    const sample=preview.rows.slice(0,80).map(x=>{
+      let stato="";
+      if(x.kind==="match") stato=`<span class="badge" style="border-color:#22c55e;color:#86efac">AGGIORNA</span>`;
+      else if(x.kind==="new") stato=`<span class="badge" style="border-color:#38bdf8;color:#7dd3fc">NUOVO</span>`;
+      else if(x.kind==="ambiguous") stato=`<span class="badge" style="border-color:#facc15;color:#fde047">AMBIGUO</span>`;
+      else stato=`<span class="badge" style="border-color:#ef4444;color:#fca5a5">ERRORE</span>`;
+
+      return `<tr>
+        <td><b>${hmAIEsc(x.row?.name||"")}</b>${x.problem?`<div class="muted">${hmAIEsc(x.problem)}</div>`:""}</td>
+        <td>${hmAIEsc(x.row?.role||"")}</td>
+        <td>${hmAIEsc(hmAITeamName(x.teamCode))}</td>
+        <td>${hmAIEsc(x.row?.contract??"")}</td>
+        <td>${stato}</td>
+      </tr>`;
+    }).join("");
+
+    body.innerHTML=`
+      <div class="between">
+        <div>
+          <h2>📥 Anteprima import asta</h2>
+          <p class="muted">Nessuna modifica è ancora stata applicata.</p>
+        </div>
+        <button class="btn" type="button" onclick="closeTradeModal()">Chiudi</button>
+      </div>
+
+      <div class="grid grid4" style="margin-top:12px">
+        <div class="stat"><div class="muted">Acquisti</div><div class="n">${preview.rows.length}</div></div>
+        <div class="stat"><div class="muted">Già presenti</div><div class="n">${preview.matched}</div></div>
+        <div class="stat"><div class="muted">Nuovi</div><div class="n">${preview.created}</div></div>
+        <div class="stat"><div class="muted">Problemi</div><div class="n">${bad}</div></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <b>Cosa farà l'import</b>
+        <div class="muted" style="margin-top:6px">
+          Giocatore esistente: aggiorna solo <b>ruolo, proprietario, attuale e contratto</b>.<br>
+          Giocatore nuovo: lo inserisce nel database.<br>
+          Per ogni acquisto: <b>owner = current = squadra vincente</b> e <b>contract = prezzo asta</b>.<br>
+          ${preview.credits.length?`I crediti finali delle ${preview.credits.length} squadre presenti nel file verranno sincronizzati.`:"Il file non contiene crediti squadra."}
+        </div>
+      </div>
+
+      ${bad?`<div class="card" style="margin-top:12px;border-color:#ef4444">
+        <b style="color:#fca5a5">⚠️ Import bloccato</b>
+        <div class="muted">Ci sono ${bad} righe ambigue/non valide. Non applico nulla finché il file non è coerente.</div>
+      </div>`:""}
+
+      <div style="overflow:auto;max-height:430px;margin-top:12px">
+        <table class="table">
+          <thead><tr><th>Calciatore</th><th>Ruolo</th><th>Squadra</th><th>Contratto</th><th>Azione</th></tr></thead>
+          <tbody>${sample}</tbody>
+        </table>
+      </div>
+
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button class="btn" type="button" onclick="closeTradeModal()">Annulla</button>
+        <button class="btn green" type="button" onclick="hmApplyAuctionImportV1()" ${preview.canApply?"":"disabled"}>✅ CONFERMA IMPORT</button>
+      </div>`;
+    modal.style.display="flex";
+  }
+
+  window.hmTriggerAuctionImportV1=function(){
+    if(!hmAIIsAdmin()){
+      alert("Solo Federico admin può importare il risultato dell'asta.");
+      return;
+    }
+    let input=hmAIQ(HM_AUCTION_IMPORT_INPUT_ID);
+    if(!input){
+      input=document.createElement("input");
+      input.id=HM_AUCTION_IMPORT_INPUT_ID;
+      input.type="file";
+      input.accept=".json,application/json";
+      input.style.display="none";
+      input.addEventListener("change",hmAIReadFile);
+      document.body.appendChild(input);
+    }
+    input.value="";
+    input.click();
+  };
+
+  async function hmAIReadFile(ev){
+    const file=ev?.target?.files?.[0];
+    if(!file) return;
+    try{
+      const raw=JSON.parse(await file.text());
+      hmAuctionImportPreview=hmAIAnalyze(raw);
+      hmAIRenderPreview(hmAuctionImportPreview);
+    }catch(e){
+      console.error("Import asta",e);
+      alert("Errore import asta: "+String(e.message||e));
+    }
+  }
+
+  window.hmApplyAuctionImportV1=async function(){
+    const p=hmAuctionImportPreview;
+    if(!p || !p.canApply){
+      alert("Import non pronto.");
+      return;
+    }
+    if(!hmAIIsAdmin()){
+      alert("Solo Federico admin può applicare l'import.");
+      return;
+    }
+    if(!confirm(`Confermi l'import di ${p.rows.length} acquisti?\n\nPrima verrà creato automaticamente un backup di sicurezza.`)) return;
+
+    try{
+      // BACKUP PRIMA DI TOCCARE QUALSIASI DATO.
+      if(typeof rememberBackupSnapshot==="function"){
+        rememberBackupSnapshot("prima import asta");
+      }
+
+      const batchId=String(p.source.createdAt||("asta_"+Date.now()));
+      auctionState=auctionState||{playerId:"",manualPlayer:null,bids:[],activeTeams:[],passedTeams:[],winner:null,history:[]};
+      if(!Array.isArray(auctionState.history)) auctionState.history=[];
+
+      const existingBatch=auctionState.history.some(h=>String(h.importBatch||"")===batchId);
+      let updated=0,inserted=0;
+
+      for(const item of p.rows){
+        const r=item.row;
+        const code=item.teamCode;
+        const amount=Number(r.contract);
+
+        let target=null;
+        if(item.kind==="match"){
+          target=item.match.player;
+          // NON tocchiamo status, bonus e deadline esistenti.
+          target.role=String(r.role||target.role||"");
+          target.owner=code;
+          target.current=code;
+          target.contract=String(r.contract);
+          updated++;
+        }else if(item.kind==="new"){
+          const proposedId=String(r.id||"").trim();
+          const safeId=(proposedId && !(players||[]).some(x=>String(x.id)===proposedId))
+            ? proposedId
+            : ("auction_"+Date.now()+"_"+Math.random().toString(36).slice(2,8));
+
+          target={
+            id:safeId,
+            name:String(r.name||"").trim(),
+            role:String(r.role||"").trim(),
+            current:code,
+            owner:code,
+            status:String(r.status||"D"),
+            bonus:String(r.bonus||""),
+            contract:String(r.contract),
+            deadline:String(r.deadline||"")
+          };
+          players.push(target);
+          inserted++;
+        }
+
+        // Storico asta: aggiungiamo una sola volta per batch.
+        if(target && !existingBatch){
+          auctionState.history.push({
+            playerId:target.id,
+            playerName:target.name,
+            team:code,
+            amount,
+            date:new Date().toLocaleString("it-IT"),
+            importBatch:batchId,
+            imported:true
+          });
+        }
+      }
+
+      // Crediti finali: valori ASSOLUTI provenienti dall'app asta.
+      p.credits.forEach(c=>{
+        const t=(teams||[]).find(x=>String(x.code).toUpperCase()===c.code);
+        if(t) t.credits=c.value;
+      });
+
+      // L'asta in corso viene lasciata pulita; lo storico resta.
+      auctionState.playerId="";
+      auctionState.manualPlayer=null;
+      auctionState.bids=[];
+      auctionState.activeTeams=[];
+      auctionState.passedTeams=[];
+      auctionState.winner=null;
+
+      // Usa il salvataggio GENERALE già funzionante del gestionale.
+      if(typeof saveAll==="function"){
+        const ok=saveAll();
+        if(ok===false) throw new Error("Il salvataggio locale ha segnalato un errore.");
+      }else if(typeof saveLocalOnly==="function"){
+        saveLocalOnly();
+      }
+
+      hmAuctionImportPreview=null;
+      try{ if(typeof closeTradeModal==="function") closeTradeModal(); }catch(e){}
+      try{ if(typeof renderAuction==="function") renderAuction(); }catch(e){}
+      try{ if(typeof renderDashboard==="function") renderDashboard(); }catch(e){}
+
+      alert(`Import asta completato.\n\nAggiornati: ${updated}\nNuovi inseriti: ${inserted}\nCrediti sincronizzati: ${p.credits.length}\n\nControlla i dati e poi usa il normale Salva online.`);
+    }catch(e){
+      console.error("Applicazione import asta",e);
+      alert("Import NON completato: "+String(e.message||e)+"\n\nÈ stato creato un backup prima dell'operazione.");
+    }
+  };
+
+  function hmAIInjectButton(){
+    const root=hmAIQ("view-auction");
+    if(!root || root.classList.contains("hidden")) return;
+    if(hmAIQ("hmAuctionImportBtnV1")) return;
+
+    const top=root.querySelector(".between") || root.firstElementChild;
+    if(!top) return;
+
+    const wrap=document.createElement("div");
+    wrap.className="row";
+    wrap.style.margin="10px 0 14px";
+    wrap.innerHTML=`
+      <button id="hmAuctionImportBtnV1" class="btn yellow" type="button" onclick="hmTriggerAuctionImportV1()" ${hmAIIsAdmin()?"":"disabled"}>
+        📥 Importa risultato asta
+      </button>
+      <span class="muted">File JSON esportato dall'app HML Asta · anteprima prima di applicare</span>`;
+    top.insertAdjacentElement("afterend",wrap);
+  }
+
+  // Non sovrascrive renderAuction: osserva soltanto la vista dopo il render.
+  const obs=new MutationObserver(()=>setTimeout(hmAIInjectButton,0));
+  document.addEventListener("DOMContentLoaded",()=>{
+    const root=hmAIQ("view-auction");
+    if(root) obs.observe(root,{childList:true,subtree:true});
+    setTimeout(hmAIInjectButton,500);
+  });
+  if(document.readyState!=="loading"){
+    const root=hmAIQ("view-auction");
+    if(root) obs.observe(root,{childList:true,subtree:true});
+    setTimeout(hmAIInjectButton,500);
   }
 })();
 </script>

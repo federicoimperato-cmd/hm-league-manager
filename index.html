@@ -2323,10 +2323,59 @@ function editConfirmedTrade(i){
 
 function renewalsHtml(code){
   const list=ownedPlayers(code).sort((a,b)=>a.name.localeCompare(b.name));
-  return `<div class="card"><div class="between"><div><h3>Calcolo rinnovi/stipendi</h3><p class="muted">Mostra solo calciatori di proprietà, inclusi dati in prestito e primavera.</p></div><div class="row"><button class="btn" onclick="selectAllRenewals(true)">Seleziona tutti</button><button class="btn" onclick="selectAllRenewals(false)">Deseleziona tutti</button><button class="btn green" onclick="renewSelected('${code}')">Rinnova e scala crediti</button></div></div><div id="renList">${list.map(p=>`<label class="playerRow"><input type="checkbox" class="renChk" data-id="${p.id}" data-val="${Number(String(p.contract||0).replace(',','.'))||0}" onchange="calcRenewals()"> ${jersey(p.owner,44)} <span><b>${esc(p.name)}</b><div class="muted">${esc(p.current)} · contratto ${esc(p.contract||"0")}</div></span></label>`).join("")}</div><div class="stat" style="margin-top:12px"><div class="muted">Totale selezionato</div><div class="n" id="renTotal">0</div></div></div>`;
+  return `<div class="card"><div class="between"><div><h3>Calcolo rinnovi/stipendi</h3><p class="muted">Mostra solo calciatori di proprietà, inclusi dati in prestito e primavera.</p></div><div class="row"><button class="btn" onclick="selectAllRenewals(true)">Seleziona tutti</button><button class="btn" onclick="selectAllRenewals(false)">Deseleziona tutti</button><button class="btn green" onclick="renewSelected('${code}')">Rinnova e scala crediti</button><button class="btn yellow" onclick="renewSelectedWithCoin('${code}')">🪙 RINNOVA CON COIN</button></div></div><div id="renList">${list.map(p=>`<label class="playerRow"><input type="checkbox" class="renChk" data-id="${p.id}" data-val="${Number(String(p.contract||0).replace(',','.'))||0}" onchange="calcRenewals()"> ${jersey(p.owner,44)} <span><b>${esc(p.name)}</b><div class="muted">${esc(p.current)} · contratto ${esc(p.contract||"0")}</div></span></label>`).join("")}</div><div class="grid grid2" style="margin-top:12px">
+  <div class="stat"><div class="muted">Se rinnovi con crediti</div><div class="n" id="renTotal">0 crediti</div></div>
+  <div class="stat"><div class="muted">Se rinnovi con HM Coin</div><div class="n" id="renCoinTotal">0 HM Coin</div><div class="muted">5 Coin per contratto selezionato</div></div>
+</div></div>`;
 }
 function selectAllRenewals(flag){document.querySelectorAll(".renChk").forEach(c=>c.checked=flag);calcRenewals();}
-function calcRenewals(){let sum=0;document.querySelectorAll(".renChk:checked").forEach(c=>sum+=Number(c.dataset.val||0));q("renTotal").textContent=sum.toFixed(1).replace(".0","");}
+function calcRenewals(){
+  let sum=0;
+  const selected=[...document.querySelectorAll(".renChk:checked")];
+  selected.forEach(c=>sum+=Number(c.dataset.val||0));
+  const creditEl=q("renTotal");
+  if(creditEl) creditEl.textContent=sum.toFixed(1).replace(".0","")+" crediti";
+  const coinEl=q("renCoinTotal");
+  if(coinEl) coinEl.textContent=(selected.length*5)+" HM Coin";
+}
+
+function renewSelectedWithCoin(code){
+  if(!(isAdmin() || canEditTeam(code))) return deny("Puoi rinnovare solo per le tue squadre.");
+  const selectedIds=[...document.querySelectorAll(".renChk:checked")].map(c=>c.dataset.id).filter(Boolean);
+  const selectedCount=selectedIds.length;
+
+  if(!selectedCount){
+    alert("Seleziona almeno un calciatore da rinnovare.");
+    return;
+  }
+
+  const costCoin=selectedCount*5;
+  const t=team(code);
+  const availableCoin=Number(t?.hmcoin||0);
+
+  if(availableCoin < costCoin){
+    alert("HM Coin insufficienti. Servono "+costCoin+" HM Coin, disponibili "+availableCoin+".");
+    return;
+  }
+
+  if(!confirm("Confermi rinnovi con HM Coin? I selezionati avranno Scadenza = RINNOVATO, gli esclusi Scadenza = IN SCADENZA. Verranno scalati "+costCoin+" HM Coin da "+code+" (5 Coin per ogni contratto selezionato).")) return;
+
+  // Identica logica dell'attuale rinnovo in crediti:
+  // selezionati = RINNOVATO, esclusi = IN SCADENZA.
+  ownedPlayers(code).forEach(p=>{
+    if(selectedIds.includes(p.id)){
+      p.deadline="RINNOVATO";
+    }else{
+      p.deadline="IN SCADENZA";
+    }
+  });
+
+  t.hmcoin=availableCoin-costCoin;
+
+  saveAll();
+  renderTeamDetail();
+}
+
 function renewSelected(code){
   const selectedIds=[...document.querySelectorAll(".renChk:checked")].map(c=>c.dataset.id).filter(Boolean);
   let sum=0;
@@ -4672,7 +4721,7 @@ window.addEventListener("beforeunload", function(e){
       const renewals = el.closest && el.closest("#teamSub-rinnovi");
       if(renewals){
         if(el.classList && el.classList.contains("renChk")) return true;
-        if(on.includes("selectAllRenewals(") || on.includes("renewSelected(") || on.includes("calcRenewals(")) return true;
+        if(on.includes("selectAllRenewals(") || on.includes("renewSelected(") || on.includes("renewSelectedWithCoin(") || on.includes("calcRenewals(")) return true;
         if(el.tagName === "INPUT" && el.type === "checkbox") return true;
       }
     }
@@ -7714,6 +7763,110 @@ window.addEventListener("beforeunload", function(e){
     if(root) obs.observe(root,{childList:true,subtree:true});
     setTimeout(hmAIInjectButton,500);
   }
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   FIX DEFINITIVO FILTRI CALCIATORI PER TUTTI
+   PATCH ISOLATA - NON SBLOCCA MODIFICA/AGGIUNGI/ELIMINA
+   Consente a admin, presidenti e ospiti di usare:
+   ricerca, ruolo, squadra attuale, proprietario, stato,
+   bonus, scadenza, contratto min/max e Pulisci filtri.
+   ========================================================= */
+(function(){
+  if(window.HM_PLAYERS_FILTERS_FOR_EVERYONE_V2) return;
+  window.HM_PLAYERS_FILTERS_FOR_EVERYONE_V2 = true;
+
+  const FILTER_IDS = [
+    "plSearch","plRole","plCurrent","plOwner","plStatus",
+    "plBonus","plDeadline","plContractMin","plContractMax"
+  ];
+
+  function isPlayersView(){
+    const root=document.getElementById("view-players");
+    return !!(root && !root.classList.contains("hidden"));
+  }
+
+  function unlockFilters(){
+    const root=document.getElementById("view-players");
+    if(!root) return;
+
+    FILTER_IDS.forEach(id=>{
+      const el=document.getElementById(id);
+      if(!el || !root.contains(el)) return;
+      if(el.disabled) el.disabled=false;
+      if(el.hasAttribute("disabled")) el.removeAttribute("disabled");
+      if(el.style.opacity!== "1") el.style.opacity="1";
+      if(el.style.pointerEvents==="none") el.style.pointerEvents="auto";
+      el.setAttribute("aria-disabled","false");
+    });
+
+    // Solo il pulsante "Pulisci filtri".
+    root.querySelectorAll("button").forEach(btn=>{
+      const on=String(btn.getAttribute("onclick")||"");
+      if(on.includes("clearFilters('pl'") || on.includes('clearFilters("pl"')){
+        if(btn.disabled) btn.disabled=false;
+        btn.removeAttribute("disabled");
+        btn.style.opacity="1";
+        btn.style.pointerEvents="auto";
+        btn.setAttribute("aria-disabled","false");
+      }
+    });
+  }
+
+  // Dopo ogni render della lista calciatori.
+  const previousRenderPlayers = (typeof window.renderPlayers==="function") ? window.renderPlayers : null;
+  if(previousRenderPlayers && !previousRenderPlayers.__hmFiltersEveryoneV2){
+    const wrapped=function(){
+      const result=previousRenderPlayers.apply(this,arguments);
+      queueMicrotask(unlockFilters);
+      requestAnimationFrame(unlockFilters);
+      return result;
+    };
+    wrapped.__hmFiltersEveryoneV2=true;
+    window.renderPlayers=renderPlayers=wrapped;
+  }
+
+  // Se un altro livello permessi prova a rimettere disabled,
+  // lo correggiamo SOLO sui filtri della vista Calciatori.
+  const root=document.getElementById("view-players");
+  if(root){
+    let scheduled=false;
+    const observer=new MutationObserver(mutations=>{
+      if(!isPlayersView()) return;
+      let relevant=false;
+      for(const m of mutations){
+        if(m.type==="childList"){ relevant=true; break; }
+        if(m.type==="attributes" && ["disabled","style"].includes(m.attributeName)){
+          const t=m.target;
+          if(t && (FILTER_IDS.includes(t.id) || (t.tagName==="BUTTON" && String(t.getAttribute("onclick")||"").includes("clearFilters")))){
+            relevant=true; break;
+          }
+        }
+      }
+      if(relevant && !scheduled){
+        scheduled=true;
+        queueMicrotask(()=>{
+          scheduled=false;
+          unlockFilters();
+        });
+      }
+    });
+    observer.observe(root,{subtree:true,childList:true,attributes:true,attributeFilter:["disabled","style"]});
+  }
+
+  // Anche quando si entra nella sezione tramite navigazione.
+  document.addEventListener("click",ev=>{
+    const btn=ev.target && ev.target.closest ? ev.target.closest('[data-view="players"]') : null;
+    if(btn){
+      setTimeout(unlockFilters,0);
+      setTimeout(unlockFilters,50);
+    }
+  },true);
+
+  unlockFilters();
 })();
 </script>
 

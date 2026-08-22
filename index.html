@@ -1109,6 +1109,11 @@ async function loadCloudData(){
 
 function renderDashboard(){
   q("totalPlayersBadge").textContent = players.length + " calciatori";
+  const budgetTeams = teams.filter(t=>t.code!=='SVIN').slice().sort((a,b)=>{
+    const divOrder = {"Serie A":0,"Serie B":1};
+    const da = divOrder[a.division] ?? 9, db = divOrder[b.division] ?? 9;
+    return da-db || String(a.name||a.code).localeCompare(String(b.name||b.code),"it");
+  });
   q("view-dashboard").innerHTML = `
     <div class="between"><div><h2>Dashboard</h2><p class="muted">Panoramica gestionale HM League.</p></div><button class="btn primary" onclick="addNews()">Nuovo comunicato</button></div>
     <div class="grid grid4" style="margin-top:14px">
@@ -1116,6 +1121,15 @@ function renderDashboard(){
       <div class="stat"><div class="muted">Società</div><div class="n">${teams.filter(t=>t.code!=='SVIN').length}</div></div>
       <div class="stat"><div class="muted">Scambi registrati</div><div class="n">${trades.length}</div></div>
       <div class="stat"><div class="muted">Primavera</div><div class="n">${players.filter(isPrimavera).length}</div></div>
+    </div>
+    <div class="card" style="margin-top:22px">
+      <div class="between"><div><h3 style="margin:0">💰 Riepilogo crediti e HM Coin</h3><p class="muted" style="margin:6px 0 0">Tutte le squadre, ordinate per serie e nome.</p></div></div>
+      <div style="overflow-x:auto;margin-top:12px">
+        <table class="table">
+          <thead><tr><th>Squadra</th><th>Serie</th><th>Crediti</th><th>HM Coin</th></tr></thead>
+          <tbody>${budgetTeams.map(t=>`<tr><td><b>${esc(t.name)}</b> <span class="muted">(${esc(t.code)})</span></td><td>${esc(t.division||"")}</td><td><b>${esc(t.credits ?? 0)}</b></td><td><b>${esc(t.hmcoin ?? 0)}</b></td></tr>`).join("")}</tbody>
+        </table>
+      </div>
     </div>
     <div class="between" style="margin-top:22px"><div><h3>Comunicati ufficiali</h3><p class="muted">News mercato, trasferimenti, conferenze stampa e messaggi fissati dalla Lega.</p></div><button class="btn primary" onclick="openNewsComposer()">Scrivi comunicato</button></div>
     <div class="grid grid3" style="margin-top:12px">${news.map((n,i)=>newsCard(n,i)).join("")}</div>
@@ -6743,6 +6757,45 @@ window.addEventListener("beforeunload", function(e){
   }
   function actionText(cfg){return (cfg.actionTypes||[]).map(x=>`${x.name}|${x.cost}|${x.suspended?'si':'no'}`).join('\n');}
   function errorsHtml(){const rows=window.HM_ADMIN_RUNTIME_ERRORS||[];return rows.length?rows.slice(0,25).map(x=>`<div class="card" style="padding:9px;margin:6px 0"><b>${escV(x.kind)}</b> · ${escV(x.time)}<br><span class="muted">${escV(x.msg)}</span></div>`).join(''):'<div class="muted">Nessun errore runtime registrato in questa sessione.</div>';}
+  function sortedBudgetTeams(){
+    const divOrder={"Serie A":0,"Serie B":1};
+    return realTeams().slice().sort((a,b)=>{
+      const da=divOrder[a.division]??9, db=divOrder[b.division]??9;
+      return da-db || String(a.name||a.code).localeCompare(String(b.name||b.code),'it');
+    });
+  }
+  function bulkBudgetRows(){
+    return sortedBudgetTeams().map(t=>`<tr>
+      <td><b>${escV(t.name)}</b><div class="muted">${escV(t.code)} · ${escV(t.division||'')}</div></td>
+      <td><b>${escV(t.credits??0)}</b></td>
+      <td><input id="admBulkCredits_${escV(t.code)}" class="input" type="number" step="1" placeholder="+ / -" style="width:105px"></td>
+      <td><b>${escV(t.hmcoin??0)}</b></td>
+      <td style="text-align:center"><input id="admBulkPre_${escV(t.code)}" type="checkbox" title="Conferenza PRE: +2 HM Coin"></td>
+      <td style="text-align:center"><input id="admBulkPost_${escV(t.code)}" type="checkbox" title="Conferenza POST: +2 HM Coin"></td>
+      <td><input id="admBulkCoin_${escV(t.code)}" class="input" type="number" step="1" placeholder="+ / -" style="width:105px"></td>
+    </tr>`).join('');
+  }
+  window.hmAdminApplyBudgetBulk=function(){
+    if(!adm()) return false;
+    const changes=[];
+    sortedBudgetTeams().forEach(t=>{
+      const creditDelta=Number(String($('admBulkCredits_'+t.code)?.value||'').replace(',','.'))||0;
+      const freeCoin=Number(String($('admBulkCoin_'+t.code)?.value||'').replace(',','.'))||0;
+      const pre=$('admBulkPre_'+t.code)?.checked?2:0;
+      const post=$('admBulkPost_'+t.code)?.checked?2:0;
+      const coinDelta=freeCoin+pre+post;
+      if(creditDelta||coinDelta) changes.push({t,creditDelta,coinDelta});
+    });
+    if(!changes.length){alert('Non hai inserito nessuna variazione.');return false;}
+    changes.forEach(x=>{
+      x.t.credits=(Number(x.t.credits)||0)+x.creditDelta;
+      x.t.hmcoin=(Number(x.t.hmcoin)||0)+x.coinDelta;
+    });
+    if(typeof saveAll==='function' && saveAll()===false) return false;
+    alert('Aggiornamento massivo applicato a '+changes.length+' squadre. Premi Salva online per pubblicare le modifiche.');
+    renderAdminSafe();
+    return true;
+  };
 
   window.renderAdminSafe = function(){
     const root=$('view-admin'); if(!root)return;
@@ -6761,6 +6814,16 @@ window.addEventListener("beforeunload", function(e){
       </details>
 
       <details class="card" style="margin-top:14px" open><summary style="cursor:pointer;font-size:20px;font-weight:900">🏟️ Società, crediti e HM Coin</summary>
+        <div class="card" style="margin-top:12px">
+          <div class="between"><div><h3 style="margin:0">💰 Gestione massiva crediti e HM Coin</h3><p class="muted" style="margin:6px 0 0">Inserisci solo le variazioni da applicare. Numeri positivi aggiungono, numeri negativi rimuovono. PRE e POST valgono +2 HM Coin ciascuna.</p></div></div>
+          <div style="overflow-x:auto;margin-top:12px">
+            <table class="table">
+              <thead><tr><th>Squadra</th><th>Crediti attuali</th><th>+ / - Crediti</th><th>Coin attuali</th><th>Conferenza PRE<br><span class="muted">+2</span></th><th>Conferenza POST<br><span class="muted">+2</span></th><th>+ / - Coin liberi</th></tr></thead>
+              <tbody>${bulkBudgetRows()}</tbody>
+            </table>
+          </div>
+          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmAdminApplyBudgetBulk()">Applica tutte le variazioni</button></div>
+        </div>
         <div class="grid grid2" style="margin-top:12px"><label>Società<select id="admTeamSel" class="input" onchange="hmAdminLoadTeamForm()">${teamOpts(first.code)}</select></label><div class="row" style="align-items:end"><button class="btn" onclick="hmAdminOpenTeam()">Apri scheda società</button></div></div>
         <div class="grid grid4" style="margin-top:12px"><label>Nome<input id="admTName" class="input"></label><label>Divisione<select id="admTDivision" class="input"><option>Serie A</option><option>Serie B</option><option>Extra</option></select></label><label>Crediti<input id="admTCredits" class="input" type="number"></label><label>HM Coin<input id="admTHmcoin" class="input" type="number"></label><label>Colore 1<input id="admTPrimary" class="input" type="color"></label><label>Colore 2<input id="admTSecondary" class="input" type="color"></label><label>Testo maglia<input id="admTText" class="input" type="color"></label><label>Maglia<select id="admTJersey" class="input"><option value="diagonal">diagonal</option><option value="solid">solid</option><option value="stripes">stripes</option><option value="halves">halves</option></select></label></div>
         <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmAdminSaveTeamQuick()">Salva modifiche società</button></div>

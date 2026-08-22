@@ -409,7 +409,11 @@ const roles = {
 
 function safeSetStorage(key, value){
   try{
-    localStorage.setItem(key, JSON.stringify(value));
+    const serialized = JSON.stringify(value);
+    // Evita riscritture sincrone inutili su localStorage: se il dato è già identico,
+    // il salvataggio locale è già concluso e non serve riscriverlo.
+    if(localStorage.getItem(key) === serialized) return true;
+    localStorage.setItem(key, serialized);
     return true;
   }catch(e){
     console.warn("Storage pieno, salto salvataggio:", key, e);
@@ -3650,6 +3654,28 @@ window.addEventListener("beforeunload", function(e){
 
   function clonePlain(v){try{return JSON.parse(JSON.stringify(v ?? null));}catch(e){return v;}}
   function cleanForFirestore(v){return clonePlain(v);}
+
+  // Cache firme del contenuto già sincronizzato. Serve solo a evitare di riscrivere
+  // su Firebase documenti e asset IDENTICI a quelli appena caricati/salvati.
+  // Non cambia schema, percorsi o contenuto dei dati.
+  let hmFbSigCache = {parts:{},assets:{},trades:{},news:{}};
+  function hmFbLoadSigCache(){return hmFbSigCache;}
+  function hmFbSaveSigCache(x){hmFbSigCache=x||{parts:{},assets:{},trades:{},news:{}};}
+  function hmFbHashString(str){
+    str=String(str||"");
+    let h=2166136261;
+    for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}
+    return str.length+":"+(h>>>0).toString(36);
+  }
+  function hmFbSig(v){return hmFbHashString(JSON.stringify(cleanForFirestore(v)));}
+  function hmFbPartSig(id,data){
+    const x=cleanForFirestore(data);
+    // updatedAt di questi documenti è tecnico e viene rigenerato ad ogni build:
+    // non deve trasformare un documento invariato in una falsa modifica.
+    if(x&&typeof x==="object"&&!Array.isArray(x)&&(id==="core"||id==="trades"||id==="news")) delete x.updatedAt;
+    return hmFbSig(x);
+  }
+
   function safeId(v){return String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,140) || ("id_"+Date.now());}
   function ensureIds(arr,prefix){
     if(!Array.isArray(arr)) return [];
@@ -3739,13 +3765,64 @@ window.addEventListener("beforeunload", function(e){
 
   async function fbSaveSplit(){
     const {docs,assets}=buildSplitDocs();
+    const prev=hmFbLoadSigCache();
+    const next={parts:{},assets:{},trades:{},news:{}};
     const writes=[];
+
+    // Meta è minuscolo: resta sempre aggiornato e continua a descrivere la versione cloud.
     writes.push({type:"set",ref:metaRef(),data:{version:6,updatedAt:new Date().toISOString(),mode:"split_v2"},options:{merge:true}});
-    Object.entries(docs).forEach(([id,data])=>writes.push({type:"set",ref:partRef(id),data,options:{merge:false}}));
-    assets.forEach(a=>writes.push({type:"set",ref:assetsCol().doc(a.id),data:a,options:{merge:false}}));
-    (Array.isArray(trades)?trades:[]).forEach((t,i)=>writes.push({type:"set",ref:tradesCol().doc(safeId(t.id || ("trade_"+i))),data:{...t,_sort:i},options:{merge:false}}));
-    (Array.isArray(news)?news:[]).forEach((n,i)=>writes.push({type:"set",ref:newsCol().doc(safeId(n.id || ("news_"+i))),data:{...n,_sort:i},options:{merge:false}}));
+
+    // Parti principali: scrivo SOLO quelle realmente cambiate.
+    Object.entries(docs).forEach(([id,data])=>{
+      const sig=hmFbPartSig(id,data);
+      next.parts[id]=sig;
+      if(prev.parts[id]!==sig) writes.push({type:"set",ref:partRef(id),data,options:{merge:false}});
+    });
+
+    // Loghi/immagini: sono la parte più pesante. Se identici, non vengono più reinviati.
+    assets.forEach(a=>{
+      const sig=hmFbSig(a);
+      next.assets[a.id]=sig;
+      if(prev.assets[a.id]!==sig) writes.push({type:"set",ref:assetsCol().doc(a.id),data:a,options:{merge:false}});
+    });
+
+    // Registro scambi: sincronizzo solo le righe nuove/modificate.
+    (Array.isArray(trades)?trades:[]).forEach((t,i)=>{
+      const id=safeId(t.id || ("trade_"+i));
+      const data={...t,_sort:i};
+      const sig=hmFbSig(data);
+      next.trades[id]=sig;
+      if(prev.trades[id]!==sig) writes.push({type:"set",ref:tradesCol().doc(id),data,options:{merge:false}});
+    });
+
+    // News/comunicati: stesso principio, solo nuove o modificate.
+    (Array.isArray(news)?news:[]).forEach((n,i)=>{
+      const id=safeId(n.id || ("news_"+i));
+      const data={...n,_sort:i};
+      const sig=hmFbSig(data);
+      next.news[id]=sig;
+      if(prev.news[id]!==sig) writes.push({type:"set",ref:newsCol().doc(id),data,options:{merge:false}});
+    });
+
     await commitInChunks(writes);
+    hmFbSaveSigCache(next);
+    try{window.HM_LAST_CLOUD_WRITE_COUNT=writes.length;}catch(e){}
+    return writes.length;
+  }
+
+  function fbPrimeSignatureCache(){
+    // Dopo un caricamento cloud riuscito consideriamo quello stato come base sincronizzata.
+    // Così il PRIMO salvataggio dopo una piccola modifica non rispedisce l'intero database.
+    try{
+      const {docs,assets}=buildSplitDocs();
+      const next={parts:{},assets:{},trades:{},news:{}};
+      Object.entries(docs).forEach(([id,data])=>next.parts[id]=hmFbPartSig(id,data));
+      assets.forEach(a=>next.assets[a.id]=hmFbSig(a));
+      (Array.isArray(trades)?trades:[]).forEach((t,i)=>{const id=safeId(t.id || ("trade_"+i));next.trades[id]=hmFbSig({...t,_sort:i});});
+      (Array.isArray(news)?news:[]).forEach((n,i)=>{const id=safeId(n.id || ("news_"+i));next.news[id]=hmFbSig({...n,_sort:i});});
+      hmFbSaveSigCache(next);
+      return true;
+    }catch(e){console.warn("Base firme Firebase non creata",e);return false;}
   }
 
   async function docsFromIndex(col,indexItems){
@@ -3810,7 +3887,12 @@ window.addEventListener("beforeunload", function(e){
         const old=await metaRef().get();
         if(old.exists && good(old.data())) data=old.data();
       }
-      if(good(data)){apply(data); fbLoaded=true; setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok")}
+      if(good(data)){
+        apply(data);
+        fbLoaded=true;
+        fbPrimeSignatureCache();
+        setStatus(admin()?"🔓 Admin collegato":"✅ Online sincronizzato","ok");
+      }
       else setStatus(admin()?"🔓 Admin collegato · Firebase vuoto":"ℹ️ Firebase vuoto","wait");
       renderSafe(); return true;
     }catch(e){console.error(e); setStatus("⚠️ Errore lettura Firebase","bad"); renderSafe(); return false;}
@@ -3819,16 +3901,31 @@ window.addEventListener("beforeunload", function(e){
   async function fbSave(manual=true){
     patchPerms();
     if(!admin()){if(manual)alert("Devi fare login Google prima di salvare."); return false;}
-    fbSaving=true; updateUI(); setStatus("💾 Salvataggio online...","wait");
+
+    // Blocco anti-doppio salvataggio: se una sincronizzazione è già partita,
+    // una seconda richiesta viene ignorata e non può produrre una seconda conferma.
+    if(fbSaving || HM_CLOUD_SAVING){
+      setStatus("💾 Salvataggio già in corso...","wait");
+      return false;
+    }
+
+    fbSaving=true;
+    HM_CLOUD_SAVING=true;
+    updateUI();
+    setStatus("💾 Salvataggio online...","wait");
     try{
-      await fbSaveSplit();
+      const writeCount=await fbSaveSplit();
       try{saveLocalOnly()}catch(e){}
       HM_HAS_UNSAVED_CHANGES=false; fbLoaded=true;
       setStatus("✅ Online sincronizzato","ok");
       if(manual)alert("Salvato online su Firebase.");
       return true;
     }catch(e){console.error(e); setStatus("⚠️ Errore salvataggio Firebase","bad"); if(manual)alert("Errore salvataggio Firebase: "+(e.code||e.message||e)); return false;}
-    finally{fbSaving=false; updateUI();}
+    finally{
+      fbSaving=false;
+      HM_CLOUD_SAVING=false;
+      updateUI();
+    }
   }
 
   function patchSave(){
@@ -4701,7 +4798,7 @@ window.addEventListener("beforeunload", function(e){
     const lb = $("hmFirebaseLoginBtn");
     if(lb) lb.textContent = internalAdmin() ? "👤 Federico admin" : internalLogged() ? `👤 ${currentUser.username}` : "🔐 Login";
     const sb = $("hmFirebaseSaveBtn");
-    if(sb){ sb.disabled = !internalLogged(); sb.style.opacity = sb.disabled ? ".45" : "1"; }
+    if(sb){ sb.disabled = !internalLogged() || !!HM_CLOUD_SAVING; sb.style.opacity = sb.disabled ? ".45" : "1"; }
     try{ updateAuthBadge && updateAuthBadge(); }catch(e){}
   }
 

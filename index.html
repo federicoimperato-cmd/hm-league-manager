@@ -3185,7 +3185,7 @@ function findTeamCodeFromExcelName(name){
   const aliases={
     "fcskullteam":"SKU","skullteam":"SKU","astoto":"TOT","bvbcasalotti":"BVB","iardinesefc":"IAR","iardinesecalcio":"IAR",
     "floridia":"FLO","atleticojosephino":"JOS","realdiazepam":"DIA","atleticopalermo":"PAL","imperiale09":"IMP","ironteam":"IRO",
-    "thebears":"BEA","legiontoto":"LEG","youngboysfloridia":"YOU","footballkraken":"KRA","tanadelletigri":"TDT","redbullcasalotti":"RED"
+    "thebears":"BEA","legiontoto":"LEG","legiontotoxxi":"LEG","youngboysfloridia":"YOU","footballkraken":"KRA","tanadelletigri":"TDT","tanadelletigriaccademy":"TDT","tanadelletigriacademy":"TDT","redbullcasalotti":"RED"
   };
   if(aliases[n]) return aliases[n];
   const exact=(teams||[]).find(t=>normalizeTeamText(t.name)===n || normalizeTeamText(t.code)===n);

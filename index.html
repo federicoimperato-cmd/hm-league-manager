@@ -3116,7 +3116,7 @@ function competitionLeagueHtml(c){
       </div>
       <div class="row">
         ${canImport?`<input id="standingFile_${c.id}" type="file" accept=".xlsx,.xls" style="display:none" onchange="importStandingsExcel('${c.id}',event)">
-        <button class="btn primary" onclick="document.getElementById('standingFile_${c.id}').click()">📥 Carica classifica Excel</button>`:""}
+        <button class="btn primary" onclick="hmStartFilePicker();document.getElementById('standingFile_${c.id}').click()">📥 Carica classifica Excel</button>`:""}
         <button class="btn green" onclick="saveStandingsLocal('${c.id}')">💾 Salva classifica</button>
       </div>
     </div>
@@ -3173,6 +3173,7 @@ function updateStandingFieldComp(compId,teamCode,field,value){
 }
 function saveStandingsLocal(compId){
   if(!requireAdmin()) return;
+  HM_HAS_UNSAVED_CHANGES = true;
   safeSetStorage("hm_competitions_manager_v1", competitionsManager);
   const box=q(`standingImportMsg_${compId}`);
   if(box) box.innerHTML='<span style="color:#86efac;font-weight:900">✅ Classifica salvata in locale.</span>';
@@ -3220,13 +3221,19 @@ async function importStandingsExcel(compId,event){
     if(!c) throw new Error("Competizione non trovata.");
     c.participants=parsed.map(r=>r.teamCode);
     c.standings=parsed;
+    // L'import Excel è una modifica locale valida: impedisce a un rientro focus/cloud
+    // di sovrascrivere immediatamente la classifica appena caricata.
+    HM_HAS_UNSAVED_CHANGES = true;
     safeSetStorage("hm_competitions_manager_v1",competitionsManager);
     if(msg) msg.innerHTML=`<span style="color:#86efac;font-weight:900">✅ Importate ${parsed.length} squadre da ${esc(file.name)}. Premi “Salva classifica” per confermare il salvataggio locale.</span>`;
     renderCompetitionManager();
     setTimeout(()=>{const m=q(`standingImportMsg_${compId}`);if(m)m.innerHTML=`<span style="color:#86efac;font-weight:900">✅ Importate ${parsed.length} squadre da ${esc(file.name)}.</span>`;},0);
   }catch(err){
     console.error(err); if(msg) msg.innerHTML=`<span style="color:#fca5a5;font-weight:900">❌ ${esc(err.message||err)}</span>`;
-  }finally{ if(event?.target) event.target.value=""; }
+  }finally{
+    if(event?.target) event.target.value="";
+    hmEndFilePickerSoon();
+  }
 }
 
 function competitionManualHtml(c){

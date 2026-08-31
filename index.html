@@ -8954,9 +8954,9 @@ window.addEventListener("beforeunload", function(e){
           </div>
           <div id="hmA2AutoInfo_${sid}" class="hm-a2-mini" style="margin-top:6px"></div>
           <div class="row" style="margin-top:8px">
-            <button class="btn green hmA2UserCtl" onclick="hmA2Bid('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>Fai offerta</button>
-            <button class="btn primary hmA2UserCtl" onclick="hmA2SetAuto('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>🤖 Salva autobid</button>
-            <button class="btn yellow hmA2UserCtl" onclick="hmA2Pass('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>Passo</button>
+            <button class="btn green hmA2UserCtl" data-a2-active="${d.status==="active"?"1":"0"}" onclick="hmA2Bid('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>Fai offerta</button>
+            <button class="btn primary hmA2UserCtl" data-a2-active="${d.status==="active"?"1":"0"}" onclick="hmA2SetAuto('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>🤖 Salva autobid</button>
+            <button class="btn yellow hmA2UserCtl" data-a2-active="${d.status==="active"?"1":"0"}" onclick="hmA2Pass('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>Passo</button>
           </div>`:`<div class="muted" style="margin-top:7px">Nessuna tua squadra è abilitata a questa serie.</div>`}
         </div>`:""}
       <details style="margin-top:10px"><summary style="cursor:pointer;font-weight:900">Offerte e partecipanti</summary><div style="margin-top:8px">${a2BidRows(d)}</div><div class="hm-a2-pass" style="margin-top:8px">${a2Passed(d)}</div></details>
@@ -9028,10 +9028,17 @@ window.addEventListener("beforeunload", function(e){
 
   function a2FixPerms(){
     if(typeof currentVisibleViewName==="function" && currentVisibleViewName()!=="auction") return;
+    const logged = (()=>{ try{return typeof isLoggedIn==="function"?isLoggedIn():!!(currentUser&&currentUser.role&&currentUser.role!=="guest");}catch(e){return false;} })();
     document.querySelectorAll('#view-auction button[onclick^="hmA2SetSeries"]').forEach(el=>{el.disabled=false;el.style.opacity="1";});
     document.querySelectorAll("#view-auction .hmA2AdminCtl").forEach(el=>{el.disabled=!a2admin();el.style.opacity=a2admin()?"1":".45";});
-    document.querySelectorAll("#view-auction .hmA2UserCtl").forEach(el=>{el.disabled=el.disabled||false; if(!el.disabled)el.style.opacity="1";});
-    document.querySelectorAll('#view-auction select[id^="hmA2Team_"],#view-auction input[id^="hmA2Bid_"],#view-auction input[id^="hmA2Auto_"]').forEach(el=>{el.disabled=false;el.style.opacity="1";});
+    document.querySelectorAll("#view-auction .hmA2UserCtl").forEach(el=>{
+      const active = el.dataset.a2Active === "1";
+      el.disabled = !(logged && active);
+      el.style.opacity = el.disabled ? ".45" : "1";
+    });
+    document.querySelectorAll('#view-auction select[id^="hmA2Team_"],#view-auction input[id^="hmA2Bid_"],#view-auction input[id^="hmA2Auto_"]').forEach(el=>{
+      el.disabled=!logged; el.style.opacity=logged?"1":".45";
+    });
     if(a2admin()) document.querySelectorAll("#view-auction #hmA2Minutes,#view-auction #hmA2EndAt,#view-auction #hmA2Search").forEach(el=>{el.disabled=false;el.style.opacity="1";});
   }
 
@@ -9059,10 +9066,20 @@ window.addEventListener("beforeunload", function(e){
   window.openManualAuctionPlayer = a2ManualPlayer;
 
   // Mantiene intatti i permessi delle altre sezioni, ma riabilita i controlli della nuova Asta.
+  // Il gestionale possiede due entry-point permessi (applyPermissionsToVisibleView e applyInternalPermissions):
+  // entrambi devono terminare con a2FixPerms, altrimenti il ciclo interno può rendere di nuovo grigia l'Asta V2.
   const oldApplyPerms=window.applyPermissionsToVisibleView;
+  const oldApplyInternalPerms=window.applyInternalPermissions;
   if(typeof oldApplyPerms==="function"){
     window.applyPermissionsToVisibleView=function(){
       const r=oldApplyPerms.apply(this,arguments);
+      try{a2FixPerms();}catch(e){}
+      return r;
+    };
+  }
+  if(typeof oldApplyInternalPerms==="function"){
+    window.applyInternalPermissions=function(){
+      const r=oldApplyInternalPerms.apply(this,arguments);
       try{a2FixPerms();}catch(e){}
       return r;
     };

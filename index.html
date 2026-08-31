@@ -4999,6 +4999,23 @@ window.addEventListener("beforeunload", function(e){
       if(el.closest && (el.closest("#offerPlayers") || el.closest("#requestPlayers") || el.closest("#draftTradeSummary"))) return true;
     }
     if(view === "auction"){
+      // ASTA V2: i presidenti loggati possono usare i controlli della nuova asta.
+      // Il filtro della squadra resta dentro Asta V2 (currentUser.teams), quindi ogni presidente
+      // può agire solo sulla propria squadra della Serie A/B; Federico admin su tutte.
+      const a2Id = String(el.id||"");
+      const isA2 =
+        (el.classList && (el.classList.contains("hmA2AdminCtl") || el.classList.contains("hmA2UserCtl"))) ||
+        a2Id.startsWith("hmA2Team_") || a2Id.startsWith("hmA2Bid_") || a2Id.startsWith("hmA2Auto_") ||
+        ["hmA2Minutes","hmA2EndAt","hmA2Search"].includes(a2Id) ||
+        on.includes("hmA2SetSeries(") || on.includes("hmA2Bid(") || on.includes("hmA2SetAuto(") || on.includes("hmA2Pass(") ||
+        on.includes("hmA2Start(") || on.includes("hmA2ManualPlayer(") || on.includes("hmA2PauseSeries(") || on.includes("hmA2ResumeSeries(") ||
+        on.includes("hmA2AddTime(") || on.includes("hmA2Close(") || on.includes("hmA2Cancel(") || on.includes("hmA2EditClosed(");
+      if(isA2){
+        if(!internalLogged()) return false;
+        if((el.classList && el.classList.contains("hmA2AdminCtl")) || ["hmA2Minutes","hmA2EndAt","hmA2Search"].includes(a2Id)) return internalAdmin();
+        return true;
+      }
+      // Compatibilità con la vecchia asta.
       if(on.includes("placeBid(") || on.includes("passAuction") || el.id === "bidTeam" || el.id === "bidAmount") return true;
     }
     return false;
@@ -8412,7 +8429,7 @@ window.addEventListener("beforeunload", function(e){
   const a2team = code => (typeof hmTeam==="function" ? hmTeam(code) : (teams||[]).find(t=>t.code===code));
   const a2label = code => (typeof hmTeamLabel==="function" ? hmTeamLabel(code) : (a2team(code)?.name||code));
   const a2jersey = (code,size) => { try{return typeof hmJersey==="function"?hmJersey(code,size):(typeof jersey==="function"?jersey(code,size):"");}catch(e){return "";} };
-  const a2admin = () => { try{return typeof hmIsAdmin==="function"?hmIsAdmin():typeof isAdmin==="function"?isAdmin():false;}catch(e){return false;} };
+  const a2admin = () => { try{return !!(currentUser && currentUser.role === "admin");}catch(e){return false;} };
   const a2can = code => {
     try{
       if(a2admin()) return true;
@@ -9028,7 +9045,7 @@ window.addEventListener("beforeunload", function(e){
 
   function a2FixPerms(){
     if(typeof currentVisibleViewName==="function" && currentVisibleViewName()!=="auction") return;
-    const logged = (()=>{ try{return typeof isLoggedIn==="function"?isLoggedIn():!!(currentUser&&currentUser.role&&currentUser.role!=="guest");}catch(e){return false;} })();
+    const logged = (()=>{ try{return !!(currentUser && currentUser.role && currentUser.role !== "guest");}catch(e){return false;} })();
     document.querySelectorAll('#view-auction button[onclick^="hmA2SetSeries"]').forEach(el=>{el.disabled=false;el.style.opacity="1";});
     document.querySelectorAll("#view-auction .hmA2AdminCtl").forEach(el=>{el.disabled=!a2admin();el.style.opacity=a2admin()?"1":".45";});
     document.querySelectorAll("#view-auction .hmA2UserCtl").forEach(el=>{

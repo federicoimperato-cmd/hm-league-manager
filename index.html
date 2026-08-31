@@ -8359,5 +8359,595 @@ window.addEventListener("beforeunload", function(e){
 })();
 </script>
 
+
+<style id="hmAuctionV2Styles">
+.hm-a2-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.hm-a2-series{display:flex;gap:8px;flex-wrap:wrap}
+.hm-a2-series button.active{background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff}
+.hm-a2-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.hm-a2-card{background:#0b1627;border:1px solid #28405f;border-radius:20px;padding:14px}
+.hm-a2-card.ending{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.18)}
+.hm-a2-card.closed{opacity:.78}
+.hm-a2-price{font-size:29px;font-weight:900;line-height:1.05}
+.hm-a2-timer{font-size:25px;font-weight:900;font-variant-numeric:tabular-nums}
+.hm-a2-timer.danger{color:#facc15}
+.hm-a2-mini{font-size:12px;color:#a8b3c7}
+.hm-a2-search-results{max-height:360px;overflow:auto;margin-top:10px}
+.hm-a2-search-results:empty{display:none}
+.hm-a2-pass{display:flex;gap:5px;flex-wrap:wrap}
+.hm-a2-pass .badge{font-size:10px}
+.hm-a2-own{background:rgba(124,58,237,.11);border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:10px;margin-top:10px}
+.hm-a2-adminbox{background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.25);border-radius:18px;padding:12px}
+.hm-a2-sep{height:1px;background:#28405f;margin:12px 0}
+@media(max-width:900px){.hm-a2-grid{grid-template-columns:1fr}.hm-a2-timer{font-size:21px}}
+</style>
+<script>
+/* =========================================================
+   HML ASTA V2 - PATCH ISOLATA
+   - NON modifica le altre sezioni del gestionale.
+   - Serie A/B separate
+   - aste simultanee
+   - finestre lunghe / scadenza lotto
+   - autobid
+   - +30s nell'ultimo minuto
+   - chiusura anticipata quando tutti tranne il leader passano
+   - budget negativo consentito
+   ========================================================= */
+(function(){
+  if(window.HM_AUCTION_V2_PATCH) return;
+  window.HM_AUCTION_V2_PATCH = true;
+
+  const A2_SERIES_TEAMS = {
+    A:["SKU","TOT","BVB","IAR","FLO","JOS","DIA","PAL","IMP","IRO"],
+    B:["BEA","LEG","YOU","KRA","TDT","RED"]
+  };
+  let A2_SERIES = localStorage.getItem("hm_auction_v2_series") || "A";
+  let A2_DOCS = {};
+  let A2_UNSUB = null;
+  let A2_TIMER = null;
+  let A2_BUSY = new Set();
+  let A2_LOADED = false;
+
+  const a2esc = v => (typeof hmEsc==="function" ? hmEsc(v) : String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])));
+  const a2team = code => (typeof hmTeam==="function" ? hmTeam(code) : (teams||[]).find(t=>t.code===code));
+  const a2label = code => (typeof hmTeamLabel==="function" ? hmTeamLabel(code) : (a2team(code)?.name||code));
+  const a2jersey = (code,size) => { try{return typeof hmJersey==="function"?hmJersey(code,size):(typeof jersey==="function"?jersey(code,size):"");}catch(e){return "";} };
+  const a2admin = () => { try{return typeof hmIsAdmin==="function"?hmIsAdmin():typeof isAdmin==="function"?isAdmin():false;}catch(e){return false;} };
+  const a2can = code => { try{return a2admin() || (typeof hmCanEditTeam==="function"?hmCanEditTeam(code):typeof canEditTeam==="function"?canEditTeam(code):false);}catch(e){return false;} };
+  const a2db = () => { try{return typeof hmFirebaseDb==="function"?hmFirebaseDb():null;}catch(e){return null;} };
+  const a2now = () => Date.now();
+  const a2stamp = () => new Date().toISOString();
+  const a2pretty = () => { try{return typeof hmNow==="function"?hmNow():new Date().toLocaleString("it-IT");}catch(e){return new Date().toLocaleString("it-IT");} };
+  const a2col = () => { const db=a2db(); return db?db.collection("hmleague").doc("main").collection("auction_v2"):null; };
+  const a2autoCol = () => { const db=a2db(); return db?db.collection("hmleague").doc("main").collection("auction_v2_autobids"):null; };
+  const a2safeId = v => String(v||"").replace(/[^A-Za-z0-9_-]/g,"_");
+  const a2autoRef = (auctionId,teamCode) => { const c=a2autoCol(); return c?c.doc(a2safeId(auctionId)+"__"+a2safeId(teamCode)):null; };
+
+  function a2SeriesCodes(series){ return A2_SERIES_TEAMS[series==="B"?"B":"A"].slice(); }
+  function a2AllowedTeams(series){
+    return a2SeriesCodes(series).map(a2team).filter(Boolean).filter(t=>a2can(t.code));
+  }
+  function a2AllSeriesTeams(series){ return a2SeriesCodes(series).map(a2team).filter(Boolean); }
+  function a2Player(id){ return (players||[]).find(p=>String(p.id)===String(id)); }
+  function a2Highest(d){ const b=Array.isArray(d?.bids)?d.bids:[]; return b.length?b[b.length-1]:null; }
+  function a2Remaining(d){ return Math.max(0,Number(d?.endAtMs||0)-a2now()); }
+  function a2FmtMs(ms){
+    ms=Math.max(0,Number(ms||0));
+    const s=Math.ceil(ms/1000), h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+    return h>0?`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`:`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  }
+  function a2DefaultEndMs(){
+    const raw=localStorage.getItem("hm_auction_v2_default_minutes")||"120";
+    const mins=Math.max(1,Number(raw)||120);
+    return a2now()+mins*60000;
+  }
+  function a2ParseEndInput(){
+    const el=document.getElementById("hmA2EndAt");
+    if(el && el.value){
+      const ms=new Date(el.value).getTime();
+      if(Number.isFinite(ms) && ms>a2now()){
+        localStorage.setItem("hm_auction_v2_end_at",String(ms));
+        return ms;
+      }
+    }
+    const saved=Number(localStorage.getItem("hm_auction_v2_end_at")||0);
+    if(saved>a2now()) return saved;
+    return a2DefaultEndMs();
+  }
+  function a2InputDefaultValue(){
+    const saved=Number(localStorage.getItem("hm_auction_v2_end_at")||0);
+    const d=new Date(saved>a2now()?saved:a2DefaultEndMs());
+    const pad=n=>String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function a2SaveMinutes(){
+    const n=Math.max(1,Number(document.getElementById("hmA2Minutes")?.value||120));
+    localStorage.setItem("hm_auction_v2_default_minutes",String(n));
+    const newEnd=a2now()+n*60000;
+    localStorage.setItem("hm_auction_v2_end_at",String(newEnd));
+    const end=document.getElementById("hmA2EndAt"); if(end) end.value=a2InputDefaultValue();
+  }
+  function a2SaveEnd(){
+    const el=document.getElementById("hmA2EndAt");
+    if(!el||!el.value) return;
+    const ms=new Date(el.value).getTime();
+    if(Number.isFinite(ms)&&ms>a2now()) localStorage.setItem("hm_auction_v2_end_at",String(ms));
+  }
+
+  function a2Normalize(d,id){
+    d=d&&typeof d==="object"?d:{};
+    return {
+      id:id||d.id||"",
+      playerId:d.playerId||"",
+      playerName:d.playerName||"",
+      role:d.role||"",
+      series:d.series==="B"?"B":"A",
+      status:d.status||"active",
+      bids:Array.isArray(d.bids)?d.bids:[],
+      passedTeams:Array.isArray(d.passedTeams)?d.passedTeams:[],
+      endAtMs:Number(d.endAtMs||0),
+      remainingMs:Number(d.remainingMs||0),
+      winner:d.winner||null,
+      closeReason:d.closeReason||"",
+      createdAtMs:Number(d.createdAtMs||0),
+      updatedAt:d.updatedAt||"",
+      updatedBy:d.updatedBy||""
+    };
+  }
+
+  function a2StartListener(){
+    if(A2_UNSUB) return;
+    const c=a2col(); if(!c) return;
+    try{
+      A2_UNSUB=c.onSnapshot(s=>{
+        const next={};
+        s.forEach(doc=>{ next[doc.id]=a2Normalize(doc.data(),doc.id); });
+        A2_DOCS=next; A2_LOADED=true;
+        if(typeof currentVisibleViewName==="function" && currentVisibleViewName()==="auction") a2Render();
+        a2ApplyClosedFromDocs();
+      },err=>console.error("Asta V2 listener",err));
+    }catch(e){console.error("Asta V2 start listener",e);}
+  }
+
+  async function a2GetAutoMap(tx,auctionId,series){
+    const out={};
+    const refs=a2SeriesCodes(series).map(code=>({code,ref:a2autoRef(auctionId,code)})).filter(x=>x.ref);
+    for(const x of refs){
+      const snap=await tx.get(x.ref);
+      if(snap.exists){
+        const d=snap.data()||{};
+        if(Number(d.max||0)>0) out[x.code]={max:Number(d.max),setAtMs:Number(d.setAtMs||0)};
+      }
+    }
+    return out;
+  }
+
+  function a2ResolveProxy(live,autoMap,floorTeam=null,floorAmount=null){
+    const bids=Array.isArray(live.bids)?live.bids:[];
+    const cur=a2Highest(live);
+    let floor=Number(floorAmount!=null?floorAmount:(cur?.amount||0));
+    let floorOwner=floorTeam || cur?.team || "";
+    if(floor<=0) floor=1;
+
+    const commits={};
+    Object.entries(autoMap||{}).forEach(([code,v])=>{
+      const mx=Number(v?.max||0);
+      if(mx>0) commits[code]={max:mx,setAtMs:Number(v?.setAtMs||0)||Number.MAX_SAFE_INTEGER};
+    });
+    if(floorOwner){
+      const existing=commits[floorOwner];
+      const fallbackTime=floorAmount!=null?a2now():0;
+      commits[floorOwner]={max:Math.max(floor,Number(existing?.max||0)),setAtMs:Number(existing?.setAtMs||0)||fallbackTime};
+    }
+    const arr=Object.entries(commits).map(([team,v])=>({team,max:Number(v.max),setAtMs:Number(v.setAtMs||0)}))
+      .filter(x=>x.max>=1)
+      .sort((a,b)=> b.max-a.max || a.setAtMs-b.setAtMs || a.team.localeCompare(b.team));
+
+    if(!arr.length) return {team:floorOwner||"",amount:floorOwner?floor:0,auto:false};
+    const top=arr[0], second=arr[1]||null;
+
+    if(floorOwner===top.team && floorAmount!=null){
+      if(!second || second.max < floor) return {team:top.team,amount:floor,auto:false};
+      return {team:top.team,amount:Math.min(top.max,second.max+1),auto:true};
+    }
+
+    if(!second){
+      const amount=cur?Math.max(1,Number(cur.amount||1)):1;
+      return {team:top.team,amount:Math.min(top.max,amount),auto:true};
+    }
+    const base=Math.max(floor,second.max+1);
+    return {team:top.team,amount:Math.min(top.max,base),auto:true};
+  }
+
+  function a2AppendBidIfChanged(live,res,userLabel){
+    if(!res?.team || Number(res.amount||0)<=0) return live.bids||[];
+    const arr=[...(live.bids||[])], last=arr.length?arr[arr.length-1]:null;
+    if(last && last.team===res.team && Number(last.amount)===Number(res.amount)) return arr;
+    arr.push({team:res.team,amount:Number(res.amount),date:a2pretty(),ts:a2now(),auto:!!res.auto,user:userLabel||"autobid"});
+    return arr;
+  }
+
+  function a2MaybeExtend(live,changed){
+    let end=Number(live.endAtMs||0);
+    if(changed && end>a2now() && end-a2now()<=60000) end+=30000;
+    return end;
+  }
+
+  function a2PassCloseDecision(live){
+    const codes=a2SeriesCodes(live.series);
+    const passed=new Set(live.passedTeams||[]);
+    const bid=a2Highest(live);
+    if(bid){
+      const everyoneElsePassed=codes.filter(c=>c!==bid.team).every(c=>passed.has(c));
+      if(everyoneElsePassed) return {close:true,winner:bid,reason:"Tutti gli altri hanno passato"};
+    }else{
+      const allPassed=codes.every(c=>passed.has(c));
+      if(allPassed) return {close:true,winner:null,reason:"Tutte le squadre hanno passato"};
+    }
+    return {close:false};
+  }
+
+  async function a2CreateAuction(playerId,series,endAtMs){
+    if(!a2admin()){alert("Solo admin può aprire nuove aste.");return;}
+    const p=a2Player(playerId); if(!p){alert("Calciatore non trovato.");return;}
+    const c=a2col(); if(!c){alert("Firebase non pronto.");return;}
+    const id="A2_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+    const doc={
+      id,playerId:p.id,playerName:p.name,role:p.role||"",series:series==="B"?"B":"A",
+      status:"active",bids:[],passedTeams:[],endAtMs:Number(endAtMs||a2DefaultEndMs()),
+      remainingMs:0,winner:null,closeReason:"",createdAtMs:a2now(),updatedAt:a2stamp(),
+      updatedBy:currentUser?.username||"admin"
+    };
+    await c.doc(id).set(doc,{merge:false});
+  }
+
+  async function a2ManualPlayer(){
+    if(!a2admin()){alert("Solo admin può aggiungere un calciatore manualmente.");return;}
+    const name=prompt("Nome calciatore"); if(!name) return;
+    const role=prompt("Ruolo","")||"";
+    const p={id:"P"+Date.now(),name,role,current:"",owner:"SVIN",status:"ASTA",bonus:"",contract:"0",deadline:""};
+    players.push(p);
+    try{ if(typeof saveLocalOnly==="function") saveLocalOnly(); else if(typeof hmSaveLocal==="function") hmSaveLocal(); }catch(e){}
+    try{await a2CreateAuction(p.id,A2_SERIES,a2ParseEndInput());}catch(e){console.error(e);alert("Errore apertura asta: "+(e.message||e));}
+  }
+
+  async function a2Bid(auctionId){
+    if(A2_BUSY.has(auctionId)) return;
+    const d=A2_DOCS[auctionId]; if(!d||d.status!=="active"){alert("Asta non attiva.");return;}
+    const teamCode=document.getElementById("hmA2Team_"+a2safeId(auctionId))?.value;
+    const amount=Number(document.getElementById("hmA2Bid_"+a2safeId(auctionId))?.value||0);
+    if(!teamCode||!a2can(teamCode)){alert("Squadra non abilitata.");return;}
+    if(!a2SeriesCodes(d.series).includes(teamCode)){alert("Questa squadra non partecipa a questa serie d'asta.");return;}
+    const c=a2col(), ref=c?.doc(auctionId); if(!ref){alert("Firebase non pronto.");return;}
+    A2_BUSY.add(auctionId);
+    try{
+      const db=a2db();
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref); if(!snap.exists) throw new Error("Asta non trovata.");
+        const live=a2Normalize(snap.data(),auctionId); if(live.status!=="active") throw new Error("Asta chiusa o in pausa.");
+        if(Number(live.endAtMs||0)<=a2now()) throw new Error("Tempo scaduto.");
+        const current=a2Highest(live), min=current?Number(current.amount)+1:1;
+        if(amount<min) throw new Error("Offerta minima "+min);
+        const autoMap=await a2GetAutoMap(tx,auctionId,live.series);
+        const res=a2ResolveProxy(live,autoMap,teamCode,amount);
+        const bids=a2AppendBidIfChanged(live,res,currentUser?.username||"utente");
+        const changed=!current || Number((bids[bids.length-1]||{}).amount)!==Number(current.amount) || (bids[bids.length-1]||{}).team!==current.team;
+        const passed=(live.passedTeams||[]).filter(c=>c!==teamCode);
+        let next=Object.assign({},live,{bids,passedTeams:passed,endAtMs:a2MaybeExtend(live,changed),updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"});
+        const dec=a2PassCloseDecision(next);
+        if(dec.close) next=Object.assign(next,{status:"closed",winner:dec.winner?{team:dec.winner.team,amount:dec.winner.amount,date:a2pretty()}:null,closeReason:dec.reason});
+        tx.set(ref,next,{merge:false});
+      });
+    }catch(e){console.error(e);alert("Offerta non registrata: "+(e.message||e));}
+    finally{A2_BUSY.delete(auctionId);}
+  }
+
+  async function a2SetAuto(auctionId){
+    const d=A2_DOCS[auctionId]; if(!d||d.status!=="active"){alert("Asta non attiva.");return;}
+    const sid=a2safeId(auctionId);
+    const teamCode=document.getElementById("hmA2Team_"+sid)?.value;
+    const max=Number(document.getElementById("hmA2Auto_"+sid)?.value||0);
+    if(!teamCode||!a2can(teamCode)){alert("Squadra non abilitata.");return;}
+    if(!a2SeriesCodes(d.series).includes(teamCode)){alert("Questa squadra non partecipa a questa serie d'asta.");return;}
+    const ref=a2col()?.doc(auctionId), ar=a2autoRef(auctionId,teamCode); if(!ref||!ar){alert("Firebase non pronto.");return;}
+    A2_BUSY.add(auctionId);
+    try{
+      const db=a2db();
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref); if(!snap.exists) throw new Error("Asta non trovata.");
+        let live=a2Normalize(snap.data(),auctionId); if(live.status!=="active") throw new Error("Asta chiusa o in pausa.");
+        const current=a2Highest(live);
+        if(max<=0){
+          tx.delete(ar);
+          tx.set(ref,Object.assign({},live,{updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"}),{merge:false});
+          return;
+        }
+        if(current && current.team!==teamCode && max<=Number(current.amount||0)) throw new Error("Il massimo autobid deve superare l'offerta corrente.");
+        const existing=await tx.get(ar);
+        const old=existing.exists?(existing.data()||{}):{};
+        const autoMap=await a2GetAutoMap(tx,auctionId,live.series);
+        const setAt=Number(old.setAtMs||0)||a2now();
+        autoMap[teamCode]={max,setAtMs:setAt};
+        tx.set(ar,{auctionId,team:teamCode,max,setAtMs:setAt,updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"},{merge:false});
+        const res=a2ResolveProxy(live,autoMap,null,null);
+        const bids=a2AppendBidIfChanged(live,res,"autobid");
+        const changed=!current || Number((bids[bids.length-1]||{}).amount)!==Number(current?.amount||0) || (bids[bids.length-1]||{}).team!==current?.team;
+        const passed=(live.passedTeams||[]).filter(c=>c!==teamCode);
+        let next=Object.assign({},live,{bids,passedTeams:passed,endAtMs:a2MaybeExtend(live,changed),updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"});
+        const dec=a2PassCloseDecision(next);
+        if(dec.close) next=Object.assign(next,{status:"closed",winner:dec.winner?{team:dec.winner.team,amount:dec.winner.amount,date:a2pretty()}:null,closeReason:dec.reason});
+        tx.set(ref,next,{merge:false});
+      });
+      a2LoadOwnAuto(auctionId,teamCode);
+    }catch(e){console.error(e);alert("Autobid non salvato: "+(e.message||e));}
+    finally{A2_BUSY.delete(auctionId);}
+  }
+
+  async function a2Pass(auctionId){
+    const d=A2_DOCS[auctionId]; if(!d||d.status!=="active"){alert("Asta non attiva.");return;}
+    const sid=a2safeId(auctionId);
+    const teamCode=document.getElementById("hmA2Team_"+sid)?.value;
+    if(!teamCode||!a2can(teamCode)){alert("Squadra non abilitata.");return;}
+    if(!a2SeriesCodes(d.series).includes(teamCode)){alert("Questa squadra non partecipa a questa serie d'asta.");return;}
+    const current=a2Highest(d);
+    if(current && current.team===teamCode){alert("Sei il migliore offerente: non puoi passare finché sei in testa.");return;}
+    const ref=a2col()?.doc(auctionId); if(!ref){alert("Firebase non pronto.");return;}
+    try{
+      const db=a2db();
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref); if(!snap.exists) throw new Error("Asta non trovata.");
+        let live=a2Normalize(snap.data(),auctionId); if(live.status!=="active") return;
+        const passed=Array.from(new Set([...(live.passedTeams||[]),teamCode]));
+        let next=Object.assign({},live,{passedTeams:passed,updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"});
+        const dec=a2PassCloseDecision(next);
+        if(dec.close) next=Object.assign(next,{status:"closed",winner:dec.winner?{team:dec.winner.team,amount:dec.winner.amount,date:a2pretty()}:null,closeReason:dec.reason});
+        tx.set(ref,next,{merge:false});
+      });
+    }catch(e){console.error(e);alert("Errore Passo: "+(e.message||e));}
+  }
+
+  async function a2Close(auctionId,reason,force=false){
+    const ref=a2col()?.doc(auctionId); if(!ref) return;
+    try{
+      const db=a2db();
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref); if(!snap.exists) return;
+        const live=a2Normalize(snap.data(),auctionId);
+        if(live.status==="closed"||live.status==="cancelled") return;
+        if(!force && live.status!=="active") return;
+        const bid=a2Highest(live);
+        tx.set(ref,Object.assign({},live,{status:"closed",winner:bid?{team:bid.team,amount:bid.amount,date:a2pretty()}:null,closeReason:reason||"Tempo scaduto",updatedAt:a2stamp(),updatedBy:currentUser?.username||"sistema"}),{merge:false});
+      });
+    }catch(e){console.error("Chiusura asta",e);}
+  }
+
+  async function a2Cancel(auctionId){
+    if(!a2admin()) return;
+    if(!confirm("Annullare questa asta?")) return;
+    const ref=a2col()?.doc(auctionId); if(!ref) return;
+    await ref.set({status:"cancelled",updatedAt:a2stamp(),updatedBy:currentUser?.username||"admin"},{merge:true});
+  }
+
+  async function a2PauseSeries(series){
+    if(!a2admin()) return;
+    const c=a2col(); if(!c)return;
+    const docs=Object.values(A2_DOCS).filter(d=>d.series===series&&d.status==="active");
+    const batch=a2db().batch(), now=a2now();
+    docs.forEach(d=>batch.set(c.doc(d.id),{status:"paused",remainingMs:Math.max(0,d.endAtMs-now),updatedAt:a2stamp(),updatedBy:currentUser?.username||"admin"},{merge:true}));
+    if(docs.length) await batch.commit();
+  }
+
+  async function a2ResumeSeries(series){
+    if(!a2admin()) return;
+    const c=a2col(); if(!c)return;
+    const docs=Object.values(A2_DOCS).filter(d=>d.series===series&&d.status==="paused");
+    const batch=a2db().batch(), now=a2now();
+    docs.forEach(d=>batch.set(c.doc(d.id),{status:"active",endAtMs:now+Math.max(1000,Number(d.remainingMs||0)),remainingMs:0,updatedAt:a2stamp(),updatedBy:currentUser?.username||"admin"},{merge:true}));
+    if(docs.length) await batch.commit();
+  }
+
+  async function a2AddTime(auctionId,mins){
+    if(!a2admin()) return;
+    const ref=a2col()?.doc(auctionId); if(!ref)return;
+    const d=A2_DOCS[auctionId]; if(!d)return;
+    await ref.set({endAtMs:Math.max(a2now(),Number(d.endAtMs||a2now()))+Number(mins||0)*60000,updatedAt:a2stamp(),updatedBy:currentUser?.username||"admin"},{merge:true});
+  }
+
+  function a2ApplyClosedFromDocs(){
+    const key="hm_auction_v2_applied_ids_v1";
+    let applied=[]; try{applied=JSON.parse(localStorage.getItem(key)||"[]");}catch(e){}
+    const set=new Set(Array.isArray(applied)?applied:[]);
+    let changed=false;
+    Object.values(A2_DOCS).forEach(d=>{
+      if(d.status!=="closed"||set.has(d.id)) return;
+      if(d.winner && d.playerId){
+        const p=a2Player(d.playerId), t=a2team(d.winner.team);
+        if(p&&t){
+          const oldOwner=p.owner, oldCurrent=p.current, oldCredits=t.credits;
+          p.owner=d.winner.team; p.current=d.winner.team;
+          t.credits=(Number(t.credits)||0)-Number(d.winner.amount||0); // budget negativo CONSENTITO
+          auctionState=auctionState||{};
+          auctionState.history=Array.isArray(auctionState.history)?auctionState.history:[];
+          const already=auctionState.history.some(x=>x&&x.v2AuctionId===d.id);
+          if(!already) auctionState.history.unshift({v2AuctionId:d.id,playerId:p.id,playerName:p.name,team:d.winner.team,amount:d.winner.amount,oldOwner,oldCurrent,oldCredits,date:d.winner.date||a2pretty(),series:d.series});
+          changed=true;
+        }
+      }
+      set.add(d.id);
+    });
+    if(changed){
+      try{ if(typeof saveLocalOnly==="function") saveLocalOnly(); else if(typeof hmSaveLocal==="function") hmSaveLocal(); }catch(e){console.warn(e);}
+      try{ if(typeof renderDashboard==="function") renderDashboard(); }catch(e){}
+    }
+    try{localStorage.setItem(key,JSON.stringify([...set].slice(-500)));}catch(e){}
+  }
+
+  async function a2LoadOwnAuto(auctionId,teamCode){
+    const out=document.getElementById("hmA2AutoInfo_"+a2safeId(auctionId));
+    const inp=document.getElementById("hmA2Auto_"+a2safeId(auctionId));
+    if(!teamCode||!a2can(teamCode)){ if(out)out.textContent=""; return; }
+    try{
+      const r=a2autoRef(auctionId,teamCode); const s=r?await r.get():null;
+      const max=s&&s.exists?Number((s.data()||{}).max||0):0;
+      if(out) out.innerHTML=max>0?`🤖 Autobid attivo: <b>${a2esc(max)}</b> crediti`:"Autobid non attivo";
+      if(inp) inp.value=max>0?max:"";
+    }catch(e){ if(out)out.textContent="Autobid: impossibile leggere il valore."; }
+  }
+
+  function a2BidRows(d){
+    const arr=Array.isArray(d.bids)?d.bids:[];
+    if(!arr.length)return '<div class="muted">Nessuna offerta.</div>';
+    return arr.slice(-6).reverse().map((b,i)=>`<div class="between" style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)"><span>${a2jersey(b.team,28)} <b>${a2esc(a2label(b.team))}</b>${b.auto?' <span class="badge">🤖</span>':''}</span><b>${a2esc(b.amount)}</b></div>`).join("");
+  }
+  function a2Passed(d){
+    const set=new Set(d.passedTeams||[]);
+    return a2SeriesCodes(d.series).map(c=>`<span class="badge" style="${set.has(c)?'opacity:1':'opacity:.35'}">${set.has(c)?'✓ ':''}${a2esc(a2label(c))}</span>`).join(" ");
+  }
+
+  function a2Card(d){
+    const bid=a2Highest(d), sid=a2safeId(d.id), allowed=a2AllowedTeams(d.series), rem=a2Remaining(d);
+    const isEnding=d.status==="active"&&rem<=60000;
+    const statusLabel=d.status==="active"?"🟢 ATTIVA":d.status==="paused"?"⏸ PAUSA":d.status==="closed"?"🔨 CHIUSA":"❌ ANNULLATA";
+    const next=bid?Number(bid.amount||0)+1:1;
+    const winner=d.status==="closed"?(d.winner?`Aggiudicato a <b>${a2esc(a2label(d.winner.team))}</b> per <b>${a2esc(d.winner.amount)}</b>`:"Asta deserta"):"";
+    return `<div class="hm-a2-card ${isEnding?'ending':''} ${d.status==='closed'?'closed':''}" id="hmA2Card_${sid}">
+      <div class="between">
+        <div><span class="badge">Serie ${d.series}</span> <span class="badge">${statusLabel}</span><h3 style="margin:8px 0 3px">${a2esc(d.playerName||a2Player(d.playerId)?.name||"Calciatore")}</h3><div class="hm-a2-mini">${a2esc(d.role||"")}</div></div>
+        <div style="text-align:right"><div class="hm-a2-timer ${isEnding?'danger':''}" id="hmA2Timer_${sid}">${d.status==="paused"?"PAUSA":d.status==="active"?a2FmtMs(rem):"00:00"}</div><div class="hm-a2-mini">${d.status==="active"?"tempo residuo":a2esc(d.closeReason||"")}</div></div>
+      </div>
+      <div class="hm-a2-sep"></div>
+      <div class="between">
+        <div><div class="hm-a2-mini">Migliore offerta</div><div class="hm-a2-price">${bid?a2esc(bid.amount)+" cr":"—"}</div><div>${bid?a2esc(a2label(bid.team)):"Nessun leader"}</div></div>
+        <div class="hm-a2-mini" style="text-align:right">Passi: ${(d.passedTeams||[]).length}/${a2SeriesCodes(d.series).length}<br>${winner}</div>
+      </div>
+      ${d.status==="active"||d.status==="paused"?`
+        <div class="hm-a2-own">
+          <label>La tua squadra
+            <select id="hmA2Team_${sid}" class="input" onchange="hmA2LoadOwnAuto('${a2esc(d.id)}',this.value)">${allowed.map(t=>`<option value="${a2esc(t.code)}">${a2esc(a2label(t.code))}</option>`).join("")}</select>
+          </label>
+          ${allowed.length?`<div class="grid grid2" style="margin-top:8px">
+            <label>Offerta<input id="hmA2Bid_${sid}" class="input" type="number" value="${next}" min="${next}"></label>
+            <label>Autobid massimo<input id="hmA2Auto_${sid}" class="input" type="number" placeholder="es. 150"></label>
+          </div>
+          <div id="hmA2AutoInfo_${sid}" class="hm-a2-mini" style="margin-top:6px"></div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn green hmA2UserCtl" onclick="hmA2Bid('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>Fai offerta</button>
+            <button class="btn primary hmA2UserCtl" onclick="hmA2SetAuto('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>🤖 Salva autobid</button>
+            <button class="btn yellow hmA2UserCtl" onclick="hmA2Pass('${a2esc(d.id)}')" ${d.status==="active"?"":"disabled"}>Passo</button>
+          </div>`:`<div class="muted" style="margin-top:7px">Nessuna tua squadra è abilitata a questa serie.</div>`}
+        </div>`:""}
+      <details style="margin-top:10px"><summary style="cursor:pointer;font-weight:900">Offerte e partecipanti</summary><div style="margin-top:8px">${a2BidRows(d)}</div><div class="hm-a2-pass" style="margin-top:8px">${a2Passed(d)}</div></details>
+      ${a2admin()&&d.status!=="closed"&&d.status!=="cancelled"?`<div class="row" style="margin-top:10px"><button class="btn hmA2AdminCtl" onclick="hmA2AddTime('${a2esc(d.id)}',5)">+5 min</button><button class="btn primary hmA2AdminCtl" onclick="hmA2Close('${a2esc(d.id)}','Chiusura manuale',true)">🔨 Chiudi ora</button><button class="btn red hmA2AdminCtl" onclick="hmA2Cancel('${a2esc(d.id)}')">Annulla</button></div>`:""}
+    </div>`;
+  }
+
+  function a2RenderSearch(){
+    const box=document.getElementById("hmA2SearchResults"); if(!box)return;
+    const s=(document.getElementById("hmA2Search")?.value||"").trim().toLowerCase();
+    if(s.length<2){box.innerHTML="";return;}
+    const activeIds=new Set(Object.values(A2_DOCS).filter(d=>d.status==="active"||d.status==="paused").map(d=>String(d.playerId)));
+    const list=(players||[]).filter(p=>!activeIds.has(String(p.id)) && [p.name,p.role,p.current,p.owner].join(" ").toLowerCase().includes(s)).slice(0,20);
+    box.innerHTML=list.length?list.map(p=>`<div class="playerRow">${a2jersey(p.owner||"SVIN",42)}<div><b>${a2esc(p.name)}</b><div class="muted">${a2esc(p.role||"")} · ${a2esc(p.current||"")}</div></div><button class="btn primary hmA2AdminCtl" onclick="hmA2Start('${a2esc(p.id)}')">Aggiungi al lotto ${A2_SERIES}</button></div>`).join(""):'<div class="muted">Nessun calciatore trovato.</div>';
+    a2FixPerms();
+  }
+
+  function a2Render(){
+    const root=document.getElementById("view-auction"); if(!root)return;
+    a2StartListener();
+    const docs=Object.values(A2_DOCS).filter(d=>d.series===A2_SERIES).sort((a,b)=>{
+      const rank={active:0,paused:1,closed:2,cancelled:3};
+      return (rank[a.status]??9)-(rank[b.status]??9) || Number(a.endAtMs||0)-Number(b.endAtMs||0) || Number(b.createdAtMs||0)-Number(a.createdAtMs||0);
+    });
+    const active=docs.filter(d=>d.status==="active"||d.status==="paused");
+    const recent=docs.filter(d=>d.status==="closed").slice(0,20);
+    const adminBox=a2admin()?`<div class="hm-a2-adminbox">
+      <div class="between"><b>Controllo lotto Serie ${A2_SERIES}</b><div class="row"><button class="btn yellow hmA2AdminCtl" onclick="hmA2PauseSeries('${A2_SERIES}')">⏸ Pausa serie</button><button class="btn green hmA2AdminCtl" onclick="hmA2ResumeSeries('${A2_SERIES}')">▶ Riprendi serie</button></div></div>
+      <div class="grid grid3" style="margin-top:10px">
+        <label>Durata standard (minuti)<input id="hmA2Minutes" class="input" type="number" min="1" value="${a2esc(localStorage.getItem("hm_auction_v2_default_minutes")||"120")}" onchange="hmA2SaveMinutes()"></label>
+        <label>Scadenza del lotto<input id="hmA2EndAt" class="input" type="datetime-local" value="${a2esc(a2InputDefaultValue())}" onchange="hmA2SaveEnd()"></label>
+        <div><div class="hm-a2-mini">Regola anti-sniping</div><b>+30 secondi per offerta nell'ultimo minuto</b></div>
+      </div>
+      <div style="margin-top:10px"><input id="hmA2Search" class="input" placeholder="Scrivi almeno 2 caratteri per cercare..." oninput="hmA2RenderSearch()"><button class="btn primary hmA2AdminCtl" style="margin-left:8px" onclick="hmA2ManualPlayer()">Aggiungi manualmente</button><div id="hmA2SearchResults" class="hm-a2-search-results"></div></div>
+    </div>`:"";
+
+    root.innerHTML=`<div class="between"><div><h2>🔨 Asta HML</h2><div class="muted">Aste simultanee a finestre lunghe · budget negativo consentito · chiusura anticipata quando tutti gli altri passano.</div></div><div class="row"><span class="badge">🟢 Firebase live</span><span class="badge">${active.length} aste aperte/pausa</span></div></div>
+      <div class="hm-a2-toolbar"><div class="hm-a2-series"><button class="btn ${A2_SERIES==='A'?'active':''}" onclick="hmA2SetSeries('A')">SERIE A · 10 squadre</button><button class="btn ${A2_SERIES==='B'?'active':''}" onclick="hmA2SetSeries('B')">SERIE B · 6 squadre</button></div></div>
+      <div class="card" style="margin-bottom:12px"><b>Partecipanti Serie ${A2_SERIES}:</b> ${a2AllSeriesTeams(A2_SERIES).map(t=>`<span class="badge">${a2esc(t.name)}</span>`).join(" ")}</div>
+      ${adminBox}
+      <div class="between" style="margin:16px 0 10px"><h3 style="margin:0">Aste in corso / pausa</h3><span class="muted">${active.length} calciatori</span></div>
+      <div class="hm-a2-grid">${active.length?active.map(a2Card).join(""):'<div class="card muted">Nessuna asta attiva in Serie '+A2_SERIES+'.</div>'}</div>
+      <details style="margin-top:16px"><summary style="cursor:pointer;font-weight:900">🔨 Ultime aste concluse Serie ${A2_SERIES} (${recent.length})</summary><div class="hm-a2-grid" style="margin-top:10px">${recent.length?recent.map(a2Card).join(""):'<div class="muted">Nessuna asta conclusa.</div>'}</div></details>
+      <div class="card" style="margin-top:16px"><div class="between"><h3>Riepilogo storico asta del gestionale</h3>${a2admin()?'<button class="btn red hmA2AdminCtl" onclick="clearAuctionHistory()">AZZERA storico asta</button>':''}</div>${typeof hmRenderAuctionHistorySummary==="function"?hmRenderAuctionHistorySummary():""}</div>`;
+    setTimeout(()=>{
+      active.forEach(d=>{
+        const sel=document.getElementById("hmA2Team_"+a2safeId(d.id));
+        if(sel&&sel.value) a2LoadOwnAuto(d.id,sel.value);
+      });
+      a2FixPerms();
+    },0);
+  }
+
+  function a2Tick(){
+    // La scadenza continua a essere controllata anche se l'utente è su un'altra sezione:
+    // basta che almeno un client HML sia collegato.
+    Object.values(A2_DOCS).forEach(d=>{
+      if(d.status!=="active")return;
+      const el=document.getElementById("hmA2Timer_"+a2safeId(d.id));
+      const rem=a2Remaining(d);
+      if(el){el.textContent=a2FmtMs(rem); el.classList.toggle("danger",rem<=60000);}
+      if(rem<=0 && !A2_BUSY.has("close_"+d.id)){
+        A2_BUSY.add("close_"+d.id);
+        a2Close(d.id,"Tempo scaduto",false).finally(()=>A2_BUSY.delete("close_"+d.id));
+      }
+    });
+  }
+
+  function a2FixPerms(){
+    if(typeof currentVisibleViewName==="function" && currentVisibleViewName()!=="auction") return;
+    document.querySelectorAll('#view-auction button[onclick^="hmA2SetSeries"]').forEach(el=>{el.disabled=false;el.style.opacity="1";});
+    document.querySelectorAll("#view-auction .hmA2AdminCtl").forEach(el=>{el.disabled=!a2admin();el.style.opacity=a2admin()?"1":".45";});
+    document.querySelectorAll("#view-auction .hmA2UserCtl").forEach(el=>{el.disabled=el.disabled||false; if(!el.disabled)el.style.opacity="1";});
+    document.querySelectorAll('#view-auction select[id^="hmA2Team_"],#view-auction input[id^="hmA2Bid_"],#view-auction input[id^="hmA2Auto_"]').forEach(el=>{el.disabled=false;el.style.opacity="1";});
+    if(a2admin()) document.querySelectorAll("#view-auction #hmA2Minutes,#view-auction #hmA2EndAt,#view-auction #hmA2Search").forEach(el=>{el.disabled=false;el.style.opacity="1";});
+  }
+
+  window.hmA2SetSeries=function(s){A2_SERIES=s==="B"?"B":"A";localStorage.setItem("hm_auction_v2_series",A2_SERIES);a2Render();};
+  window.hmA2RenderSearch=a2RenderSearch;
+  window.hmA2SaveMinutes=a2SaveMinutes;
+  window.hmA2SaveEnd=a2SaveEnd;
+  window.hmA2Start=async function(id){try{await a2CreateAuction(id,A2_SERIES,a2ParseEndInput());const s=document.getElementById("hmA2Search");if(s)s.value="";a2RenderSearch();}catch(e){console.error(e);alert("Errore apertura asta: "+(e.message||e));}};
+  window.hmA2ManualPlayer=a2ManualPlayer;
+  window.hmA2Bid=a2Bid;
+  window.hmA2SetAuto=a2SetAuto;
+  window.hmA2Pass=a2Pass;
+  window.hmA2Close=a2Close;
+  window.hmA2Cancel=a2Cancel;
+  window.hmA2PauseSeries=a2PauseSeries;
+  window.hmA2ResumeSeries=a2ResumeSeries;
+  window.hmA2AddTime=a2AddTime;
+  window.hmA2LoadOwnAuto=a2LoadOwnAuto;
+
+  // Sostituisce SOLO il renderer della sezione Asta.
+  window.renderAuction = a2Render;
+
+  // Compatibilità: il vecchio pulsante "Aggiungi manualmente" / eventuali richiami esterni
+  window.openManualAuctionPlayer = a2ManualPlayer;
+
+  // Mantiene intatti i permessi delle altre sezioni, ma riabilita i controlli della nuova Asta.
+  const oldApplyPerms=window.applyPermissionsToVisibleView;
+  if(typeof oldApplyPerms==="function"){
+    window.applyPermissionsToVisibleView=function(){
+      const r=oldApplyPerms.apply(this,arguments);
+      try{a2FixPerms();}catch(e){}
+      return r;
+    };
+  }
+
+  if(!A2_TIMER) A2_TIMER=setInterval(a2Tick,1000);
+  document.addEventListener("DOMContentLoaded",()=>{a2StartListener();});
+  if(document.readyState!=="loading") a2StartListener();
+})();
+</script>
+
 </body>
 </html>

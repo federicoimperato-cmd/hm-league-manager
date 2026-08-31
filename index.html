@@ -8414,7 +8414,19 @@ window.addEventListener("beforeunload", function(e){
   const a2jersey = (code,size) => { try{return typeof hmJersey==="function"?hmJersey(code,size):(typeof jersey==="function"?jersey(code,size):"");}catch(e){return "";} };
   const a2admin = () => { try{return typeof hmIsAdmin==="function"?hmIsAdmin():typeof isAdmin==="function"?isAdmin():false;}catch(e){return false;} };
   const a2can = code => { try{return a2admin() || (typeof hmCanEditTeam==="function"?hmCanEditTeam(code):typeof canEditTeam==="function"?canEditTeam(code):false);}catch(e){return false;} };
-  const a2db = () => { try{return typeof hmFirebaseDb==="function"?hmFirebaseDb():null;}catch(e){return null;} };
+  const a2db = () => {
+    try{
+      if(!window.firebase) return null;
+      if(!firebase.apps || !firebase.apps.length){
+        if(typeof firebaseConfig !== "undefined") firebase.initializeApp(firebaseConfig);
+        else return null;
+      }
+      return firebase.firestore();
+    }catch(e){
+      console.error("Asta V2 Firebase init",e);
+      return null;
+    }
+  };
   const a2now = () => Date.now();
   const a2stamp = () => new Date().toISOString();
   const a2pretty = () => { try{return typeof hmNow==="function"?hmNow():new Date().toLocaleString("it-IT");}catch(e){return new Date().toLocaleString("it-IT");} };
@@ -8603,12 +8615,20 @@ window.addEventListener("beforeunload", function(e){
 
   async function a2ManualPlayer(){
     if(!a2admin()){alert("Solo admin può aggiungere un calciatore manualmente.");return;}
+    if(!a2col()){alert("Firebase non pronto. Verifica la connessione e riprova.");return;}
     const name=prompt("Nome calciatore"); if(!name) return;
     const role=prompt("Ruolo","")||"";
     const p={id:"P"+Date.now(),name,role,current:"",owner:"SVIN",status:"ASTA",bonus:"",contract:"0",deadline:""};
     players.push(p);
-    try{ if(typeof saveLocalOnly==="function") saveLocalOnly(); else if(typeof hmSaveLocal==="function") hmSaveLocal(); }catch(e){}
-    try{await a2CreateAuction(p.id,A2_SERIES,a2ParseEndInput());}catch(e){console.error(e);alert("Errore apertura asta: "+(e.message||e));}
+    try{
+      await a2CreateAuction(p.id,A2_SERIES,a2ParseEndInput());
+      if(typeof saveLocalOnly==="function") saveLocalOnly();
+      else if(typeof saveAll==="function") saveAll();
+    }catch(e){
+      players=players.filter(x=>String(x.id)!==String(p.id));
+      console.error(e);
+      alert("Errore apertura asta: "+(e.message||e));
+    }
   }
 
   async function a2Bid(auctionId){

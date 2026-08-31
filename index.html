@@ -8413,7 +8413,14 @@ window.addEventListener("beforeunload", function(e){
   const a2label = code => (typeof hmTeamLabel==="function" ? hmTeamLabel(code) : (a2team(code)?.name||code));
   const a2jersey = (code,size) => { try{return typeof hmJersey==="function"?hmJersey(code,size):(typeof jersey==="function"?jersey(code,size):"");}catch(e){return "";} };
   const a2admin = () => { try{return typeof hmIsAdmin==="function"?hmIsAdmin():typeof isAdmin==="function"?isAdmin():false;}catch(e){return false;} };
-  const a2can = code => { try{return a2admin() || (typeof hmCanEditTeam==="function"?hmCanEditTeam(code):typeof canEditTeam==="function"?canEditTeam(code):false);}catch(e){return false;} };
+  const a2can = code => {
+    try{
+      if(a2admin()) return true;
+      const wanted=String(code||"").trim().toUpperCase();
+      const mine=Array.isArray(currentUser?.teams)?currentUser.teams.map(x=>String(x||"").trim().toUpperCase()):[];
+      return mine.includes(wanted);
+    }catch(e){return false;}
+  };
   const a2db = () => {
     try{
       if(!window.firebase) return null;

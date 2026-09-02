@@ -8424,6 +8424,10 @@ window.addEventListener("beforeunload", function(e){
   let A2_TIMER = null;
   let A2_BUSY = new Set();
   let A2_LOADED = false;
+  // Cache locale degli autobid dell'utente: evita una lettura Firestore per ogni asta
+  // ad ogni render provocato da offerte degli altri presidenti.
+  const A2_AUTO_CACHE = new Map();
+  const A2_AUTO_CACHE_TTL = 5 * 60 * 1000;
 
   const a2esc = v => (typeof hmEsc==="function" ? hmEsc(v) : String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])));
   const a2team = code => (typeof hmTeam==="function" ? hmTeam(code) : (teams||[]).find(t=>t.code===code));
@@ -8522,6 +8526,7 @@ window.addEventListener("beforeunload", function(e){
       status:d.status||"active",
       bids:Array.isArray(d.bids)?d.bids:[],
       passedTeams:Array.isArray(d.passedTeams)?d.passedTeams:[],
+      autoTeams:Array.isArray(d.autoTeams)?d.autoTeams:[],
       endAtMs:Number(d.endAtMs||0),
       remainingMs:Number(d.remainingMs||0),
       winner:d.winner||null,
@@ -8538,7 +8543,8 @@ window.addEventListener("beforeunload", function(e){
     if(A2_UNSUB) return;
     const c=a2col(); if(!c) return;
     try{
-      A2_UNSUB=c.onSnapshot(s=>{
+      const q=c.orderBy("createdAtMs","desc").limit(100);
+      A2_UNSUB=q.onSnapshot(s=>{
         const next={};
         s.forEach(doc=>{ next[doc.id]=a2Normalize(doc.data(),doc.id); });
         A2_DOCS=next; A2_LOADED=true;
@@ -8548,9 +8554,16 @@ window.addEventListener("beforeunload", function(e){
     }catch(e){console.error("Asta V2 start listener",e);}
   }
 
-  async function a2GetAutoMap(tx,auctionId,series){
+  async function a2GetAutoMap(tx,auctionId,series,autoTeams){
     const out={};
-    const refs=a2SeriesCodes(series).map(code=>({code,ref:a2autoRef(auctionId,code)})).filter(x=>x.ref);
+    // Nuove aste: il documento pubblico conserva SOLO i codici delle squadre
+    // con autobid attivo, mai il massimale. Così una normale offerta legge
+    // soltanto i documenti autobid realmente necessari.
+    let codes=Array.isArray(autoTeams)?autoTeams.filter(c=>a2SeriesCodes(series).includes(c)):[];
+    // Compatibilità con aste create prima della V2.5: se il campo non esiste,
+    // facciamo una sola volta il vecchio controllo completo.
+    if(!Array.isArray(autoTeams)) codes=a2SeriesCodes(series);
+    const refs=[...new Set(codes)].map(code=>({code,ref:a2autoRef(auctionId,code)})).filter(x=>x.ref);
     for(const x of refs){
       const snap=await tx.get(x.ref);
       if(snap.exists){
@@ -8633,7 +8646,7 @@ window.addEventListener("beforeunload", function(e){
     const id="A2_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
     const doc={
       id,playerId:p.id,playerName:p.name,role:p.role||"",contract:p.contract??"",series:series==="B"?"B":"A",
-      status:"active",bids:[],passedTeams:[],endAtMs:Number(endAtMs||a2DefaultEndMs()),
+      status:"active",bids:[],passedTeams:[],autoTeams:[],endAtMs:Number(endAtMs||a2DefaultEndMs()),
       remainingMs:0,winner:null,closeReason:"",createdAtMs:a2now(),updatedAt:a2stamp(),
       updatedBy:currentUser?.username||"admin",
       manualCreated:!!p.__hmA2ManualCreated,
@@ -8679,7 +8692,7 @@ window.addEventListener("beforeunload", function(e){
         if(Number(live.endAtMs||0)<=a2now()) throw new Error("Tempo scaduto.");
         const current=a2Highest(live), min=current?Number(current.amount)+1:1;
         if(amount<min) throw new Error("Offerta minima "+min);
-        const autoMap=await a2GetAutoMap(tx,auctionId,live.series);
+        const autoMap=await a2GetAutoMap(tx,auctionId,live.series,live.autoTeams);
         const res=a2ResolveProxy(live,autoMap,teamCode,amount);
         const bids=a2AppendBidIfChanged(live,res,currentUser?.username||"utente");
         const changed=!current || Number((bids[bids.length-1]||{}).amount)!==Number(current.amount) || (bids[bids.length-1]||{}).team!==current.team;
@@ -8689,7 +8702,13 @@ window.addEventListener("beforeunload", function(e){
         if(dec.close) next=Object.assign(next,{status:"closed",winner:dec.winner?{team:dec.winner.team,amount:dec.winner.amount,date:a2pretty()}:null,closeReason:dec.reason});
         tx.set(ref,next,{merge:false});
       });
-    }catch(e){console.error(e);alert("Offerta non registrata: "+(e.message||e));}
+    }catch(e){
+      console.error(e);
+      const msg=String(e?.message||e||"");
+      if(/quota exceeded|resource-exhausted/i.test(msg)){
+        alert("Offerta non registrata: quota Firebase esaurita. La V2.5 riduce drasticamente le letture, ma se la quota giornaliera è già terminata bisogna attendere il reset Firestore o abilitare il piano Blaze.");
+      }else alert("Offerta non registrata: "+msg);
+    }
     finally{A2_BUSY.delete(auctionId);}
   }
 
@@ -8710,13 +8729,16 @@ window.addEventListener("beforeunload", function(e){
         const current=a2Highest(live);
         if(max<=0){
           tx.delete(ar);
-          tx.set(ref,Object.assign({},live,{updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"}),{merge:false});
+          const nextAutoTeams=(live.autoTeams||[]).filter(c=>c!==teamCode);
+          tx.set(ref,Object.assign({},live,{autoTeams:nextAutoTeams,updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"}),{merge:false});
           return;
         }
         if(current && current.team!==teamCode && max<=Number(current.amount||0)) throw new Error("Il massimo autobid deve superare l'offerta corrente.");
         const existing=await tx.get(ar);
         const old=existing.exists?(existing.data()||{}):{};
-        const autoMap=await a2GetAutoMap(tx,auctionId,live.series);
+        // Durante il salvataggio del proprio autobid leggiamo solo gli autobid
+        // delle squadre già marcate come attive.
+        const autoMap=await a2GetAutoMap(tx,auctionId,live.series,live.autoTeams);
         const setAt=Number(old.setAtMs||0)||a2now();
         autoMap[teamCode]={max,setAtMs:setAt};
         tx.set(ar,{auctionId,team:teamCode,max,setAtMs:setAt,updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"},{merge:false});
@@ -8724,12 +8746,14 @@ window.addEventListener("beforeunload", function(e){
         const bids=a2AppendBidIfChanged(live,res,"autobid");
         const changed=!current || Number((bids[bids.length-1]||{}).amount)!==Number(current?.amount||0) || (bids[bids.length-1]||{}).team!==current?.team;
         const passed=(live.passedTeams||[]).filter(c=>c!==teamCode);
-        let next=Object.assign({},live,{bids,passedTeams:passed,endAtMs:a2MaybeExtend(live,changed),updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"});
+        const nextAutoTeams=[...new Set([...(live.autoTeams||[]),teamCode])];
+        let next=Object.assign({},live,{bids,passedTeams:passed,autoTeams:nextAutoTeams,endAtMs:a2MaybeExtend(live,changed),updatedAt:a2stamp(),updatedBy:currentUser?.username||"utente"});
         const dec=a2PassCloseDecision(next);
         if(dec.close) next=Object.assign(next,{status:"closed",winner:dec.winner?{team:dec.winner.team,amount:dec.winner.amount,date:a2pretty()}:null,closeReason:dec.reason});
         tx.set(ref,next,{merge:false});
       });
-      a2LoadOwnAuto(auctionId,teamCode);
+      A2_AUTO_CACHE.set(String(auctionId)+"__"+String(teamCode),{max:Math.max(0,Number(max||0)),ts:a2now()});
+      a2LoadOwnAuto(auctionId,teamCode,false);
     }catch(e){console.error(e);alert("Autobid non salvato: "+(e.message||e));}
     finally{A2_BUSY.delete(auctionId);}
   }
@@ -8917,13 +8941,22 @@ window.addEventListener("beforeunload", function(e){
     if(changed) a2PersistLocalAuctionChange();
   }
 
-  async function a2LoadOwnAuto(auctionId,teamCode){
+  async function a2LoadOwnAuto(auctionId,teamCode,force=false){
     const out=document.getElementById("hmA2AutoInfo_"+a2safeId(auctionId));
     const inp=document.getElementById("hmA2Auto_"+a2safeId(auctionId));
     if(!teamCode||!a2can(teamCode)){ if(out)out.textContent=""; return; }
+    const key=String(auctionId)+"__"+String(teamCode);
+    const cached=A2_AUTO_CACHE.get(key);
+    if(!force && cached && (a2now()-cached.ts)<A2_AUTO_CACHE_TTL){
+      const max=Number(cached.max||0);
+      if(out) out.innerHTML=max>0?`🤖 Autobid attivo: <b>${a2esc(max)}</b> crediti`:"Autobid non attivo";
+      if(inp) inp.value=max>0?max:"";
+      return;
+    }
     try{
       const r=a2autoRef(auctionId,teamCode); const s=r?await r.get():null;
       const max=s&&s.exists?Number((s.data()||{}).max||0):0;
+      A2_AUTO_CACHE.set(key,{max,ts:a2now()});
       if(out) out.innerHTML=max>0?`🤖 Autobid attivo: <b>${a2esc(max)}</b> crediti`:"Autobid non attivo";
       if(inp) inp.value=max>0?max:"";
     }catch(e){ if(out)out.textContent="Autobid: impossibile leggere il valore."; }

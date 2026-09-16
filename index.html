@@ -2312,12 +2312,18 @@ function renderConfirmedTrades(){
 
 
 function restoreBudgets(t){
-  if(Array.isArray(t.budgetRestore)){
-    t.budgetRestore.forEach(r=>{
-      const tm=team(r.code);
-      if(tm){tm.credits=r.credits;tm.hmcoin=r.hmcoin;}
-    });
-  }
+  // SICUREZZA BUDGET: uno scambio può ripristinare SOLO i crediti delle 2 squadre coinvolte.
+  // Gli HM Coin non vengono mai ripristinati da vecchie fotografie degli scambi.
+  if(!t || !Array.isArray(t.budgetRestore)) return;
+  const involved = new Set([String(t.from||"").toUpperCase(), String(t.to||"").toUpperCase()].filter(Boolean));
+  t.budgetRestore.forEach(r=>{
+    const code=String(r?.code||"").toUpperCase();
+    if(!involved.has(code)) return;
+    const tm=team(code);
+    if(tm && r && r.credits!==undefined && r.credits!==null && !Number.isNaN(Number(r.credits))){
+      tm.credits=Number(r.credits);
+    }
+  });
 }
 
 function deleteConfirmedTrade(i){
@@ -7013,34 +7019,85 @@ window.addEventListener("beforeunload", function(e){
   function bulkBudgetRows(){
     return sortedBudgetTeams().map(t=>`<tr>
       <td><b>${escV(t.name)}</b><div class="muted">${escV(t.code)} · ${escV(t.division||'')}</div></td>
-      <td><b>${escV(t.credits??0)}</b></td>
-      <td><input id="admBulkCredits_${escV(t.code)}" class="input" type="number" step="1" placeholder="+ / -" style="width:105px"></td>
-      <td><b>${escV(t.hmcoin??0)}</b></td>
-      <td style="text-align:center"><input id="admBulkPre_${escV(t.code)}" type="checkbox" title="Conferenza PRE: +2 HM Coin"></td>
-      <td style="text-align:center"><input id="admBulkPost_${escV(t.code)}" type="checkbox" title="Conferenza POST: +2 HM Coin"></td>
-      <td><input id="admBulkCoin_${escV(t.code)}" class="input" type="number" step="1" placeholder="+ / -" style="width:105px"></td>
+      <td style="font-size:18px"><b>${escV(t.credits??0)}</b></td>
+      <td><input id="admBulkCredits_${escV(t.code)}" class="input" type="number" step="1" placeholder="es. 10 o -5" style="width:130px;font-size:16px;font-weight:900"></td>
+      <td style="font-size:18px"><b>${escV(t.hmcoin??0)}</b></td>
+      <td><input id="admBulkCoin_${escV(t.code)}" class="input" type="number" step="1" placeholder="es. 2 o -2" style="width:130px;font-size:16px;font-weight:900"></td>
     </tr>`).join('');
   }
-  window.hmAdminApplyBudgetBulk=function(){
+  function hmBudgetLastSaveLabel(){
+    try{
+      const v=localStorage.getItem('hm_budget_last_save_v1');
+      return v ? v : 'nessun salvataggio budget registrato in questo browser';
+    }catch(e){return '—';}
+  }
+  window.hmAdminApplyBudgetBulk=async function(){
     if(!adm()) return false;
+    if(window.HM_BUDGET_SAVING) return false;
+
     const changes=[];
     sortedBudgetTeams().forEach(t=>{
       const creditDelta=Number(String($('admBulkCredits_'+t.code)?.value||'').replace(',','.'))||0;
-      const freeCoin=Number(String($('admBulkCoin_'+t.code)?.value||'').replace(',','.'))||0;
-      const pre=$('admBulkPre_'+t.code)?.checked?2:0;
-      const post=$('admBulkPost_'+t.code)?.checked?2:0;
-      const coinDelta=freeCoin+pre+post;
-      if(creditDelta||coinDelta) changes.push({t,creditDelta,coinDelta});
+      const coinDelta=Number(String($('admBulkCoin_'+t.code)?.value||'').replace(',','.'))||0;
+      if(creditDelta||coinDelta) changes.push({
+        t,
+        creditDelta,
+        coinDelta,
+        beforeCredits:Number(t.credits)||0,
+        beforeCoin:Number(t.hmcoin)||0
+      });
     });
     if(!changes.length){alert('Non hai inserito nessuna variazione.');return false;}
+
+    const riepilogo=changes.map(x=>{
+      const c=x.creditDelta ? `Crediti ${x.creditDelta>0?'+':''}${x.creditDelta}` : '';
+      const h=x.coinDelta ? `HM Coin ${x.coinDelta>0?'+':''}${x.coinDelta}` : '';
+      return `${x.t.name}: ${[c,h].filter(Boolean).join(' · ')}`;
+    }).join('\n');
+    if(!confirm('APPLICARE E SALVARE ONLINE?\n\n'+riepilogo+'\n\nUn solo clic salverà subito anche su Firebase.')) return false;
+
+    window.HM_BUDGET_SAVING=true;
+    const btn=$('hmBudgetSaveBtn');
+    if(btn){btn.disabled=true;btn.textContent='⏳ Salvataggio online...';}
+
+    // Copia locale di emergenza SOLO dei budget precedenti.
+    try{
+      const history=JSON.parse(localStorage.getItem('hm_budget_history_v1')||'[]');
+      history.unshift({
+        at:new Date().toISOString(),
+        label:'prima modifica budget',
+        teams:sortedBudgetTeams().map(t=>({code:t.code,credits:Number(t.credits)||0,hmcoin:Number(t.hmcoin)||0}))
+      });
+      localStorage.setItem('hm_budget_history_v1',JSON.stringify(history.slice(0,50)));
+    }catch(e){console.warn('Backup budget locale non creato',e);}
+
     changes.forEach(x=>{
-      x.t.credits=(Number(x.t.credits)||0)+x.creditDelta;
-      x.t.hmcoin=(Number(x.t.hmcoin)||0)+x.coinDelta;
+      x.t.credits=x.beforeCredits+x.creditDelta;
+      x.t.hmcoin=x.beforeCoin+x.coinDelta;
     });
-    if(typeof saveAll==='function' && saveAll()===false) return false;
-    alert('Aggiornamento massivo applicato a '+changes.length+' squadre. Premi Salva online per pubblicare le modifiche.');
-    renderAdminSafe();
-    return true;
+
+    try{
+      if(typeof saveAll==='function' && saveAll()===false) throw new Error('Salvataggio locale non riuscito');
+      if(typeof saveCloudNow!=='function') throw new Error('Firebase non disponibile');
+      const ok=await saveCloudNow(false);
+      if(!ok) throw new Error('Salvataggio online non confermato');
+
+      const stamp=new Date().toLocaleString('it-IT');
+      try{localStorage.setItem('hm_budget_last_save_v1',stamp);}catch(e){}
+      try{HM_HAS_UNSAVED_CHANGES=false;}catch(e){}
+      alert('✅ CREDITI E HM COIN SALVATI ONLINE.\n\nUltimo salvataggio: '+stamp);
+      renderAdminSafe();
+      return true;
+    }catch(e){
+      // Se il cloud fallisce, torna automaticamente ai valori precedenti anche in locale.
+      changes.forEach(x=>{x.t.credits=x.beforeCredits;x.t.hmcoin=x.beforeCoin;});
+      try{if(typeof saveLocalOnly==='function') saveLocalOnly();}catch(x){}
+      alert('❌ Salvataggio online NON riuscito.\n\nPer sicurezza i valori sono tornati come prima.\n\n'+(e.message||e));
+      renderAdminSafe();
+      return false;
+    }finally{
+      window.HM_BUDGET_SAVING=false;
+    }
   };
 
   window.renderAdminSafe = function(){
@@ -7049,6 +7106,25 @@ window.addEventListener("beforeunload", function(e){
     const cfg=readCfg(); const first=realTeams()[0]||{}; const primavera=statusPrimavera();
     root.innerHTML=`
       <div class="between"><div><h2 style="margin:0 0 6px">🛠️ Centro di Controllo HML</h2><div class="muted">Le modifiche operative usano i dati già esistenti. Regole variabili e moduli hanno sincronizzazione cloud separata dal salvataggio generale.</div></div><span class="badge">CONTROL V5</span></div>
+
+      <div class="card" style="margin-top:16px;border:2px solid #22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.18),0 18px 45px rgba(0,0,0,.22)">
+        <div class="between">
+          <div>
+            <h2 style="margin:0">💰 CREDITI & HM COIN · ACCESSO RAPIDO</h2>
+            <p class="muted" style="margin:7px 0 0">Scrivi solo la variazione: <b>10</b> aggiunge 10, <b>-5</b> toglie 5. Nessuna spunta PRE/POST. Il pulsante applica e salva subito online.</p>
+          </div>
+          <span class="badge" style="border-color:#22c55e;color:#bbf7d0">Ultimo salvataggio: ${escV(hmBudgetLastSaveLabel())}</span>
+        </div>
+        <div style="overflow-x:auto;margin-top:14px">
+          <table class="table">
+            <thead><tr><th>Squadra</th><th>Crediti attuali</th><th>+ / - Crediti</th><th>HM Coin attuali</th><th>+ / - HM Coin</th></tr></thead>
+            <tbody>${bulkBudgetRows()}</tbody>
+          </table>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px">
+          <button id="hmBudgetSaveBtn" class="btn green" style="font-size:17px;padding:14px 22px" onclick="hmAdminApplyBudgetBulk()">💾 APPLICA E SALVA SUBITO ONLINE</button>
+        </div>
+      </div>
       <div class="grid grid4" style="margin-top:16px"><div class="stat"><div class="muted">Calciatori</div><div class="n">${(players||[]).length}</div></div><div class="stat"><div class="muted">Squadre</div><div class="n">${realTeams().length}</div></div><div class="stat"><div class="muted">Formazioni</div><div class="n">${Object.keys(savedFormations||{}).length}</div></div><div class="stat"><div class="muted">Modifiche</div><div style="font-size:18px;font-weight:900;margin-top:8px">${typeof HM_HAS_UNSAVED_CHANGES!=='undefined'&&HM_HAS_UNSAVED_CHANGES?'⚠️ Da pubblicare':'✅ Nessuna modifica locale'}</div></div></div>
 
       <div class="card" style="margin-top:16px"><h3>⚡ Azioni rapide</h3><div class="row"><button class="btn green" onclick="saveCloudNow(true)">💾 Salva tutto online</button><button class="btn" onclick="loadCloudData()">🔄 Ricarica dal cloud</button><button class="btn green" onclick="downloadFullBackup()">📦 Backup</button><button class="btn primary" onclick="hmAdminCheckV5()">🧪 Controlla problemi</button><button class="btn" onclick="hmAdminDownloadReport()">📄 Scarica report bug</button></div></div>
@@ -7059,17 +7135,7 @@ window.addEventListener("beforeunload", function(e){
         <div class="card" style="margin-top:14px"><h3>🌱 Primavera massiva</h3><p class="muted">Utile dopo l'asta: cerca più calciatori, selezionali e assegnali insieme alla coppia Primavera. Proprietario diventa automaticamente SVIN.</p><div class="grid grid3"><label>Squadra principale<select id="admPrimTeam" class="input">${teamOpts('',t=>String(t.division||'').toLowerCase().includes('serie a'))}</select></label><label>Stato Primavera<select id="admPrimStatus" class="input">${selectOptions(primavera,primavera[0]||'')}</select></label><label>Cerca<input id="admPrimSearch" class="input" placeholder="almeno 2 caratteri" oninput="hmAdminPrimaveraSearch()"></label></div><div id="admPrimResults" style="margin-top:10px"></div><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn green" onclick="hmAdminApplyPrimaveraBulk()">Applica ai selezionati</button></div></div>
       </details>
 
-      <details class="card" style="margin-top:14px" open><summary style="cursor:pointer;font-size:20px;font-weight:900">🏟️ Società, crediti e HM Coin</summary>
-        <div class="card" style="margin-top:12px">
-          <div class="between"><div><h3 style="margin:0">💰 Gestione massiva crediti e HM Coin</h3><p class="muted" style="margin:6px 0 0">Inserisci solo le variazioni da applicare. Numeri positivi aggiungono, numeri negativi rimuovono. PRE e POST valgono +2 HM Coin ciascuna.</p></div></div>
-          <div style="overflow-x:auto;margin-top:12px">
-            <table class="table">
-              <thead><tr><th>Squadra</th><th>Crediti attuali</th><th>+ / - Crediti</th><th>Coin attuali</th><th>Conferenza PRE<br><span class="muted">+2</span></th><th>Conferenza POST<br><span class="muted">+2</span></th><th>+ / - Coin liberi</th></tr></thead>
-              <tbody>${bulkBudgetRows()}</tbody>
-            </table>
-          </div>
-          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmAdminApplyBudgetBulk()">Applica tutte le variazioni</button></div>
-        </div>
+      <details class="card" style="margin-top:14px" open><summary style="cursor:pointer;font-size:20px;font-weight:900">🏟️ Società</summary>
         <div class="grid grid2" style="margin-top:12px"><label>Società<select id="admTeamSel" class="input" onchange="hmAdminLoadTeamForm()">${teamOpts(first.code)}</select></label><div class="row" style="align-items:end"><button class="btn" onclick="hmAdminOpenTeam()">Apri scheda società</button></div></div>
         <div class="grid grid4" style="margin-top:12px"><label>Nome<input id="admTName" class="input"></label><label>Divisione<select id="admTDivision" class="input"><option>Serie A</option><option>Serie B</option><option>Extra</option></select></label><label>Crediti<input id="admTCredits" class="input" type="number"></label><label>HM Coin<input id="admTHmcoin" class="input" type="number"></label><label>Colore 1<input id="admTPrimary" class="input" type="color"></label><label>Colore 2<input id="admTSecondary" class="input" type="color"></label><label>Testo maglia<input id="admTText" class="input" type="color"></label><label>Maglia<select id="admTJersey" class="input"><option value="diagonal">diagonal</option><option value="solid">solid</option><option value="stripes">stripes</option><option value="halves">halves</option></select></label></div>
         <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn green" onclick="hmAdminSaveTeamQuick()">Salva modifiche società</button></div>

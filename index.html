@@ -3841,7 +3841,17 @@ window.addEventListener("beforeunload", function(e){
     if(!good(d))return false;
     teams=d.teams||teams; players=d.players||players; trades=Array.isArray(d.trades)?d.trades:trades; news=Array.isArray(d.news)?d.news:news;
     honors=Array.isArray(d.honors)?d.honors:honors; individualTitles=Array.isArray(d.individualTitles)?d.individualTitles:individualTitles; positionHistory=Array.isArray(d.positionHistory)?d.positionHistory:positionHistory; orgData=d.orgData||orgData; awardImages=d.awardImages||awardImages;
-    rankingData=Array.isArray(d.rankingData)?d.rankingData:rankingData; rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations;
+    // Ranking protetto: un payload cloud vuoto/azzerato NON deve cancellare i punti già presenti nel browser.
+    // Se il cloud contiene un ranking reale, lo applichiamo normalmente.
+    if(Array.isArray(d.rankingData)){
+      const cloudRanking = (typeof cleanRankingRows === "function") ? cleanRankingRows(d.rankingData) : d.rankingData;
+      const localRanking = (typeof cleanRankingRows === "function") ? cleanRankingRows(rankingData) : (Array.isArray(rankingData)?rankingData:[]);
+      const cloudHasRealData = cloudRanking.some(r=>r && r.code && (Number(r.points||0)!==0 || String(r.manualOrder||"").trim()!==""));
+      const localHasRealData = localRanking.some(r=>r && r.code && (Number(r.points||0)!==0 || String(r.manualOrder||"").trim()!==""));
+      if(cloudHasRealData || !localHasRealData) rankingData = cloudRanking;
+      else rankingData = localRanking;
+    }
+    rankingHidden=Array.isArray(d.rankingHidden)?d.rankingHidden:rankingHidden; seasonHistory=Array.isArray(d.seasonHistory)?d.seasonHistory:seasonHistory; savedFormations=d.savedFormations||savedFormations;
     // Asta live: NON sovrascrivere mai l'asta in corso caricando il gestionale generale.
     // Il documento realtime/auction è la fonte vera per playerId, bids, activeTeams e passedTeams.
     // Dal salvataggio generale recuperiamo solo lo storico aggiudicazioni.
@@ -4816,6 +4826,9 @@ window.addEventListener("beforeunload", function(e){
     }
   }
 
+  // Espone al solo modulo Draft la stessa autenticazione anonima già usata dai presidenti.
+  window.hmEnsureAnonAuth = ensureAnonAuth;
+
   function db(){
     try{
       if(!window.firebase) return null;
@@ -4982,6 +4995,17 @@ window.addEventListener("beforeunload", function(e){
     if(view === "game"){
       if(!internalLogged()) return !!(el.dataset && el.dataset.gamePublic === "1");
       if(el.dataset && el.dataset.gameAdmin === "1") return internalAdmin();
+      return true;
+    }
+    // Draft Primavera: i controlli del turno devono restare utilizzabili dai presidenti.
+    // La verifica della coppia effettivamente di turno resta dentro il modulo Draft.
+    if(view === "draftPrimavera"){
+      if(!internalLogged()) return false;
+      const id = String(el.id||"");
+      const isTurnControl = ["dpPlayerName","dpPlayerYear"].includes(id) || on.includes("pickDraftPrimaveraPlayer(") || on.includes("leaveDraftPrimavera(");
+      const isAdminControl = on.includes("startDraftPrimavera(") || on.includes("finishDraftPrimavera(") || on.includes("resetDraftPrimavera(") || on.includes("editDraftPrimaveraPick(") || on.includes("deleteDraftPrimaveraPick(") || on.includes("saveDraftPrimaveraPickEdit(");
+      if(isAdminControl) return internalAdmin();
+      if(isTurnControl) return (typeof window.hmDraftCanCurrentUserAct === "function") ? !!window.hmDraftCanCurrentUserAct() : false;
       return true;
     }
     if(!internalLogged()) return false;
@@ -9243,6 +9267,11 @@ window.addEventListener("beforeunload", function(e){
     return u.includes(dpCode(code)) || u.includes(dpPair(code));
   }
   function dpVisible(){ try{return typeof currentVisibleViewName==="function"?currentVisibleViewName()==="draftPrimavera":false;}catch(e){return false;} }
+  // Usato dal sistema generale dei permessi: vero SOLO se l'utente loggato controlla la Primavera di turno.
+  window.hmDraftCanCurrentUserAct=function(){
+    try{return !!(DP_STATE?.active && DP_STATE.currentTeam && dpLogged() && dpCanActFor(DP_STATE.currentTeam));}
+    catch(e){return false;}
+  };
   function dpSaveLocal(){
     try{localStorage.setItem(DRAFT_LOCAL_KEY,JSON.stringify(DP_STATE||{}));}catch(e){}
     try{if(typeof saveLocalOnly==="function") saveLocalOnly();}catch(e){}
@@ -9260,9 +9289,12 @@ window.addEventListener("beforeunload", function(e){
   function dpRef(){ const db=dpDb(); return db?db.collection("hmleague").doc("main").collection("realtime").doc("draftPrimavera"):null; }
 
   async function dpEnsureAuth(){
-    // Il Draft usa lo stesso accesso Firestore già usato dal gestionale/Asta.
-    // Nessun login Firebase anonimo aggiuntivo: basta l'account HM interno.
     if(!dpLogged()) throw new Error("Devi fare login HM per partecipare al Draft.");
+    // Usa ESATTAMENTE la stessa autenticazione Firebase anonima già prevista per i presidenti.
+    if(typeof window.hmEnsureAnonAuth === "function"){
+      const ok = await window.hmEnsureAnonAuth();
+      if(!ok) throw new Error("Autenticazione Firebase non riuscita.");
+    }
     const db=dpDb();
     if(!db) throw new Error("Firebase non disponibile.");
     return true;

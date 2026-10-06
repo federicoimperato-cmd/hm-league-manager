@@ -9246,6 +9246,7 @@ window.addEventListener("beforeunload", function(e){
   let DP_UNSUB = null;
   let DP_LISTENER_STARTED = false;
   let DP_BUSY = false;
+  let DP_AUTH_READY = false;
 
   function dpEsc(v){
     try{return typeof esc==="function"?esc(v):String(v??"").replace(/[&<>\"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m]));}
@@ -9290,14 +9291,49 @@ window.addEventListener("beforeunload", function(e){
 
   async function dpEnsureAuth(){
     if(!dpLogged()) throw new Error("Devi fare login HM per partecipare al Draft.");
-    // Usa ESATTAMENTE la stessa autenticazione Firebase anonima già prevista per i presidenti.
-    if(typeof window.hmEnsureAnonAuth === "function"){
-      const ok = await window.hmEnsureAnonAuth();
-      if(!ok) throw new Error("Autenticazione Firebase non riuscita.");
-    }
     const db=dpDb();
     if(!db) throw new Error("Firebase non disponibile.");
+
+    // Non creare/richiedere nuove sessioni Firebase ad ogni scelta.
+    // Se Firebase ha già un utente autenticato (Google admin o anonimo presidente), lo riutilizza.
+    try{
+      if(window.firebase && firebase.auth){
+        const auth=firebase.auth();
+        if(auth.currentUser){ DP_AUTH_READY=true; return true; }
+      }
+    }catch(e){}
+    if(DP_AUTH_READY) return true;
+
+    // Solo quando manca davvero una sessione Firebase prova l'accesso anonimo già usato dai presidenti.
+    if(typeof window.hmEnsureAnonAuth === "function"){
+      const ok = await window.hmEnsureAnonAuth();
+      if(!ok){
+        const err=new Error("Autenticazione Firebase non riuscita.");
+        err.code="auth-failed";
+        throw err;
+      }
+    }
+    try{
+      if(window.firebase && firebase.auth && firebase.auth().currentUser) DP_AUTH_READY=true;
+    }catch(e){}
     return true;
+  }
+
+  function dpErrText(e){
+    const code=String(e?.code||"").trim();
+    const msg=String(e?.message||e||"Errore sconosciuto").trim();
+    return code ? `${code}: ${msg}` : msg;
+  }
+  function dpQuotaMessage(e){
+    const code=String(e?.code||"").toLowerCase();
+    const msg=String(e?.message||e||"").toLowerCase();
+    if(code.includes("auth/quota-exceeded")){
+      return "Quota autenticazione Firebase raggiunta. Il Draft è rimasto fermo sul turno corrente e non ha perso le scelte già registrate. Non resettare il Draft.";
+    }
+    if(code.includes("resource-exhausted") || code.includes("quota") || msg.includes("quota exceeded") || msg.includes("resource exhausted")){
+      return "Quota Firebase raggiunta. Il Draft è rimasto fermo sul turno corrente e non ha perso le scelte già registrate. Non resettare il Draft.";
+    }
+    return "";
   }
 
   function dpEmpty(allPicks){
@@ -9542,7 +9578,11 @@ window.addEventListener("beforeunload", function(e){
         tx.set(ref,live,{merge:false});
       });
       const input=document.getElementById("dpPlayerName");if(input)input.value="";
-    }catch(e){console.error(e);alert("Scelta non registrata: "+(e.message||e));}
+    }catch(e){
+      console.error("Draft Primavera scelta",e);
+      const q=dpQuotaMessage(e);
+      alert("Scelta non registrata: "+dpErrText(e)+(q?"\n\n"+q:""));
+    }
     finally{DP_BUSY=false;}
   };
 
@@ -9565,7 +9605,11 @@ window.addEventListener("beforeunload", function(e){
         live.updatedAt=dpIso();live.updatedBy=currentUser?.username||"utente";
         tx.set(ref,live,{merge:false});
       });
-    }catch(e){console.error(e);alert("Abbandono non registrato: "+(e.message||e));}
+    }catch(e){
+      console.error("Draft Primavera abbandono",e);
+      const q=dpQuotaMessage(e);
+      alert("Abbandono non registrato: "+dpErrText(e)+(q?"\n\n"+q:""));
+    }
     finally{DP_BUSY=false;}
   };
 

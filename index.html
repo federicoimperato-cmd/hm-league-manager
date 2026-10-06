@@ -112,6 +112,7 @@ button{cursor:pointer}
       <button class="navbtn" data-view="ranking">📊 Ranking</button>
       <button class="navbtn" data-view="history">📚 Storico campionati</button>
       <button class="navbtn" data-view="auction">🔨 Asta</button>
+      <button class="navbtn" data-view="draftPrimavera">🌱 Draft Primavera</button>
       <button class="navbtn" data-view="actions">📣 Azioni Presidente</button>
       <button class="navbtn" data-view="regulation">📜 Regolamento</button>
       <button class="navbtn" data-view="coaches">👔 Allenatori</button>
@@ -136,6 +137,7 @@ button{cursor:pointer}
       <section id="view-ranking" class="panel view hidden"></section>
       <section id="view-history" class="panel view hidden"></section>
       <section id="view-auction" class="panel view hidden"></section>
+      <section id="view-draftPrimavera" class="panel view hidden"></section>
       <section id="view-actions" class="panel view hidden"></section>
       <section id="view-regulation" class="panel view hidden"></section>
       <section id="view-coaches" class="panel view hidden"></section>
@@ -9204,6 +9206,449 @@ window.addEventListener("beforeunload", function(e){
   if(!A2_TIMER) A2_TIMER=setInterval(a2Tick,1000);
   document.addEventListener("DOMContentLoaded",()=>{a2StartListener();});
   if(document.readyState!=="loading") a2StartListener();
+})();
+</script>
+
+
+<script>
+/* =========================================================
+   DRAFT PRIMAVERA LIVE - MODULO ISOLATO
+   Aggiunge solo la nuova sezione Draft Primavera.
+   NON modifica asta, crediti, HM Coin, scambi o altre logiche.
+   ========================================================= */
+(function(){
+  const DRAFT_LOCAL_KEY = "hm_draft_primavera_v1";
+  let DP_STATE = null;
+  let DP_UNSUB = null;
+  let DP_LISTENER_STARTED = false;
+  let DP_BUSY = false;
+
+  function dpEsc(v){
+    try{return typeof esc==="function"?esc(v):String(v??"").replace(/[&<>\"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m]));}
+    catch(e){return String(v??"");}
+  }
+  function dpCode(v){ return String(v||"").trim().toUpperCase(); }
+  function dpNow(){ return new Date().toLocaleString("it-IT"); }
+  function dpIso(){ return new Date().toISOString(); }
+  function dpIsAdmin(){ try{return !!(currentUser&&currentUser.role==="admin");}catch(e){return false;} }
+  function dpLogged(){ try{return !!(currentUser&&currentUser.role&&currentUser.role!=="guest");}catch(e){return false;} }
+  function dpUserTeams(){ try{return Array.isArray(currentUser?.teams)?currentUser.teams.map(dpCode):[];}catch(e){return [];} }
+  function dpTeam(code){ try{return typeof team==="function"?team(code):(teams||[]).find(t=>dpCode(t.code)===dpCode(code));}catch(e){return null;} }
+  function dpTeamName(code){ const t=dpTeam(code); return t?t.name:code; }
+  function dpPair(code){ try{return (typeof PAIRED==="object"&&PAIRED)?dpCode(PAIRED[dpCode(code)]):"";}catch(e){return "";} }
+  function dpPairLabel(code){ const p=dpPair(code); return p?`${dpTeamName(code)} / ${dpTeamName(p)}`:dpTeamName(code); }
+  function dpCanActFor(code){
+    if(dpIsAdmin()) return true;
+    const u=dpUserTeams();
+    return u.includes(dpCode(code)) || u.includes(dpPair(code));
+  }
+  function dpVisible(){ try{return typeof currentVisibleViewName==="function"?currentVisibleViewName()==="draftPrimavera":false;}catch(e){return false;} }
+  function dpSaveLocal(){
+    try{localStorage.setItem(DRAFT_LOCAL_KEY,JSON.stringify(DP_STATE||{}));}catch(e){}
+    try{if(typeof saveLocalOnly==="function") saveLocalOnly();}catch(e){}
+  }
+  function dpLoadLocal(){
+    try{return JSON.parse(localStorage.getItem(DRAFT_LOCAL_KEY)||"null");}catch(e){return null;}
+  }
+  function dpDb(){
+    try{
+      if(!window.firebase) return null;
+      if(!firebase.apps||!firebase.apps.length){ if(typeof firebaseConfig!=="undefined") firebase.initializeApp(firebaseConfig); }
+      return firebase.firestore?firebase.firestore():null;
+    }catch(e){console.error("Draft Primavera Firebase",e);return null;}
+  }
+  function dpRef(){ const db=dpDb(); return db?db.collection("hmleague").doc("main").collection("realtime").doc("draftPrimavera"):null; }
+
+  async function dpEnsureAuth(){
+    // Il Draft usa lo stesso accesso Firestore già usato dal gestionale/Asta.
+    // Nessun login Firebase anonimo aggiuntivo: basta l'account HM interno.
+    if(!dpLogged()) throw new Error("Devi fare login HM per partecipare al Draft.");
+    const db=dpDb();
+    if(!db) throw new Error("Firebase non disponibile.");
+    return true;
+  }
+
+  function dpEmpty(allPicks){
+    return {
+      active:false,
+      completed:false,
+      round:0,
+      direction:1,
+      order:[],
+      currentIndex:-1,
+      currentTeam:"",
+      participants:{},
+      sessionPicks:[],
+      allPicks:Array.isArray(allPicks)?allPicks:[],
+      createdAt:"",
+      updatedAt:dpIso(),
+      updatedBy:""
+    };
+  }
+  function dpNorm(s){
+    const base=dpEmpty(Array.isArray(s?.allPicks)?s.allPicks:[]);
+    s=s&&typeof s==="object"?s:{};
+    return Object.assign(base,s,{
+      order:Array.isArray(s.order)?s.order.map(dpCode).filter(Boolean):[],
+      participants:s.participants&&typeof s.participants==="object"?s.participants:{},
+      sessionPicks:Array.isArray(s.sessionPicks)?s.sessionPicks:[],
+      allPicks:Array.isArray(s.allPicks)?s.allPicks:[]
+    });
+  }
+  function dpPairGroups(){
+    const arr=(Array.isArray(teams)?teams:[]).filter(t=>t.code&&t.code!=="SVIN");
+    const seen=new Set(), out=[];
+    arr.forEach(t=>{
+      const a=dpCode(t.code), b=dpPair(a);
+      if(!b) return;
+      const key=[a,b].sort().join("|");
+      if(seen.has(key)) return;
+      seen.add(key);
+      const ta=dpTeam(a), tb=dpTeam(b);
+      let main=a, mate=b;
+      if(String(tb?.division||"").toLowerCase().includes("serie a") && !String(ta?.division||"").toLowerCase().includes("serie a")){main=b;mate=a;}
+      out.push({main,mate,label:`${dpTeamName(main)} / ${dpTeamName(mate)}`});
+    });
+    return out.sort((x,y)=>x.label.localeCompare(y.label,"it"));
+  }
+  function dpShuffle(a){
+    const x=a.slice();
+    for(let i=x.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[x[i],x[j]]=[x[j],x[i]];}
+    return x;
+  }
+  function dpActiveCodes(s){return (s.order||[]).filter(c=>s.participants?.[c]==="active");}
+
+  function dpAdvance(s, leavingCurrent){
+    s=dpNorm(s);
+    if(leavingCurrent && s.currentTeam) s.participants[s.currentTeam]="left";
+    const active=dpActiveCodes(s);
+    if(!active.length){
+      s.active=false;s.completed=true;s.currentIndex=-1;s.currentTeam="";return s;
+    }
+    let idx=Number(s.currentIndex);
+    let dir=Number(s.direction)===-1?-1:1;
+    let i=idx+dir;
+    while(i>=0&&i<s.order.length){
+      if(s.participants[s.order[i]]==="active"){s.currentIndex=i;s.currentTeam=s.order[i];return s;}
+      i+=dir;
+    }
+    // Fine giro: inversione snake. La squadra al bordo riparte subito nel giro inverso,
+    // salvo che abbia appena abbandonato.
+    s.round=(Number(s.round)||1)+1;
+    dir*=-1; s.direction=dir;
+    i=idx;
+    while(i>=0&&i<s.order.length){
+      if(s.participants[s.order[i]]==="active"){s.currentIndex=i;s.currentTeam=s.order[i];return s;}
+      i+=dir;
+    }
+    // Fallback di sicurezza.
+    const first=s.order.findIndex(c=>s.participants[c]==="active");
+    s.currentIndex=first;s.currentTeam=first>=0?s.order[first]:"";
+    return s;
+  }
+
+  function dpHydratePlayers(picks){
+    if(!Array.isArray(picks)||!Array.isArray(players)) return;
+    const validIds=new Set(picks.filter(pk=>pk&&pk.playerId).map(pk=>String(pk.playerId)));
+    let changed=false;
+
+    // Elimina SOLO calciatori creati dal Draft che non esistono più nello storico Draft.
+    for(let i=players.length-1;i>=0;i--){
+      const p=players[i];
+      if(p?.draftPrimavera===true && !validIds.has(String(p.id))){ players.splice(i,1); changed=true; }
+    }
+
+    picks.forEach(pk=>{
+      if(!pk||!pk.playerId) return;
+      const main=dpCode(pk.team), mate=dpPair(main);
+      const desired={
+        id:String(pk.playerId),
+        name:String(pk.playerName||"Calciatore Primavera"),
+        role:"",
+        current:[main,mate].filter(Boolean).join(" "),
+        owner:"SVIN",
+        status:pk.year?`PRIMAVERA ${pk.year}`:"PRIMAVERA",
+        bonus:"",
+        contract:"",
+        deadline:"",
+        draftPrimavera:true
+      };
+      const existing=players.find(p=>String(p.id)===String(pk.playerId));
+      if(!existing){ players.push(desired); changed=true; return; }
+      // Aggiorna SOLO i campi del calciatore generato dal Draft.
+      if(existing.draftPrimavera===true){
+        ["name","current","owner","status","draftPrimavera"].forEach(k=>{
+          if(existing[k]!==desired[k]){ existing[k]=desired[k]; changed=true; }
+        });
+      }
+    });
+    if(changed){
+      try{if(typeof safeSetStorage==="function") safeSetStorage("hm_players_v1",players);else localStorage.setItem("hm_players_v1",JSON.stringify(players));}catch(e){}
+      try{if(typeof saveLocalOnly==="function") saveLocalOnly();}catch(e){}
+      try{if(typeof markUnsavedChanges==="function") markUnsavedChanges();}catch(e){}
+      try{if(typeof renderTeamDetail==="function"&&document.getElementById("view-teamDetail")&&!document.getElementById("view-teamDetail").classList.contains("hidden")) renderTeamDetail();}catch(e){}
+    }
+  }
+
+  function dpStartListener(){
+    if(DP_LISTENER_STARTED) return;
+    const ref=dpRef();
+    if(!ref){DP_STATE=dpNorm(dpLoadLocal()||dpEmpty([]));return;}
+    DP_LISTENER_STARTED=true;
+    DP_UNSUB=ref.onSnapshot(doc=>{
+      DP_STATE=doc.exists?dpNorm(doc.data()):dpNorm(dpLoadLocal()||dpEmpty([]));
+      dpHydratePlayers(DP_STATE.allPicks);
+      dpSaveLocal();
+      if(dpVisible()) renderDraftPrimavera();
+    },err=>{
+      console.error("Draft Primavera listener",err);
+      DP_STATE=dpNorm(dpLoadLocal()||dpEmpty([]));
+      if(dpVisible()) renderDraftPrimavera();
+    });
+  }
+
+  function dpSetupHtml(){
+    const groups=dpPairGroups();
+    return `
+      <div class="between"><div><h2>🌱 Draft Primavera</h2><p class="muted">Draft snake senza crediti. Ogni scelta viene assegnata alla coppia Primavera della società.</p></div><span class="badge">Solo Admin può avviare</span></div>
+      <div class="card" style="margin-top:14px">
+        <h3>Nuovo Draft</h3>
+        <p class="muted">Seleziona le Primavera partecipanti. L'ordine del primo giro verrà sorteggiato casualmente.</p>
+        <div class="grid grid2" style="margin-top:12px">
+          ${groups.map(g=>`<label class="card" style="display:flex;gap:10px;align-items:center;padding:12px"><input type="checkbox" class="dpParticipant" value="${dpEsc(g.main)}"> <b>${dpEsc(g.label)}</b></label>`).join("")}
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px">
+          <button class="btn green" type="button" onclick="startDraftPrimavera()" ${dpIsAdmin()?"":"disabled"}>🎲 Sorteggia e avvia</button>
+        </div>
+      </div>
+      ${(DP_STATE?.allPicks||[]).length?`<div class="card" style="margin-top:14px"><h3>Scelte Primavera registrate</h3>${dpHistoryHtml(DP_STATE.allPicks.slice(-20).reverse())}</div>`:""}`;
+  }
+
+  function dpHistoryHtml(rows){
+    if(!Array.isArray(rows)||!rows.length) return '<div class="muted">Nessuna scelta ancora.</div>';
+    return rows.map(pk=>{
+      const adminBtns=dpIsAdmin()?`<div class="row" style="justify-content:flex-end"><button class="btn" type="button" onclick="editDraftPrimaveraPick('${dpEsc(String(pk.playerId||''))}')">✏️ Modifica</button><button class="btn red" type="button" onclick="deleteDraftPrimaveraPick('${dpEsc(String(pk.playerId||''))}')">🗑️ Elimina</button></div>`:`<span class="badge">Scelta ${dpEsc(pk.pickNumber||"")}</span>`;
+      return `<div class="playerRow" style="grid-template-columns:60px 1fr auto">${typeof jersey==="function"?jersey(pk.team,42):""}<div><b>${dpEsc(pk.playerName)}</b><div class="muted">${dpEsc(dpPairLabel(pk.team))}${pk.year?` · Primavera ${dpEsc(pk.year)}`:""} · Giro ${dpEsc(pk.round||"")} · ${dpEsc(pk.date||"")}</div></div>${adminBtns}</div>`;
+    }).join("");
+  }
+
+  function dpLiveHtml(s){
+    const canAct=!!(s.active&&s.currentTeam&&dpLogged()&&dpCanActFor(s.currentTeam));
+    const currentLabel=s.currentTeam?dpPairLabel(s.currentTeam):"-";
+    const seq=(s.order||[]).map((c,i)=>{
+      const st=s.participants?.[c]||"left";
+      const cur=s.active&&c===s.currentTeam;
+      return `<div class="playerRow" style="grid-template-columns:60px 1fr auto;${cur?'border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,.35)':''}">${typeof jersey==="function"?jersey(c,42):""}<div><b>${dpEsc(dpPairLabel(c))}</b><div class="muted">${st==='left'?'Ha abbandonato il Draft':cur?'È il turno di questa Primavera':'In attesa'}</div></div>${st==='left'?'<span class="badge" style="border-color:#ef4444">❌ Fuori</span>':cur?'<span class="badge" style="border-color:#22c55e">➡️ TURNO</span>':'<span class="badge">Attiva</span>'}</div>`;
+    }).join('');
+    return `
+      <div class="between">
+        <div><h2>🌱 Draft Primavera</h2><p class="muted">Ordine snake automatico · nessun credito viene scalato.</p></div>
+        <div class="row"><span class="badge">Giro ${dpEsc(s.round||1)}</span><span class="badge">${s.direction===-1?'⬅️ ritorno':'➡️ andata'}</span>${s.active?'<span class="badge" style="border-color:#22c55e">🟢 LIVE</span>':'<span class="badge">Concluso</span>'}</div>
+      </div>
+      ${s.active?`<div class="stat" style="margin-top:14px"><div class="muted">Adesso sceglie</div><div class="n" style="font-size:26px">${dpEsc(currentLabel)}</div>${canAct?'<div style="margin-top:4px">Puoi effettuare la scelta adesso.</div>':'<div class="muted" style="margin-top:4px">Puoi seguire il Draft, ma i comandi sono attivi solo per chi è di turno.</div>'}</div>`:`<div class="stat" style="margin-top:14px"><div class="n" style="font-size:26px">Draft concluso</div></div>`}
+      <div class="grid grid2" style="margin-top:14px">
+        <div class="card"><h3>Ordine partecipanti</h3>${seq}</div>
+        <div class="card">
+          <h3>Scelta del turno</h3>
+          ${s.active?`<label>Nome calciatore<input id="dpPlayerName" class="input" placeholder="Scrivi il nome del calciatore" ${canAct?'':'disabled'}></label><label style="display:block;margin-top:10px">Anno Primavera<input id="dpPlayerYear" class="input" inputmode="numeric" placeholder="Es. 2008" ${canAct?'':'disabled'}></label><div class="row" style="margin-top:14px"><button class="btn green" type="button" onclick="pickDraftPrimaveraPlayer()" ${canAct?'':'disabled'}>✅ PRENDI CALCIATORE</button><button class="btn red" type="button" onclick="leaveDraftPrimavera()" ${canAct?'':'disabled'}>🚪 ABBANDONA DRAFT</button></div><p class="muted" style="margin-top:12px">Abbandonando non si potrà rientrare in questa sessione.</p>`:'<div class="muted">Non ci sono più turni attivi.</div>'}
+          ${dpIsAdmin()?`<div class="row" style="margin-top:18px;border-top:1px solid #28405f;padding-top:14px"><button class="btn yellow" type="button" onclick="finishDraftPrimavera()" ${s.active?'':'disabled'}>Termina Draft</button><button class="btn" type="button" onclick="resetDraftPrimavera()">Nuovo Draft</button></div>`:''}
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px"><h3>Scelte di questa sessione</h3>${dpHistoryHtml((s.sessionPicks||[]).slice().reverse())}</div>`;
+  }
+
+  window.renderDraftPrimavera=function(){
+    dpStartListener();
+    if(!DP_STATE) DP_STATE=dpNorm(dpLoadLocal()||dpEmpty([]));
+    dpHydratePlayers(DP_STATE.allPicks);
+    const root=document.getElementById("view-draftPrimavera"); if(!root)return;
+    root.innerHTML=(DP_STATE.active||DP_STATE.completed||DP_STATE.order.length)?dpLiveHtml(DP_STATE):dpSetupHtml();
+    dpFixPerms();
+  };
+
+  window.startDraftPrimavera=async function(){
+    if(!dpIsAdmin()){alert("Solo Federico admin può avviare il Draft Primavera.");return;}
+    const selected=[...document.querySelectorAll(".dpParticipant:checked")].map(x=>dpCode(x.value));
+    if(selected.length<2){alert("Seleziona almeno 2 Primavera partecipanti.");return;}
+    if(!confirm(`Avviare il Draft Primavera con ${selected.length} partecipanti?\nL'ordine del primo giro sarà casuale.`))return;
+    try{
+      await dpEnsureAuth();
+      const ref=dpRef(); if(!ref)throw new Error("Firebase non disponibile.");
+      const order=dpShuffle(selected);
+      const participants={};order.forEach(c=>participants[c]="active");
+      const oldAll=Array.isArray(DP_STATE?.allPicks)?DP_STATE.allPicks:[];
+      const next=dpEmpty(oldAll);
+      Object.assign(next,{active:true,completed:false,round:1,direction:1,order,currentIndex:0,currentTeam:order[0],participants,sessionPicks:[],createdAt:dpIso(),updatedAt:dpIso(),updatedBy:currentUser?.username||"admin"});
+      await ref.set(next,{merge:false});
+    }catch(e){console.error(e);alert("Impossibile avviare il Draft: "+(e.message||e));}
+  };
+
+  window.pickDraftPrimaveraPlayer=async function(){
+    if(DP_BUSY)return;
+    const name=String(document.getElementById("dpPlayerName")?.value||"").trim();
+    const year=String(document.getElementById("dpPlayerYear")?.value||"").trim();
+    if(!name){alert("Scrivi il nome del calciatore.");return;}
+    if(!DP_STATE?.active||!DP_STATE.currentTeam){alert("Il Draft non è attivo.");return;}
+    if(!dpCanActFor(DP_STATE.currentTeam)){alert("Non è il tuo turno.");return;}
+    const expectedTeam=DP_STATE.currentTeam;
+    DP_BUSY=true;
+    try{
+      await dpEnsureAuth();
+      const db=dpDb(), ref=dpRef(); if(!db||!ref)throw new Error("Firebase non disponibile.");
+      const playerId="DP_"+Date.now()+"_"+Math.random().toString(16).slice(2);
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref);
+        const live=dpNorm(snap.exists?snap.data():DP_STATE);
+        if(!live.active) throw new Error("Il Draft è stato terminato.");
+        if(dpCode(live.currentTeam)!==dpCode(expectedTeam)) throw new Error("Il turno è già cambiato. Aggiorna e riprova.");
+        if(!dpCanActFor(live.currentTeam)) throw new Error("Non è il tuo turno.");
+        const pick={playerId,playerName:name,year,team:live.currentTeam,round:live.round,pickNumber:(live.allPicks||[]).length+1,sessionPickNumber:(live.sessionPicks||[]).length+1,date:dpNow(),createdAt:dpIso(),by:currentUser?.username||"utente"};
+        live.sessionPicks=[...(live.sessionPicks||[]),pick];
+        live.allPicks=[...(live.allPicks||[]),pick];
+        Object.assign(live, dpAdvance(live,false));
+        live.updatedAt=dpIso();live.updatedBy=currentUser?.username||"utente";
+        tx.set(ref,live,{merge:false});
+      });
+      const input=document.getElementById("dpPlayerName");if(input)input.value="";
+    }catch(e){console.error(e);alert("Scelta non registrata: "+(e.message||e));}
+    finally{DP_BUSY=false;}
+  };
+
+  window.leaveDraftPrimavera=async function(){
+    if(DP_BUSY)return;
+    if(!DP_STATE?.active||!DP_STATE.currentTeam){alert("Il Draft non è attivo.");return;}
+    if(!dpCanActFor(DP_STATE.currentTeam)){alert("Non è il tuo turno.");return;}
+    const expectedTeam=DP_STATE.currentTeam;
+    if(!confirm(`${dpPairLabel(expectedTeam)} abbandona definitivamente questo Draft?\n\nNon potrà rientrare nella sessione.`))return;
+    DP_BUSY=true;
+    try{
+      await dpEnsureAuth();
+      const db=dpDb(),ref=dpRef();if(!db||!ref)throw new Error("Firebase non disponibile.");
+      await db.runTransaction(async tx=>{
+        const snap=await tx.get(ref);const live=dpNorm(snap.exists?snap.data():DP_STATE);
+        if(!live.active)throw new Error("Il Draft non è più attivo.");
+        if(dpCode(live.currentTeam)!==dpCode(expectedTeam))throw new Error("Il turno è già cambiato.");
+        if(!dpCanActFor(live.currentTeam))throw new Error("Non è il tuo turno.");
+        Object.assign(live, dpAdvance(live,true));
+        live.updatedAt=dpIso();live.updatedBy=currentUser?.username||"utente";
+        tx.set(ref,live,{merge:false});
+      });
+    }catch(e){console.error(e);alert("Abbandono non registrato: "+(e.message||e));}
+    finally{DP_BUSY=false;}
+  };
+
+  window.editDraftPrimaveraPick=function(playerId){
+    if(!dpIsAdmin()){alert("Solo admin può modificare una scelta Draft.");return;}
+    const id=String(playerId||"");
+    const pk=(DP_STATE?.allPicks||[]).find(x=>String(x.playerId)===id);
+    if(!pk){alert("Scelta non trovata.");return;}
+    const groups=dpPairGroups();
+    const modal=document.getElementById("tradeModal"), body=document.getElementById("tradeModalBody");
+    if(!modal||!body)return;
+    body.innerHTML=`
+      <div class="between"><h2>Modifica scelta Draft Primavera</h2><button class="btn" type="button" onclick="closeTradeModal()">Chiudi</button></div>
+      <div class="grid grid2" style="margin-top:14px">
+        <label>Calciatore<input id="dpEditName" class="input" value="${dpEsc(pk.playerName||"")}"></label>
+        <label>Anno Primavera<input id="dpEditYear" class="input" inputmode="numeric" placeholder="Es. 2008" value="${dpEsc(pk.year||"")}"></label>
+        <label style="grid-column:1/-1">Primavera<select id="dpEditTeam" class="input">${groups.map(g=>`<option value="${dpEsc(g.main)}" ${dpCode(g.main)===dpCode(pk.team)?"selected":""}>${dpEsc(g.label)}</option>`).join("")}</select></label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn green" type="button" onclick="saveDraftPrimaveraPickEdit('${dpEsc(id)}')">💾 Salva modifica</button></div>`;
+    modal.style.display="flex";
+  };
+
+  window.saveDraftPrimaveraPickEdit=async function(playerId){
+    if(!dpIsAdmin()){alert("Solo admin può modificare una scelta Draft.");return;}
+    const id=String(playerId||"");
+    const name=String(document.getElementById("dpEditName")?.value||"").trim();
+    const year=String(document.getElementById("dpEditYear")?.value||"").trim();
+    const team=dpCode(document.getElementById("dpEditTeam")?.value||"");
+    if(!name){alert("Inserisci il nome del calciatore.");return;}
+    if(!team||!dpPair(team)){alert("Seleziona una Primavera valida.");return;}
+    try{
+      await dpEnsureAuth(); const ref=dpRef(); if(!ref)throw new Error("Firebase non disponibile.");
+      const s=dpNorm(DP_STATE||{});
+      let found=false;
+      [s.allPicks,s.sessionPicks].forEach(arr=>arr.forEach(pk=>{if(String(pk.playerId)===id){pk.playerName=name;pk.year=year;pk.team=team;pk.editedAt=dpIso();pk.editedBy=currentUser?.username||"admin";found=true;}}));
+      if(!found)throw new Error("Scelta non trovata.");
+      s.updatedAt=dpIso();s.updatedBy=currentUser?.username||"admin";
+      await ref.set(s,{merge:false});
+      dpHydratePlayers(s.allPicks);
+      if(typeof closeTradeModal==="function") closeTradeModal();
+    }catch(e){console.error(e);alert("Modifica non salvata: "+(e.message||e));}
+  };
+
+  window.deleteDraftPrimaveraPick=async function(playerId){
+    if(!dpIsAdmin()){alert("Solo admin può eliminare una scelta Draft.");return;}
+    const id=String(playerId||"");
+    const pk=(DP_STATE?.allPicks||[]).find(x=>String(x.playerId)===id);
+    if(!pk){alert("Scelta non trovata.");return;}
+    if(!confirm(`Eliminare la scelta di ${pk.playerName}?\nIl calciatore verrà rimosso anche dalla Primavera.`))return;
+    try{
+      await dpEnsureAuth(); const ref=dpRef(); if(!ref)throw new Error("Firebase non disponibile.");
+      const s=dpNorm(DP_STATE||{});
+      s.allPicks=(s.allPicks||[]).filter(x=>String(x.playerId)!==id);
+      s.sessionPicks=(s.sessionPicks||[]).filter(x=>String(x.playerId)!==id);
+      // Rinumerazione solo visuale/storica; NON cambia i turni già effettuati.
+      s.allPicks.forEach((x,i)=>x.pickNumber=i+1);
+      s.sessionPicks.forEach((x,i)=>x.sessionPickNumber=i+1);
+      s.updatedAt=dpIso();s.updatedBy=currentUser?.username||"admin";
+      await ref.set(s,{merge:false});
+      dpHydratePlayers(s.allPicks);
+    }catch(e){console.error(e);alert("Eliminazione non riuscita: "+(e.message||e));}
+  };
+
+  window.finishDraftPrimavera=async function(){
+    if(!dpIsAdmin()){alert("Solo admin può terminare il Draft.");return;}
+    if(!confirm("Terminare adesso il Draft Primavera?"))return;
+    try{
+      await dpEnsureAuth();const ref=dpRef();if(!ref)throw new Error("Firebase non disponibile.");
+      const s=dpNorm(DP_STATE||{});s.active=false;s.completed=true;s.currentTeam="";s.currentIndex=-1;s.updatedAt=dpIso();s.updatedBy=currentUser?.username||"admin";await ref.set(s,{merge:false});
+    }catch(e){console.error(e);alert("Errore chiusura Draft: "+(e.message||e));}
+  };
+
+  window.resetDraftPrimavera=async function(){
+    if(!dpIsAdmin()){alert("Solo admin può creare un nuovo Draft.");return;}
+    if(DP_STATE?.active&&!confirm("Il Draft è ancora attivo. Vuoi davvero chiuderlo e preparare una nuova sessione?"))return;
+    try{
+      await dpEnsureAuth();const ref=dpRef();if(!ref)throw new Error("Firebase non disponibile.");
+      const keep=Array.isArray(DP_STATE?.allPicks)?DP_STATE.allPicks:[];
+      await ref.set(dpEmpty(keep),{merge:false});
+    }catch(e){console.error(e);alert("Errore reset Draft: "+(e.message||e));}
+  };
+
+  function dpFixPerms(){
+    if(!dpVisible())return;
+    const s=DP_STATE||{};
+    const canAct=!!(s.active&&s.currentTeam&&dpLogged()&&dpCanActFor(s.currentTeam));
+    ["dpPlayerName","dpPlayerYear"].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=!canAct;e.style.opacity=canAct?"1":".45";}});
+    document.querySelectorAll('#view-draftPrimavera button').forEach(b=>{
+      const oc=String(b.getAttribute('onclick')||'');
+      let enable=false;
+      if(oc.includes('pickDraftPrimaveraPlayer')||oc.includes('leaveDraftPrimavera')) enable=canAct;
+      else if(oc.includes('startDraftPrimavera')||oc.includes('finishDraftPrimavera')||oc.includes('resetDraftPrimavera')||oc.includes('editDraftPrimaveraPick')||oc.includes('deleteDraftPrimaveraPick')||oc.includes('saveDraftPrimaveraPickEdit')) enable=dpIsAdmin();
+      b.disabled=!enable;b.style.opacity=enable?"1":".45";
+    });
+    document.querySelectorAll('#view-draftPrimavera .dpParticipant').forEach(e=>{e.disabled=!dpIsAdmin();e.style.opacity=dpIsAdmin()?"1":".45";});
+  }
+
+  // Aggancia la nuova vista senza cambiare la funzione originale.
+  const oldShowView=window.showView;
+  if(typeof oldShowView==="function"){
+    window.showView=function(name){
+      const r=oldShowView.apply(this,arguments);
+      if(name==="draftPrimavera") try{renderDraftPrimavera();}catch(e){console.error(e);}
+      return r;
+    };
+  }
+
+  // I sistemi permessi esistenti restano invariati; alla fine riabilitiamo SOLO i controlli del Draft consentiti.
+  const oldPerms=window.applyPermissionsToVisibleView;
+  if(typeof oldPerms==="function") window.applyPermissionsToVisibleView=function(){const r=oldPerms.apply(this,arguments);try{dpFixPerms();}catch(e){}return r;};
+  const oldInternalPerms=window.applyInternalPermissions;
+  if(typeof oldInternalPerms==="function") window.applyInternalPermissions=function(){const r=oldInternalPerms.apply(this,arguments);try{dpFixPerms();}catch(e){}return r;};
+
+  document.addEventListener("DOMContentLoaded",()=>setTimeout(dpStartListener,900));
+  if(document.readyState!=="loading") setTimeout(dpStartListener,900);
 })();
 </script>
 
